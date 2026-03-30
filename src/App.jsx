@@ -9,7 +9,7 @@ const PLATFORMS = [
   { id: "seo",       label: "בלוג SEO",  color: "#34A853" },
 ];
 const CONTENT_TYPES = ["פוסט קצר", "סטורי", "מאמר SEO", "מודעה"];
-const BUSINESSES = [
+const DEFAULT_BUSINESSES = [
   { id: "cinema",  name: "הקולנוע הנודד", icon: "🎬", color: "#F59E0B" },
   { id: "flights", name: "צייד טיסות",    icon: "✈️", color: "#3B82F6" },
 ];
@@ -35,12 +35,35 @@ const SAMPLE_POSTS = [
     hashtags:["טיסות","חיסכון","צייד_טיסות"], date:"ג׳ 02.04 · 20:00", approved:false, media:null, ugc:null, pipeline:null },
 ];
 
+const BIZ_ICONS = ["🏪","🎬","✈️","🍕","💇","🏋️","🏠","🚗","📸","🎵","🛍️","💻","🎓","🏥","⚖️"];
+const BIZ_COLORS = ["#F59E0B","#3B82F6","#EC4899","#10B981","#8B5CF6","#EF4444","#06B6D4","#F97316"];
+
+const SOCIAL_PLATFORMS = [
+  { id:"facebook",  label:"פייסבוק",   icon:"📘", color:"#1877F2", fields:[
+    { key:"META_ACCESS_TOKEN", label:"Access Token", hint:"EAA..." },
+    { key:"META_PAGE_ID", label:"Page ID", hint:"123456789" }
+  ]},
+  { id:"instagram", label:"אינסטגרם", icon:"📷", color:"#E1306C", fields:[
+    { key:"META_ACCESS_TOKEN", label:"Access Token (Meta)", hint:"EAA..." },
+    { key:"META_IG_USER_ID", label:"Business Account ID", hint:"123456789" }
+  ]},
+  { id:"wordpress", label:"WordPress / בלוג", icon:"📝", color:"#21759B", fields:[
+    { key:"WORDPRESS_URL", label:"כתובת האתר", hint:"https://yourblog.com" },
+    { key:"WORDPRESS_APP_PASSWORD", label:"App Password", hint:"xxxx xxxx xxxx" }
+  ]},
+  { id:"tiktok",    label:"טיקטוק",   icon:"🎵", color:"#010101", fields:[
+    { key:"TIKTOK_ACCESS_TOKEN", label:"Access Token", hint:"act...." }
+  ]},
+];
+
 const NAV_ITEMS = [
   { id:"dashboard", icon:"📊", label:"דשבורד" },
+  { id:"businesses",icon:"🏪", label:"עסקים" },
   { id:"sources",   icon:"🌐", label:"מקורות" },
   { id:"content",   icon:"✍️", label:"תוכן" },
   { id:"media",     icon:"🖼️", label:"מדיה AI" },
   { id:"ugc",       icon:"🎭", label:"UGC Avatar" },
+  { id:"publish",   icon:"📡", label:"פרסום" },
   { id:"schedule",  icon:"📅", label:"תזמון" },
   { id:"analytics", icon:"📈", label:"ניתוח" },
   { id:"admin",     icon:"⚙️", label:"ניהול" },
@@ -230,16 +253,16 @@ function PostCard({ post, onUpdate, compact }) {
 // ═══════════════════════════════════════════════════════════════════
 
 // DASHBOARD
-function Dashboard({ posts, sources }) {
+function Dashboard({ posts, sources, businesses }) {
   const approved = posts.filter(p=>p.approved).length;
   const withMedia = posts.filter(p=>p.pipeline?.done).length;
   const withUGC = posts.filter(p=>p.ugc?.done).length;
   const stats = [
+    { label:"עסקים", value:businesses?.length||0, color:"#F59E0B", icon:"🏪" },
     { label:"פוסטים", value:posts.length, color:"#8B5CF6", icon:"✍️" },
     { label:"מאושרים", value:approved, color:"#10B981", icon:"✅" },
     { label:"עם מדיה AI", value:withMedia, color:"#F59E0B", icon:"🖼️" },
     { label:"סרטוני UGC", value:withUGC, color:"#EC4899", icon:"🎭" },
-    { label:"מקורות", value:sources.length, color:"#3B82F6", icon:"🌐" },
   ];
   return <div style={{animation:"fadeUp 0.3s ease"}}>
     <SectionTitle sub="סקירה כללית של המערכת">דשבורד</SectionTitle>
@@ -355,7 +378,8 @@ function Sources({ sources, setSources }) {
 }
 
 // CONTENT
-function Content({ posts, setPosts, sources }) {
+function Content({ posts, setPosts, sources, businesses }) {
+  const BUSINESSES = businesses || DEFAULT_BUSINESSES;
   const [selBiz, setSelBiz] = useState(BUSINESSES[0]);
   const [selPlatforms, setSelPlatforms] = useState(["facebook","instagram"]);
   const [selTypes, setSelTypes] = useState(["פוסט קצר"]);
@@ -366,8 +390,12 @@ function Content({ posts, setPosts, sources }) {
     setLoading(true); setMsg("");
     try {
       const platLabels = PLATFORMS.filter(p=>selPlatforms.includes(p.id)).map(p=>p.label).join(", ");
-      const raw = await claudeCall(`אתה מומחה שיווק ישראלי. צור 2 פוסטים לעסק: ${selBiz.name}.
+      const bizSources = sources.filter(s=>s.name===selBiz.name||s.role==="עסק");
+      const sourceInfo = bizSources.length>0 ? `\nמקורות מידע: ${bizSources.map(s=>s.url||s.name).join(", ")}` : "";
+      const bizDesc = selBiz.description ? `\nתיאור: ${selBiz.description}` : "";
+      const raw = await claudeCall(`אתה מומחה שיווק ישראלי. צור 2 פוסטים לעסק: ${selBiz.name}.${bizDesc}${sourceInfo}
 פלטפורמות: ${platLabels}. סוגים: ${selTypes.join(", ")}. מטרה: לידים.
+חשוב: התאם את הטון והשפה לעסק הספציפי. סרוק את המקורות ובנה תוכן רלוונטי.
 החזר JSON בלבד: {"posts":[{"platform":"פייסבוק","type":"פוסט קצר","content":"...","hashtags":["..."]}]}`);
       const clean = raw.replace(/```json|```/g,"").trim();
       const arr = JSON.parse(clean).posts;
@@ -376,7 +404,7 @@ function Content({ posts, setPosts, sources }) {
         date:"ד׳ 03.04 · 20:00", approved:false, media:null, ugc:null, pipeline:null
       }));
       setPosts(p=>[...newPosts,...p]);
-      setMsg(`✅ נוצרו ${newPosts.length} פוסטים`);
+      setMsg(`✅ נוצרו ${newPosts.length} פוסטים עבור ${selBiz.name}`);
     } catch { setMsg("⚠️ שגיאה — בדוק API key"); }
     setLoading(false);
   }
@@ -633,6 +661,275 @@ function UGCStudio() {
         </div>
       </div>}
     </div>}
+  </div>;
+}
+
+// BUSINESSES
+function Businesses({ businesses, setBusinesses }) {
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ name:"", icon:BIZ_ICONS[0], color:BIZ_COLORS[0], url:"", description:"", facebook:"", instagram:"" });
+  const [scanning, setScanning] = useState({});
+  const [scanResults, setScanResults] = useState({});
+
+  function addBiz() {
+    if (!form.name.trim()) return;
+    setBusinesses(p=>[...p,{ id:Date.now().toString(), ...form }]);
+    setForm({ name:"", icon:BIZ_ICONS[0], color:BIZ_COLORS[0], url:"", description:"", facebook:"", instagram:"" });
+    setAdding(false);
+  }
+  function removeBiz(id) { setBusinesses(p=>p.filter(b=>b.id!==id)); }
+
+  async function scanBiz(biz) {
+    setScanning(p=>({...p,[biz.id]:true}));
+    try {
+      const prompt = `סרוק ונתח את העסק "${biz.name}"${biz.url?` (אתר: ${biz.url})`:""}${biz.description?`. תיאור: ${biz.description}`:""}.
+החזר JSON: {"tone":"...","audience":"...","strengths":["..."],"contentIdeas":["..."],"competitors":["..."]}`;
+      const raw = await claudeCall(prompt, 600);
+      const clean = raw.replace(/```json|```/g,"").trim();
+      setScanResults(p=>({...p,[biz.id]:JSON.parse(clean)}));
+    } catch {
+      setScanResults(p=>({...p,[biz.id]:{ error:"שגיאה בסריקה — בדוק API key" }}));
+    }
+    setScanning(p=>({...p,[biz.id]:false}));
+  }
+
+  return <div style={{animation:"fadeUp 0.3s ease"}}>
+    <SectionTitle sub="הוסף וסרוק עסקים לפני יצירת תוכן">ניהול עסקים</SectionTitle>
+
+    {/* Add biz */}
+    {!adding ? <Btn grad="linear-gradient(135deg,#8B5CF6,#3B82F6)" onClick={()=>setAdding(true)} style={{marginBottom:20}}>
+      + הוסף עסק חדש
+    </Btn> : <Card style={{marginBottom:20}}>
+      <div style={{color:"#888",fontSize:11,fontWeight:700,marginBottom:12}}>עסק חדש</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+        <div>
+          <div style={{color:"#555",fontSize:11,marginBottom:4}}>שם העסק *</div>
+          <input value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} placeholder="שם העסק"
+            style={{width:"100%",background:"#111",border:"1px solid #222",borderRadius:7,padding:"8px 12px",color:"#ddd",fontSize:12,fontFamily:"inherit",boxSizing:"border-box"}}/>
+        </div>
+        <div>
+          <div style={{color:"#555",fontSize:11,marginBottom:4}}>כתובת אתר</div>
+          <input value={form.url} onChange={e=>setForm(p=>({...p,url:e.target.value}))} placeholder="https://..."
+            style={{width:"100%",background:"#111",border:"1px solid #222",borderRadius:7,padding:"8px 12px",color:"#ddd",fontSize:12,fontFamily:"monospace",boxSizing:"border-box"}}/>
+        </div>
+      </div>
+      <div style={{marginBottom:12}}>
+        <div style={{color:"#555",fontSize:11,marginBottom:4}}>תיאור העסק</div>
+        <textarea value={form.description} onChange={e=>setForm(p=>({...p,description:e.target.value}))} placeholder="במה עוסק העסק, קהל יעד, יתרונות..."
+          style={{width:"100%",minHeight:60,background:"#111",border:"1px solid #222",borderRadius:7,color:"#ddd",padding:10,fontSize:12,fontFamily:"inherit",direction:"rtl",resize:"none",boxSizing:"border-box"}}/>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+        <div>
+          <div style={{color:"#555",fontSize:11,marginBottom:4}}>עמוד פייסבוק</div>
+          <input value={form.facebook} onChange={e=>setForm(p=>({...p,facebook:e.target.value}))} placeholder="https://facebook.com/..."
+            style={{width:"100%",background:"#111",border:"1px solid #222",borderRadius:7,padding:"8px 12px",color:"#ddd",fontSize:12,fontFamily:"monospace",boxSizing:"border-box"}}/>
+        </div>
+        <div>
+          <div style={{color:"#555",fontSize:11,marginBottom:4}}>עמוד אינסטגרם</div>
+          <input value={form.instagram} onChange={e=>setForm(p=>({...p,instagram:e.target.value}))} placeholder="https://instagram.com/..."
+            style={{width:"100%",background:"#111",border:"1px solid #222",borderRadius:7,padding:"8px 12px",color:"#ddd",fontSize:12,fontFamily:"monospace",boxSizing:"border-box"}}/>
+        </div>
+      </div>
+      <div style={{marginBottom:12}}>
+        <div style={{color:"#555",fontSize:11,marginBottom:6}}>אייקון</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {BIZ_ICONS.map(ic=><button key={ic} onClick={()=>setForm(p=>({...p,icon:ic}))}
+            style={{width:34,height:34,background:form.icon===ic?"#8B5CF620":"#111",
+              border:`1px solid ${form.icon===ic?"#8B5CF6":"#222"}`,borderRadius:7,cursor:"pointer",fontSize:16}}>{ic}</button>)}
+        </div>
+      </div>
+      <div style={{marginBottom:16}}>
+        <div style={{color:"#555",fontSize:11,marginBottom:6}}>צבע</div>
+        <div style={{display:"flex",gap:6}}>
+          {BIZ_COLORS.map(c=><button key={c} onClick={()=>setForm(p=>({...p,color:c}))}
+            style={{width:28,height:28,background:c,borderRadius:7,cursor:"pointer",
+              border:`2px solid ${form.color===c?"#fff":"transparent"}`}}/>)}
+        </div>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <Btn grad="linear-gradient(135deg,#10B981,#3B82F6)" onClick={addBiz}>שמור</Btn>
+        <Btn sm bg="#111" color="#666" onClick={()=>setAdding(false)}>ביטול</Btn>
+      </div>
+    </Card>}
+
+    {/* Biz list */}
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      {businesses.map(biz=>{
+        const result = scanResults[biz.id];
+        return <Card key={biz.id} accent={biz.color+"44"}>
+          <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:result?14:0}}>
+            <div style={{width:44,height:44,borderRadius:10,background:biz.color+"20",border:`1px solid ${biz.color}33`,
+              display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{biz.icon}</div>
+            <div style={{flex:1}}>
+              <div style={{color:"#eee",fontSize:14,fontWeight:700}}>{biz.name}</div>
+              <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
+                {biz.url&&<Tag label={biz.url.replace(/https?:\/\/(www\.)?/,"")} color="#666"/>}
+                {biz.facebook&&<Tag label="📘 פייסבוק" color="#1877F2"/>}
+                {biz.instagram&&<Tag label="📷 אינסטגרם" color="#E1306C"/>}
+              </div>
+              {biz.description&&<p style={{color:"#555",fontSize:11,margin:"6px 0 0",lineHeight:1.5}}>{biz.description}</p>}
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              <Btn sm grad="linear-gradient(135deg,#8B5CF6,#06B6D4)" disabled={scanning[biz.id]} onClick={()=>scanBiz(biz)}>
+                {scanning[biz.id]?<><Spinner size={10}/> סורק...</>:"🔍 סרוק AI"}
+              </Btn>
+              <Btn sm onClick={()=>removeBiz(biz.id)}>✕</Btn>
+            </div>
+          </div>
+          {result&&!result.error&&<div style={{background:"#071a0f",border:"1px solid #10B98122",borderRadius:8,padding:14}}>
+            <div style={{color:"#10B981",fontWeight:600,fontSize:12,marginBottom:10}}>💡 תוצאות סריקת AI</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div><span style={{color:"#555",fontSize:11}}>טון מותג: </span><span style={{color:"#ddd",fontSize:12}}>{result.tone}</span></div>
+              <div><span style={{color:"#555",fontSize:11}}>קהל יעד: </span><span style={{color:"#ddd",fontSize:12}}>{result.audience}</span></div>
+            </div>
+            {result.strengths?.length>0&&<div style={{marginTop:10}}>
+              <div style={{color:"#555",fontSize:11,marginBottom:4}}>יתרונות:</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{result.strengths.map((s,i)=><Tag key={i} label={s} color="#10B981"/>)}</div>
+            </div>}
+            {result.contentIdeas?.length>0&&<div style={{marginTop:10}}>
+              <div style={{color:"#555",fontSize:11,marginBottom:4}}>רעיונות לתוכן:</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{result.contentIdeas.map((s,i)=><Tag key={i} label={s} color="#8B5CF6"/>)}</div>
+            </div>}
+          </div>}
+          {result?.error&&<div style={{color:"#EF4444",fontSize:12,marginTop:8}}>{result.error}</div>}
+        </Card>;
+      })}
+    </div>
+    {businesses.length===0&&<Card><div style={{textAlign:"center",color:"#333",padding:30}}>הוסף את העסק הראשון שלך</div></Card>}
+  </div>;
+}
+
+// PUBLISH
+function Publish({ posts, businesses }) {
+  const [connections, setConnections] = useState(()=>{
+    try { return JSON.parse(localStorage.getItem("social_connections")||"{}"); } catch { return {}; }
+  });
+  const [publishing, setPublishing] = useState({});
+  const [results, setResults] = useState({});
+  const [selBiz, setSelBiz] = useState(businesses[0]?.name||"");
+  const approved = posts.filter(p=>p.approved);
+  const bizPosts = selBiz ? approved.filter(p=>p.business===selBiz) : approved;
+
+  function saveConn(updated) {
+    setConnections(updated);
+    localStorage.setItem("social_connections", JSON.stringify(updated));
+  }
+
+  function toggleConnect(platformId) {
+    saveConn({...connections, [platformId]: connections[platformId] ? { ...connections[platformId], connected: !connections[platformId].connected } : { connected:true, tokens:{} }});
+  }
+
+  function setToken(platformId, key, value) {
+    const current = connections[platformId] || { connected:false, tokens:{} };
+    saveConn({...connections, [platformId]: { ...current, tokens:{ ...current.tokens, [key]:value } }});
+  }
+
+  async function publishPost(post, platformId) {
+    const key = `${post.id}_${platformId}`;
+    setPublishing(p=>({...p,[key]:true}));
+    try {
+      const r = await fetch("/api/publish/post", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ postId:post.id, platform:platformId, content:post.content, hashtags:post.hashtags })
+      });
+      const d = await r.json();
+      setResults(p=>({...p,[key]: d.ok ? "ok" : d.error||"failed"}));
+    } catch {
+      setResults(p=>({...p,[key]:"שגיאת רשת — הגדר backend"}));
+    }
+    setPublishing(p=>({...p,[key]:false}));
+  }
+
+  return <div style={{animation:"fadeUp 0.3s ease"}}>
+    <SectionTitle sub="חבר רשתות חברתיות ופרסם תוכן">פרסום</SectionTitle>
+
+    {/* Social connections */}
+    <Card style={{marginBottom:20}}>
+      <div style={{color:"#666",fontSize:11,fontWeight:700,marginBottom:16,letterSpacing:1}}>חיבור רשתות חברתיות</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+        {SOCIAL_PLATFORMS.map(plat=>{
+          const conn = connections[plat.id] || { connected:false, tokens:{} };
+          const allFilled = plat.fields.every(f=>conn.tokens?.[f.key]);
+          return <div key={plat.id} style={{background:"#111",border:`1px solid ${conn.connected&&allFilled?plat.color+"55":"#1a1a1a"}`,
+            borderRadius:10,padding:16,transition:"all 0.2s"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+              <span style={{fontSize:22}}>{plat.icon}</span>
+              <div style={{flex:1}}>
+                <div style={{color:"#eee",fontSize:13,fontWeight:600}}>{plat.label}</div>
+                <div style={{color:conn.connected&&allFilled?"#10B981":"#444",fontSize:11}}>
+                  {conn.connected&&allFilled?"מחובר ✓":"לא מחובר"}
+                </div>
+              </div>
+              <button onClick={()=>toggleConnect(plat.id)} style={{
+                width:40,height:22,borderRadius:11,border:"none",cursor:"pointer",
+                background:conn.connected?plat.color:"#333",position:"relative",transition:"all 0.2s"}}>
+                <div style={{width:16,height:16,borderRadius:"50%",background:"#fff",
+                  position:"absolute",top:3,transition:"all 0.2s",
+                  ...(conn.connected?{left:21}:{left:3})}}/>
+              </button>
+            </div>
+            {conn.connected&&<div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {plat.fields.map(f=><div key={f.key}>
+                <div style={{color:"#555",fontSize:10,marginBottom:3}}>{f.label}</div>
+                <input value={conn.tokens?.[f.key]||""} onChange={e=>setToken(plat.id,f.key,e.target.value)}
+                  placeholder={f.hint} type="password"
+                  style={{width:"100%",background:"#0a0a0a",border:"1px solid #222",borderRadius:6,
+                    padding:"6px 10px",color:"#ddd",fontSize:11,fontFamily:"monospace",boxSizing:"border-box"}}/>
+              </div>)}
+            </div>}
+          </div>;
+        })}
+      </div>
+    </Card>
+
+    {/* Publish posts */}
+    <Card>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <div style={{color:"#666",fontSize:11,fontWeight:700,letterSpacing:1}}>פוסטים מאושרים לפרסום</div>
+        {businesses.length>0&&<select value={selBiz} onChange={e=>setSelBiz(e.target.value)}
+          style={{background:"#111",border:"1px solid #222",color:"#aaa",borderRadius:7,
+            padding:"5px 10px",fontSize:12,fontFamily:"inherit"}}>
+          <option value="">כל העסקים</option>
+          {businesses.map(b=><option key={b.id} value={b.name}>{b.icon} {b.name}</option>)}
+        </select>}
+      </div>
+      {bizPosts.length===0
+        ? <div style={{textAlign:"center",color:"#333",padding:30}}>אין פוסטים מאושרים {selBiz?`ל"${selBiz}"`:""} — אשר פוסטים בדף תוכן</div>
+        : <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {bizPosts.map(post=>{
+            const platMatch = PLATFORMS.find(p=>post.platform?.includes(p.label.split(" ")[0]));
+            return <div key={post.id} style={{background:"#111",borderRadius:10,padding:14,border:"1px solid #1a1a1a"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <Tag label={post.business} color="#666"/>
+                <Tag label={post.platform} color={platMatch?.color||"#888"}/>
+                {post.pipeline?.done&&<Tag label="🖼️ מדיה" color="#F59E0B"/>}
+              </div>
+              <p style={{color:"#888",fontSize:12,margin:"0 0 10px",direction:"rtl",lineHeight:1.6,
+                maxHeight:60,overflow:"hidden"}}>{post.content}</p>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {SOCIAL_PLATFORMS.filter(sp=>{
+                  const conn=connections[sp.id];
+                  return conn?.connected && conn.tokens && Object.values(conn.tokens).some(v=>v);
+                }).map(sp=>{
+                  const key=`${post.id}_${sp.id}`;
+                  const res=results[key];
+                  return <Btn key={sp.id} sm
+                    disabled={publishing[key]}
+                    bg={res==="ok"?"#10B98120":res?"#EF444420":"#1a1a1a"}
+                    color={res==="ok"?"#10B981":res?"#EF4444":sp.color}
+                    onClick={()=>publishPost(post,sp.id)}>
+                    {publishing[key]?<Spinner size={10}/>:res==="ok"?"✓ פורסם":res?`✗ ${sp.label}`:`${sp.icon} פרסם ב${sp.label}`}
+                  </Btn>;
+                })}
+                {SOCIAL_PLATFORMS.filter(sp=>connections[sp.id]?.connected).length===0&&
+                  <span style={{color:"#444",fontSize:11}}>חבר רשת חברתית למעלה כדי לפרסם</span>}
+              </div>
+            </div>;
+          })}
+        </div>
+      }
+    </Card>
   </div>;
 }
 
@@ -935,7 +1232,12 @@ export default function App() {
   const [page, setPage] = useState("dashboard");
   const [posts, setPosts] = useState(SAMPLE_POSTS);
   const [sources, setSources] = useState(SOURCES_INIT);
+  const [businesses, setBusinesses] = useState(()=>{
+    try { const s=localStorage.getItem("businesses"); return s?JSON.parse(s):DEFAULT_BUSINESSES; } catch { return DEFAULT_BUSINESSES; }
+  });
   const [sideOpen, setSideOpen] = useState(true);
+
+  useEffect(()=>{ localStorage.setItem("businesses",JSON.stringify(businesses)); },[businesses]);
 
   const running = posts.filter(p=>(p.pipeline&&!p.pipeline.done)||(p.ugc&&!p.ugc.done)).length;
   const published = posts.filter(p=>p.pipeline?.done||p.ugc?.done).length;
@@ -1023,11 +1325,13 @@ export default function App() {
         </div>
 
         <div style={{padding:"28px",maxWidth:900,margin:"0 auto"}}>
-          {page==="dashboard"&&<Dashboard posts={posts} sources={sources}/>}
+          {page==="dashboard"&&<Dashboard posts={posts} sources={sources} businesses={businesses}/>}
+          {page==="businesses"&&<Businesses businesses={businesses} setBusinesses={setBusinesses}/>}
           {page==="sources"&&<Sources sources={sources} setSources={setSources}/>}
-          {page==="content"&&<Content posts={posts} setPosts={setPosts} sources={sources}/>}
+          {page==="content"&&<Content posts={posts} setPosts={setPosts} sources={sources} businesses={businesses}/>}
           {page==="media"&&<MediaAI/>}
           {page==="ugc"&&<UGCStudio/>}
+          {page==="publish"&&<Publish posts={posts} businesses={businesses}/>}
           {page==="schedule"&&<Schedule posts={posts}/>}
           {page==="analytics"&&<Analytics posts={posts}/>}
           {page==="admin"&&<Admin/>}
