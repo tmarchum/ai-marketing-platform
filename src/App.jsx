@@ -210,6 +210,78 @@ async function fetchPagePosts(pageId, accessToken, limit=10) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// APIFY — COMPETITOR SCRAPING
+// ═══════════════════════════════════════════════════════════════════
+async function scrapeCompetitorPage(pageUrl) {
+  const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
+  const token = keys.APIFY_API_TOKEN;
+  if (!token) throw new Error("הגדר APIFY_API_TOKEN בדף ניהול");
+
+  // Start the Facebook Pages Scraper actor
+  const runR = await fetch(`https://api.apify.com/v2/acts/apify~facebook-posts-scraper/runs?token=${token}`, {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      startUrls: [{ url: pageUrl }],
+      resultsLimit: 15,
+      viewOption: "CHRONOLOGICAL"
+    })
+  });
+  const run = await runR.json();
+  if (run.error) throw new Error(run.error.message || "שגיאה בהפעלת Apify");
+
+  // Wait for run to finish (poll every 3 seconds, max 2 minutes)
+  const runId = run.data?.id;
+  if (!runId) throw new Error("לא התקבל run ID");
+
+  let status = "RUNNING";
+  let attempts = 0;
+  while (status === "RUNNING" || status === "READY") {
+    if (attempts++ > 40) throw new Error("הסריקה לקחה יותר מדי זמן");
+    await new Promise(r=>setTimeout(r, 3000));
+    const statusR = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${token}`);
+    const statusD = await statusR.json();
+    status = statusD.data?.status || "FAILED";
+  }
+
+  if (status !== "SUCCEEDED") throw new Error(`הסריקה נכשלה: ${status}`);
+
+  // Get results from default dataset
+  const datasetId = run.data?.defaultDatasetId;
+  const itemsR = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items?token=${token}&limit=15`);
+  const items = await itemsR.json();
+
+  return items.map(item => ({
+    text: item.text || item.message || "",
+    likes: item.likes || item.reactionsCount || 0,
+    comments: item.comments || item.commentsCount || 0,
+    shares: item.shares || item.sharesCount || 0,
+    date: item.time || item.timestamp || "",
+    url: item.url || item.postUrl || "",
+  })).filter(p => p.text);
+}
+
+async function analyzeCompetitors(bizName, competitorData) {
+  const competitorSummary = competitorData.map(c => {
+    const topPosts = c.posts.sort((a,b)=>(b.likes+b.comments)-(a.likes+a.comments)).slice(0,3);
+    return `מתחרה: ${c.name} (${c.url})
+פוסטים מובילים:
+${topPosts.map(p=>`- "${p.text.slice(0,60)}..." → ${p.likes} לייקים, ${p.comments} תגובות`).join("\n")}
+ממוצע אינטראקציות: ${(c.posts.reduce((s,p)=>s+p.likes+p.comments,0)/Math.max(c.posts.length,1)).toFixed(0)}`;
+  }).join("\n\n");
+
+  const raw = await claudeCall(`אתה מנתח שיווק דיגיטלי מומחה. נתח את המתחרים של "${bizName}":
+
+${competitorSummary}
+
+נתח והחזר JSON בלבד:
+{"insights":"תובנה מרכזית על המתחרים","topThemes":["נושא 1","נושא 2","נושא 3"],"bestHooks":["hook 1","hook 2","hook 3"],"gaps":["פער 1","פער 2"],"recommendation":"המלצה קצרה"}`, 600);
+
+  const clean = raw.replace(/```json|```/g,"").trim();
+  return JSON.parse(clean);
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // META ADS API — BOOST
 // ═══════════════════════════════════════════════════════════════════
 async function boostPost(postId, accessToken, adAccountId, budget, duration, targeting) {
@@ -559,8 +631,28 @@ ${top.map(p=>`- "${p.message?.slice(0,50)}..." → ${p.likes} לייקים, ${p.
 למד מהפוסטים המוצלחים — מה הטון? מה ה-hook? מה הנושא? צור תוכן דומה באיכות אבל ייחודי.`;
       }
 
+      // Competitor insights
+      let competitorHint = "";
+      if (selBiz.competitorAnalysis) {
+        const ca = selBiz.competitorAnalysis;
+        competitorHint = `\n\nתובנות ממתחרים (Apify):
+נושאים חמים: ${ca.topThemes?.join(", ")||""}
+Hooks שעובדים: ${ca.bestHooks?.join(", ")||""}
+פערים שאפשר לנצל: ${ca.gaps?.join(", ")||""}
+${ca.recommendation||""}`;
+      }
+      if (selBiz.competitorData?.some(d=>d.posts?.length>0)) {
+        const topCompPosts = selBiz.competitorData.flatMap(d=>d.posts||[])
+          .sort((a,b)=>(b.likes+b.comments)-(a.likes+a.comments)).slice(0,3);
+        if (topCompPosts.length>0) {
+          competitorHint += `\nפוסטים מובילים של מתחרים:
+${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים, ${p.comments} תגובות`).join("\n")}
+צור תוכן שמתחרה ברמה הזו אבל ייחודי לעסק שלנו.`;
+        }
+      }
+
       const raw = await claudeCall(`אתה מומחה שיווק ישראלי. צור 2 פוסטים חדשים ושונים לעסק: ${selBiz.name}.${bizDesc}${scanInfo}${sourceInfo}
-פלטפורמות: ${platLabels}. סוגים: ${selTypes.join(", ")}. מטרה: לידים.${existingContent}${engagementHint}
+פלטפורמות: ${platLabels}. סוגים: ${selTypes.join(", ")}. מטרה: לידים.${existingContent}${engagementHint}${competitorHint}
 חשוב: התאם טון ושפה לעסק. צור תוכן ייחודי שלא דומה לפוסטים קיימים.
 החזר JSON בלבד: {"posts":[{"platform":"פייסבוק","type":"פוסט קצר","content":"...","hashtags":["..."]}]}`);
       const clean = raw.replace(/```json|```/g,"").trim();
@@ -868,6 +960,8 @@ function Businesses({ businesses, setBusinesses, posts }) {
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({ name:"", icon:BIZ_ICONS[0], color:BIZ_COLORS[0], url:"", description:"" });
   const [scanning, setScanning] = useState({});
+  const [scrapingComp, setScrapingComp] = useState({});
+  const [newCompUrl, setNewCompUrl] = useState({});
 
   function updateBiz(id, upd) { setBusinesses(p=>p.map(b=>b.id===id?{...b,...upd}:b)); }
 
@@ -915,8 +1009,53 @@ function Businesses({ businesses, setBusinesses, posts }) {
     }));
   }
 
+  function addCompetitor(bizId) {
+    const url = newCompUrl[bizId]?.trim();
+    if (!url) return;
+    setBusinesses(p=>p.map(b=>{
+      if (b.id!==bizId) return b;
+      const comps = [...(b.competitors||[]), { id:Date.now(), name: url.replace(/https?:\/\/(www\.)?(facebook\.com\/)?/,"").split("/")[0]||url, url }];
+      return {...b, competitors: comps};
+    }));
+    setNewCompUrl(p=>({...p,[bizId]:""}));
+  }
+
+  function removeCompetitor(bizId, compId) {
+    setBusinesses(p=>p.map(b=>{
+      if (b.id!==bizId) return b;
+      return {...b, competitors: (b.competitors||[]).filter(c=>c.id!==compId)};
+    }));
+  }
+
+  async function scrapeCompetitors(biz) {
+    const comps = biz.competitors || [];
+    if (comps.length===0) return;
+    setScrapingComp(p=>({...p,[biz.id]:true}));
+    try {
+      const allData = [];
+      for (const comp of comps) {
+        try {
+          const posts = await scrapeCompetitorPage(comp.url);
+          allData.push({ name: comp.name, url: comp.url, posts });
+        } catch(e) {
+          allData.push({ name: comp.name, url: comp.url, posts: [], error: e.message });
+        }
+      }
+      // Analyze with AI
+      const validData = allData.filter(d=>d.posts.length>0);
+      let analysis = null;
+      if (validData.length > 0) {
+        try { analysis = await analyzeCompetitors(biz.name, validData); } catch {}
+      }
+      updateBiz(biz.id, { competitorData: allData, competitorAnalysis: analysis, competitorLastScan: new Date().toISOString() });
+    } catch(e) {
+      updateBiz(biz.id, { competitorData: [{ error: e.message }] });
+    }
+    setScrapingComp(p=>({...p,[biz.id]:false}));
+  }
+
   return <div style={{animation:"fadeUp 0.3s ease"}}>
-    <SectionTitle sub="הוסף עסקים, חבר רשתות, סרוק עם AI">ניהול עסקים</SectionTitle>
+    <SectionTitle sub="הוסף עסקים, חבר רשתות, סרוק מתחרים עם AI">ניהול עסקים</SectionTitle>
 
     {!adding ? <Btn grad="linear-gradient(135deg,#8B5CF6,#3B82F6)" onClick={()=>setAdding(true)} style={{marginBottom:20}}>
       + הוסף עסק חדש
@@ -1044,6 +1183,80 @@ function Businesses({ businesses, setBusinesses, posts }) {
                   </div>;
                 })}
               </div>
+            </div>
+
+            {/* Competitors */}
+            <div style={{marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
+                <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1}}>מתחרים — {biz.name}</div>
+                <Btn sm grad="linear-gradient(135deg,#00C853,#00B0FF)" disabled={scrapingComp[biz.id]||!(biz.competitors?.length>0)}
+                  onClick={e=>{e.stopPropagation();scrapeCompetitors(biz);}}>
+                  {scrapingComp[biz.id]?<><Spinner size={10}/> סורק מתחרים...</>:"סרוק מתחרים (Apify)"}
+                </Btn>
+              </div>
+              <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+                <input value={newCompUrl[biz.id]||""} onChange={e=>setNewCompUrl(p=>({...p,[biz.id]:e.target.value}))}
+                  placeholder="קישור לדף פייסבוק של מתחרה..."
+                  style={{flex:1,minWidth:200,background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,
+                    padding:"8px 12px",color:T.text,fontSize:12,fontFamily:"monospace",boxSizing:"border-box"}}/>
+                <Btn sm bg="#00C85312" color="#00C853" onClick={()=>addCompetitor(biz.id)}>+ הוסף</Btn>
+              </div>
+              {(biz.competitors||[]).length>0 && <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
+                {biz.competitors.map(c=><div key={c.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",
+                  background:T.inputBg,borderRadius:8,fontSize:12}}>
+                  <span style={{color:"#EF4444"}}>🎯</span>
+                  <span style={{color:T.text,fontWeight:600,flex:1}}>{c.name}</span>
+                  <span style={{color:T.textDim,fontSize:10,fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:200}}>{c.url}</span>
+                  <button onClick={()=>removeCompetitor(biz.id,c.id)} style={{background:"none",border:"none",color:T.textDim,cursor:"pointer",fontSize:12}}>✕</button>
+                </div>)}
+              </div>}
+
+              {/* Competitor scrape results */}
+              {biz.competitorAnalysis&&<div style={{background:"#00C85308",border:"1px solid #00C85318",borderRadius:10,padding:14,marginBottom:10}}>
+                <div style={{color:"#00C853",fontWeight:600,fontSize:12,marginBottom:10}}>תובנות מתחרים (Apify + AI)</div>
+                <p style={{color:T.textSec,fontSize:12,margin:"0 0 10px",direction:"rtl",lineHeight:1.6}}>{biz.competitorAnalysis.insights}</p>
+                {biz.competitorAnalysis.topThemes?.length>0&&<div style={{marginBottom:8}}>
+                  <div style={{color:T.textMuted,fontSize:10,marginBottom:4}}>נושאים חמים:</div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{biz.competitorAnalysis.topThemes.map((t,i)=><Tag key={i} label={t} color="#00C853"/>)}</div>
+                </div>}
+                {biz.competitorAnalysis.bestHooks?.length>0&&<div style={{marginBottom:8}}>
+                  <div style={{color:T.textMuted,fontSize:10,marginBottom:4}}>Hooks שעובדים:</div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{biz.competitorAnalysis.bestHooks.map((h,i)=><Tag key={i} label={h} color="#8B5CF6"/>)}</div>
+                </div>}
+                {biz.competitorAnalysis.gaps?.length>0&&<div style={{marginBottom:8}}>
+                  <div style={{color:T.textMuted,fontSize:10,marginBottom:4}}>פערים (הזדמנויות):</div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{biz.competitorAnalysis.gaps.map((g,i)=><Tag key={i} label={g} color="#F59E0B"/>)}</div>
+                </div>}
+                {biz.competitorAnalysis.recommendation&&<div style={{background:T.inputBg,borderRadius:8,padding:10,marginTop:8}}>
+                  <div style={{color:T.accent,fontSize:12,fontWeight:600}}>{biz.competitorAnalysis.recommendation}</div>
+                </div>}
+              </div>}
+
+              {/* Individual competitor data */}
+              {biz.competitorData?.some(d=>d.posts?.length>0)&&<div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {biz.competitorData.filter(d=>d.posts?.length>0).map((d,i)=>{
+                  const top = d.posts.sort((a,b)=>(b.likes+b.comments)-(a.likes+a.comments)).slice(0,3);
+                  const avg = (d.posts.reduce((s,p)=>s+p.likes+p.comments,0)/d.posts.length).toFixed(0);
+                  return <div key={i} style={{background:T.inputBg,borderRadius:8,padding:10}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                      <span style={{color:T.text,fontSize:12,fontWeight:600}}>🎯 {d.name}</span>
+                      <span style={{color:T.textMuted,fontSize:10}}>{d.posts.length} פוסטים · ממוצע {avg}</span>
+                    </div>
+                    {top.map((p,j)=><div key={j} style={{color:T.textSec,fontSize:11,direction:"rtl",padding:"3px 0",
+                      borderBottom:j<top.length-1?`1px solid ${T.borderLight}`:"none"}}>
+                      <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"block"}}>
+                        "{p.text.slice(0,50)}..." — <span style={{color:"#EC4899"}}>{p.likes}</span> · <span style={{color:"#8B5CF6"}}>{p.comments}</span>
+                      </span>
+                    </div>)}
+                  </div>;
+                })}
+              </div>}
+              {biz.competitorData?.some(d=>d.error)&&<div style={{color:"#EF4444",fontSize:11,marginTop:4}}>
+                {biz.competitorData.filter(d=>d.error).map((d,i)=><div key={i}>שגיאה ב-{d.name}: {d.error}</div>)}
+              </div>}
+              {biz.competitorLastScan&&<div style={{color:T.textDim,fontSize:9,marginTop:4}}>
+                סריקה אחרונה: {new Date(biz.competitorLastScan).toLocaleString("he-IL")}
+              </div>}
             </div>
 
             {/* Scan results */}
@@ -1524,6 +1737,7 @@ const API_KEYS_CONFIG = [
   { id:"REDIS_URL",              label:"Redis URL",             service:"Bull Queue",   color:"#EF4444", hint:"redis://..." },
   { id:"WORDPRESS_URL",          label:"WordPress URL",         service:"Blog SEO",     color:"#21759B", hint:"https://yourblog.com" },
   { id:"WORDPRESS_APP_PASSWORD", label:"WordPress App Password",service:"Blog SEO",     color:"#21759B", hint:"xxxx xxxx xxxx" },
+  { id:"APIFY_API_TOKEN",        label:"Apify API Token",       service:"סריקת מתחרים", color:"#00C853", hint:"apify_api_..." },
 ];
 
 function Admin() {
