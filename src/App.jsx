@@ -210,30 +210,28 @@ async function fetchPagePosts(pageId, accessToken, limit=10) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// APIFY — COMPETITOR SCRAPING
+// APIFY — WEB & COMPETITOR SCRAPING
 // ═══════════════════════════════════════════════════════════════════
-async function scrapeCompetitorPage(pageUrl) {
+function getApifyToken() {
   const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
   const token = keys.APIFY_API_TOKEN;
   if (!token) throw new Error("הגדר APIFY_API_TOKEN בדף ניהול");
+  return token;
+}
 
-  // Start the Facebook Pages Scraper actor
-  const runR = await fetch(`https://api.apify.com/v2/acts/apify~facebook-posts-scraper/runs?token=${token}`, {
+async function runApifyActor(actorId, input) {
+  const token = getApifyToken();
+  const runR = await fetch(`https://api.apify.com/v2/acts/${actorId}/runs?token=${token}`, {
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({
-      startUrls: [{ url: pageUrl }],
-      resultsLimit: 15,
-      viewOption: "CHRONOLOGICAL"
-    })
+    body: JSON.stringify(input)
   });
   const run = await runR.json();
   if (run.error) throw new Error(run.error.message || "שגיאה בהפעלת Apify");
-
-  // Wait for run to finish (poll every 3 seconds, max 2 minutes)
   const runId = run.data?.id;
   if (!runId) throw new Error("לא התקבל run ID");
 
+  // Poll for completion
   let status = "RUNNING";
   let attempts = 0;
   while (status === "RUNNING" || status === "READY") {
@@ -243,14 +241,30 @@ async function scrapeCompetitorPage(pageUrl) {
     const statusD = await statusR.json();
     status = statusD.data?.status || "FAILED";
   }
+  if (status !== "SUCCEEDED") throw new Error(`סריקה נכשלה: ${status}`);
 
-  if (status !== "SUCCEEDED") throw new Error(`הסריקה נכשלה: ${status}`);
-
-  // Get results from default dataset
   const datasetId = run.data?.defaultDatasetId;
-  const itemsR = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items?token=${token}&limit=15`);
-  const items = await itemsR.json();
+  const itemsR = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items?token=${token}&limit=30`);
+  return await itemsR.json();
+}
 
+// Scrape a website for text content
+async function scrapeWebsite(url) {
+  const items = await runApifyActor("apify~website-content-crawler", {
+    startUrls: [{ url }],
+    maxCrawlPages: 5,
+    maxCrawlDepth: 1,
+  });
+  return items.map(i => i.text || i.body || "").filter(Boolean).join("\n\n").slice(0, 3000);
+}
+
+// Scrape Facebook page posts
+async function scrapeFacebookPage(pageUrl) {
+  const items = await runApifyActor("apify~facebook-posts-scraper", {
+    startUrls: [{ url: pageUrl }],
+    resultsLimit: 15,
+    viewOption: "CHRONOLOGICAL"
+  });
   return items.map(item => ({
     text: item.text || item.message || "",
     likes: item.likes || item.reactionsCount || 0,
@@ -261,24 +275,106 @@ async function scrapeCompetitorPage(pageUrl) {
   })).filter(p => p.text);
 }
 
-async function analyzeCompetitors(bizName, competitorData) {
-  const competitorSummary = competitorData.map(c => {
-    const topPosts = c.posts.sort((a,b)=>(b.likes+b.comments)-(a.likes+a.comments)).slice(0,3);
-    return `מתחרה: ${c.name} (${c.url})
-פוסטים מובילים:
-${topPosts.map(p=>`- "${p.text.slice(0,60)}..." → ${p.likes} לייקים, ${p.comments} תגובות`).join("\n")}
-ממוצע אינטראקציות: ${(c.posts.reduce((s,p)=>s+p.likes+p.comments,0)/Math.max(c.posts.length,1)).toFixed(0)}`;
-  }).join("\n\n");
+// Search Google for competitors
+async function searchCompetitors(bizName, bizDescription) {
+  const query = `${bizName} מתחרים OR דומה OR אלטרנטיבה ${bizDescription?.split(" ").slice(0,5).join(" ")||""}`;
+  try {
+    const items = await runApifyActor("apify~google-search-scraper", {
+      queries: query,
+      maxPagesPerQuery: 1,
+      resultsPerPage: 10,
+    });
+    return items.flatMap(i => i.organicResults || []).map(r => ({
+      title: r.title || "",
+      url: r.url || r.link || "",
+      description: r.description || "",
+    })).filter(r => r.url && !r.url.includes(bizName.replace(/\s/g,"")));
+  } catch { return []; }
+}
 
-  const raw = await claudeCall(`אתה מנתח שיווק דיגיטלי מומחה. נתח את המתחרים של "${bizName}":
+// Full business scan: website + find competitors + scrape them
+async function fullBusinessScan(biz, onProgress) {
+  const results = { websiteContent: null, fbPosts: null, competitors: [], competitorPosts: [], searchResults: [] };
 
-${competitorSummary}
+  // Step 1: Scrape business website
+  if (biz.url) {
+    onProgress("סורק את האתר שלך...");
+    try { results.websiteContent = await scrapeWebsite(biz.url); } catch(e) { results.websiteError = e.message; }
+  }
 
-נתח והחזר JSON בלבד:
-{"insights":"תובנה מרכזית על המתחרים","topThemes":["נושא 1","נושא 2","נושא 3"],"bestHooks":["hook 1","hook 2","hook 3"],"gaps":["פער 1","פער 2"],"recommendation":"המלצה קצרה"}`, 600);
+  // Step 2: Scrape own Facebook page
+  const fbTokens = biz.social?.facebook?.tokens;
+  const pageId = fbTokens?.META_PAGE_ID;
+  if (pageId) {
+    onProgress("סורק את דף הפייסבוק שלך...");
+    try {
+      const fbUrl = `https://www.facebook.com/${pageId}`;
+      results.fbPosts = await scrapeFacebookPage(fbUrl);
+    } catch {}
+  }
+
+  // Step 3: Search for competitors
+  onProgress("מחפש מתחרים ברשת...");
+  try { results.searchResults = await searchCompetitors(biz.name, biz.description); } catch {}
+
+  // Step 4: Ask Claude to identify competitors from search results
+  if (results.searchResults.length > 0 || biz.description) {
+    onProgress("מזהה מתחרים עם AI...");
+    try {
+      const searchInfo = results.searchResults.length > 0
+        ? `\nתוצאות חיפוש:\n${results.searchResults.slice(0,8).map(r=>`- ${r.title}: ${r.url} — ${r.description?.slice(0,60)}`).join("\n")}`
+        : "";
+      const raw = await claudeCall(`מצא את המתחרים העיקריים של "${biz.name}".
+${biz.description ? `תיאור: ${biz.description}` : ""}${searchInfo}
+
+החזר JSON בלבד:
+{"competitors":[{"name":"שם","fbUrl":"קישור דף פייסבוק (אם ידוע)","url":"קישור אתר","reason":"למה הוא מתחרה"}],"industry":"תחום","marketPosition":"מיקום בשוק"}
+מצא 3-5 מתחרים רלוונטיים. אם אתה לא יודע את ה-fbUrl שלהם תן מחרוזת ריקה.`, 600);
+      const clean = raw.replace(/```json|```/g,"").trim();
+      const found = JSON.parse(clean);
+      results.competitors = found.competitors || [];
+      results.industry = found.industry;
+      results.marketPosition = found.marketPosition;
+    } catch {}
+  }
+
+  // Step 5: Scrape competitor Facebook pages
+  const fbComps = results.competitors.filter(c => c.fbUrl);
+  if (fbComps.length > 0) {
+    for (const comp of fbComps.slice(0, 3)) {
+      onProgress(`סורק מתחרה: ${comp.name}...`);
+      try {
+        const posts = await scrapeFacebookPage(comp.fbUrl);
+        results.competitorPosts.push({ name: comp.name, url: comp.fbUrl, posts });
+      } catch {}
+    }
+  }
+
+  // Step 6: Full AI analysis with all data
+  onProgress("מנתח הכל עם AI...");
+  const websiteInfo = results.websiteContent ? `\nתוכן מהאתר:\n${results.websiteContent.slice(0,800)}` : "";
+  const ownPostsInfo = results.fbPosts?.length > 0
+    ? `\nפוסטים מהדף שלך:\n${results.fbPosts.slice(0,5).map(p=>`- "${p.text.slice(0,50)}..." → ${p.likes} לייקים, ${p.comments} תגובות`).join("\n")}`
+    : "";
+  const compInfo = results.competitorPosts.length > 0
+    ? `\nפוסטים של מתחרים:\n${results.competitorPosts.map(c=>{
+        const top = c.posts.sort((a,b)=>(b.likes+b.comments)-(a.likes+a.comments)).slice(0,3);
+        return `${c.name}:\n${top.map(p=>`  - "${p.text.slice(0,50)}..." → ${p.likes} לייקים, ${p.comments} תגובות`).join("\n")}`;
+      }).join("\n")}`
+    : "";
+  const compList = results.competitors.length > 0
+    ? `\nמתחרים שזוהו: ${results.competitors.map(c=>`${c.name} (${c.reason})`).join(", ")}`
+    : "";
+
+  const raw = await claudeCall(`אתה מנתח שיווקי מומחה. נתח את העסק הבא באופן מקיף:
+שם: "${biz.name}"${biz.url?`\nאתר: ${biz.url}`:""}${biz.description?`\nתיאור: ${biz.description}`:""}${websiteInfo}${ownPostsInfo}${compList}${compInfo}
+
+נתח הכל והחזר JSON בלבד:
+{"tone":"טון המותג","audience":"קהל יעד","strengths":["יתרון1","יתרון2","יתרון3"],"contentIdeas":["רעיון1","רעיון2","רעיון3","רעיון4"],"bestPlatform":"פלטפורמה מומלצת","postFrequency":"תדירות","competitorInsights":"תובנה מרכזית מהמתחרים","topThemes":["נושא1","נושא2","נושא3"],"bestHooks":["hook1","hook2"],"gaps":["פער1","פער2"],"recommendation":"המלצה אסטרטגית"}`, 800);
 
   const clean = raw.replace(/```json|```/g,"").trim();
-  return JSON.parse(clean);
+  results.analysis = JSON.parse(clean);
+  return results;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -960,6 +1056,7 @@ function Businesses({ businesses, setBusinesses, posts }) {
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({ name:"", icon:BIZ_ICONS[0], color:BIZ_COLORS[0], url:"", description:"" });
   const [scanning, setScanning] = useState({});
+  const [scanProgress, setScanProgress] = useState({});
   const [scrapingComp, setScrapingComp] = useState({});
   const [newCompUrl, setNewCompUrl] = useState({});
 
@@ -975,20 +1072,35 @@ function Businesses({ businesses, setBusinesses, posts }) {
 
   async function scanBiz(biz) {
     setScanning(p=>({...p,[biz.id]:true}));
+    setScanProgress(p=>({...p,[biz.id]:"מתחיל סריקה מקיפה..."}));
     try {
-      const prompt = `אתה מנתח שיווקי מומחה. נתח את העסק הבא וספק תובנות:
-שם: "${biz.name}"${biz.url?`\nאתר: ${biz.url}`:""}${biz.description?`\nתיאור: ${biz.description}`:""}
-
-החזר JSON בלבד (בלי markdown):
-{"tone":"טון המותג המומלץ","audience":"קהל יעד ראשי","strengths":["יתרון 1","יתרון 2","יתרון 3"],"contentIdeas":["רעיון 1","רעיון 2","רעיון 3","רעיון 4"],"competitors":["מתחרה 1","מתחרה 2"],"bestPlatform":"הפלטפורמה המומלצת","postFrequency":"תדירות פרסום מומלצת"}`;
-      const raw = await claudeCall(prompt, 600);
-      const clean = raw.replace(/```json|```/g,"").trim();
-      const result = JSON.parse(clean);
-      updateBiz(biz.id, { scanResult: result });
+      const results = await fullBusinessScan(biz, (msg) => setScanProgress(p=>({...p,[biz.id]:msg})));
+      const analysis = results.analysis || {};
+      // Store both the analysis (for existing UI) and the full scan data
+      updateBiz(biz.id, {
+        scanResult: analysis,
+        fullScanData: results,
+        // Auto-add found competitors
+        competitors: results.competitors?.length > 0
+          ? results.competitors.map((c,i) => ({ id: Date.now()+i, name: c.name, url: c.fbUrl || c.url || "", reason: c.reason }))
+          : (biz.competitors || []),
+        // Store competitor posts if found
+        competitorData: results.competitorPosts?.length > 0 ? results.competitorPosts : (biz.competitorData || null),
+        competitorAnalysis: analysis.competitorInsights ? {
+          insights: analysis.competitorInsights,
+          topThemes: analysis.topThemes,
+          bestHooks: analysis.bestHooks,
+          gaps: analysis.gaps,
+          recommendation: analysis.recommendation
+        } : (biz.competitorAnalysis || null),
+        competitorLastScan: results.competitorPosts?.length > 0 ? new Date().toISOString() : (biz.competitorLastScan || null),
+        lastFullScan: new Date().toISOString()
+      });
     } catch(e) {
-      updateBiz(biz.id, { scanResult: { error: e.message || "שגיאה בסריקה — הגדר API key בדף ניהול" } });
+      updateBiz(biz.id, { scanResult: { error: e.message || "שגיאה בסריקה — הגדר API keys בדף ניהול (Claude + Apify)" } });
     }
     setScanning(p=>({...p,[biz.id]:false}));
+    setScanProgress(p=>({...p,[biz.id]:null}));
   }
 
   function setSocialToken(bizId, platformId, key, value) {
@@ -1127,7 +1239,7 @@ function Businesses({ businesses, setBusinesses, posts }) {
             </div>
             <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
               <Btn sm grad="linear-gradient(135deg,#8B5CF6,#06B6D4)" disabled={scanning[biz.id]} onClick={e=>{e.stopPropagation();scanBiz(biz);}}>
-                {scanning[biz.id]?<><Spinner size={10}/> סורק...</>:"סרוק AI"}
+                {scanning[biz.id]?<><Spinner size={10}/> {scanProgress[biz.id]||"סורק..."}</>:"סרוק AI"}
               </Btn>
               <span style={{color:T.textDim,fontSize:16}}>{expanded?"▲":"▼"}</span>
             </div>
@@ -1261,7 +1373,10 @@ function Businesses({ businesses, setBusinesses, posts }) {
 
             {/* Scan results */}
             {result&&!result.error&&<div style={{background:"#10B98108",border:"1px solid #10B98118",borderRadius:10,padding:14,marginBottom:14}}>
-              <div style={{color:"#10B981",fontWeight:600,fontSize:12,marginBottom:10}}>תוצאות סריקת AI</div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div style={{color:"#10B981",fontWeight:600,fontSize:12}}>תוצאות סריקת AI {biz.fullScanData?"(סריקה מקיפה)":""}</div>
+                {biz.lastFullScan&&<div style={{color:T.textDim,fontSize:9}}>סריקה: {new Date(biz.lastFullScan).toLocaleString("he-IL")}</div>}
+              </div>
               <div className="two-col-grid" style={{display:"grid",gap:10,marginBottom:10}}>
                 <div><span style={{color:T.textMuted,fontSize:11}}>טון: </span><span style={{color:T.text,fontSize:12}}>{result.tone}</span></div>
                 <div><span style={{color:T.textMuted,fontSize:11}}>קהל יעד: </span><span style={{color:T.text,fontSize:12}}>{result.audience}</span></div>
@@ -1272,9 +1387,28 @@ function Businesses({ businesses, setBusinesses, posts }) {
                 <div style={{color:T.textMuted,fontSize:10,marginBottom:4}}>יתרונות:</div>
                 <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{result.strengths.map((s,i)=><Tag key={i} label={s} color="#10B981"/>)}</div>
               </div>}
-              {result.contentIdeas?.length>0&&<div>
+              {result.contentIdeas?.length>0&&<div style={{marginBottom:8}}>
                 <div style={{color:T.textMuted,fontSize:10,marginBottom:4}}>רעיונות לתוכן:</div>
                 <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{result.contentIdeas.map((s,i)=><Tag key={i} label={s} color="#8B5CF6"/>)}</div>
+              </div>}
+              {result.topThemes?.length>0&&<div style={{marginBottom:8}}>
+                <div style={{color:T.textMuted,fontSize:10,marginBottom:4}}>נושאים חמים:</div>
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{result.topThemes.map((t,i)=><Tag key={i} label={t} color="#06B6D4"/>)}</div>
+              </div>}
+              {result.bestHooks?.length>0&&<div style={{marginBottom:8}}>
+                <div style={{color:T.textMuted,fontSize:10,marginBottom:4}}>Hooks שעובדים:</div>
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{result.bestHooks.map((h,i)=><Tag key={i} label={h} color="#EC4899"/>)}</div>
+              </div>}
+              {result.gaps?.length>0&&<div style={{marginBottom:8}}>
+                <div style={{color:T.textMuted,fontSize:10,marginBottom:4}}>פערים — הזדמנויות:</div>
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{result.gaps.map((g,i)=><Tag key={i} label={g} color="#F59E0B"/>)}</div>
+              </div>}
+              {result.competitorInsights&&<div style={{background:T.inputBg,borderRadius:8,padding:10,marginBottom:8}}>
+                <div style={{color:T.textMuted,fontSize:10,marginBottom:4}}>תובנות מתחרים:</div>
+                <div style={{color:T.textSec,fontSize:12,direction:"rtl",lineHeight:1.5}}>{result.competitorInsights}</div>
+              </div>}
+              {result.recommendation&&<div style={{background:"#8B5CF608",border:"1px solid #8B5CF618",borderRadius:8,padding:10}}>
+                <div style={{color:"#8B5CF6",fontSize:12,fontWeight:600,direction:"rtl"}}>{result.recommendation}</div>
               </div>}
             </div>}
             {result?.error&&<div style={{color:"#EF4444",fontSize:12,padding:10,background:"#EF444408",borderRadius:10,marginBottom:14}}>{result.error}</div>}
