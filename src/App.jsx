@@ -948,15 +948,34 @@ function Publish({ posts, businesses }) {
     try {
       const biz = businesses.find(b=>b.name===post.business);
       const tokens = biz?.social?.[platformId]?.tokens || {};
-      const r = await fetch("/api/publish/post", {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ postId:post.id, platform:platformId, content:post.content, hashtags:post.hashtags, tokens })
-      });
-      const d = await r.json();
-      setResults(p=>({...p,[key]: d.ok ? "ok" : d.error||"failed"}));
-    } catch {
-      setResults(p=>({...p,[key]:"צריך backend פעיל"}));
+      const hashtags = (post.hashtags||[]).map(h=>h.startsWith("#")?h:`#${h}`).join(" ");
+      const message = post.content + (hashtags ? "\n\n" + hashtags : "");
+
+      if (platformId === "facebook") {
+        const pageId = tokens.META_PAGE_ID;
+        const accessToken = tokens.META_ACCESS_TOKEN;
+        if (!pageId || !accessToken) throw new Error("חסר Page ID או Access Token");
+        const r = await fetch(`https://graph.facebook.com/v25.0/${pageId}/feed`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, access_token: accessToken })
+        });
+        const d = await r.json();
+        if (d.id) {
+          setResults(p=>({...p,[key]:"ok"}));
+        } else {
+          setResults(p=>({...p,[key]: d.error?.message || "שגיאה בפרסום"}));
+        }
+      } else if (platformId === "instagram") {
+        const igUserId = tokens.META_IG_USER_ID;
+        const accessToken = tokens.META_ACCESS_TOKEN;
+        if (!igUserId || !accessToken) throw new Error("חסר IG User ID או Access Token");
+        setResults(p=>({...p,[key]:"אינסטגרם דורש תמונה — בקרוב"}));
+      } else {
+        setResults(p=>({...p,[key]:"פלטפורמה לא נתמכת עדיין"}));
+      }
+    } catch (e) {
+      setResults(p=>({...p,[key]: e.message || "שגיאה"}));
     }
     setPublishing(p=>({...p,[key]:false}));
   }
