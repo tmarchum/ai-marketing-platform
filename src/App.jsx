@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 
 // ═══════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -72,37 +72,63 @@ const NAV_ITEMS = [
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ═══════════════════════════════════════════════════════════════════
+// THEME — LIGHT
+// ═══════════════════════════════════════════════════════════════════
+const T = {
+  bg: "#f5f6fa",
+  card: "#ffffff",
+  sidebar: "#ffffff",
+  topbar: "#ffffff",
+  border: "#e2e5ea",
+  borderLight: "#eef0f4",
+  text: "#1a1a2e",
+  textSec: "#4a5568",
+  textMuted: "#8492a6",
+  textDim: "#a0aec0",
+  inputBg: "#f7f8fc",
+  inputBorder: "#dfe3eb",
+  hoverBg: "#f0f2f8",
+  accent: "#6C5CE7",
+  accentLight: "#6C5CE710",
+  success: "#10B981",
+  danger: "#EF4444",
+  shadow: "0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)",
+  shadowLg: "0 4px 14px rgba(0,0,0,0.08)",
+};
+
+// ═══════════════════════════════════════════════════════════════════
 // SHARED UI
 // ═══════════════════════════════════════════════════════════════════
-function Spinner({ size=16, color="#a78bfa" }) {
+function Spinner({ size=16, color="#6C5CE7" }) {
   return <span style={{ display:"inline-block", width:size, height:size,
     border:`2px solid ${color}33`, borderTopColor:color,
     borderRadius:"50%", animation:"spin 0.7s linear infinite", flexShrink:0 }} />;
 }
-function Btn({ children, onClick, disabled, grad, color="#fff", bg="#1a1a1a", sm, full, style={} }) {
+function Btn({ children, onClick, disabled, grad, color="#fff", bg="#1a1a2e", sm, full, style={} }) {
   return <button onClick={onClick} disabled={disabled} style={{
-    background: disabled?"#111": grad||bg,
-    color: disabled?"#333":color,
-    border: grad?"none":`1px solid ${disabled?"#1f1f1f":color+"33"}`,
-    borderRadius:8, padding: sm?"5px 12px":"9px 20px",
-    fontSize: sm?11:13, fontWeight:700, cursor:disabled?"not-allowed":"pointer",
+    background: disabled?"#e2e5ea": grad||bg,
+    color: disabled?"#a0aec0":color,
+    border: grad?"none":`1px solid ${disabled?"#e2e5ea":color+"33"}`,
+    borderRadius:10, padding: sm?"6px 14px":"10px 22px",
+    fontSize: sm?12:13, fontWeight:600, cursor:disabled?"not-allowed":"pointer",
     fontFamily:"inherit", display:"inline-flex", alignItems:"center", gap:6,
     transition:"all 0.2s", width:full?"100%":"auto", justifyContent:full?"center":"flex-start",
+    boxShadow: disabled?"none":"0 1px 2px rgba(0,0,0,0.05)",
     ...style }}>{children}</button>;
 }
-function Tag({ label, color="#666" }) {
-  return <span style={{ background:color+"18", color, border:`1px solid ${color}33`,
-    borderRadius:6, padding:"2px 9px", fontSize:11, fontWeight:600 }}>{label}</span>;
+function Tag({ label, color="#6c757d" }) {
+  return <span style={{ background:color+"12", color, border:`1px solid ${color}22`,
+    borderRadius:8, padding:"3px 10px", fontSize:11, fontWeight:600 }}>{label}</span>;
 }
 function Card({ children, accent, style={} }) {
-  return <div style={{ background:"#0d0d0d",
-    border:`1px solid ${accent||"#1e1e1e"}`,
-    borderRadius:12, padding:20, ...style }}>{children}</div>;
+  return <div style={{ background:T.card,
+    border:`1px solid ${accent||T.border}`,
+    borderRadius:14, padding:20, boxShadow:T.shadow, ...style }}>{children}</div>;
 }
 function SectionTitle({ children, sub }) {
   return <div style={{ marginBottom:20 }}>
-    <h2 style={{ fontWeight:700, fontSize:18, margin:0 }}>{children}</h2>
-    {sub && <p style={{ color:"#444", fontSize:13, margin:"4px 0 0" }}>{sub}</p>}
+    <h2 style={{ fontWeight:700, fontSize:20, margin:0, color:T.text }}>{children}</h2>
+    {sub && <p style={{ color:T.textMuted, fontSize:13, margin:"4px 0 0" }}>{sub}</p>}
   </div>;
 }
 
@@ -110,7 +136,6 @@ function SectionTitle({ children, sub }) {
 // CLAUDE API
 // ═══════════════════════════════════════════════════════════════════
 async function claudeCall(prompt, maxTokens=800) {
-  // Try backend proxy first
   try {
     const r = await fetch("/api/content/claude", {
       method:"POST",
@@ -119,7 +144,6 @@ async function claudeCall(prompt, maxTokens=800) {
     });
     if (r.ok) { const d = await r.json(); if (!d.error) return d.text; }
   } catch {}
-  // Fallback: use API key from admin settings via CORS proxy
   const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
   const apiKey = keys.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("הגדר ANTHROPIC_API_KEY בדף ניהול");
@@ -132,6 +156,117 @@ async function claudeCall(prompt, maxTokens=800) {
   const d2 = await r2.json();
   if (d2.error) throw new Error(d2.error.message||JSON.stringify(d2.error));
   return d2.content?.[0]?.text || "";
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// META GRAPH API — ANALYTICS
+// ═══════════════════════════════════════════════════════════════════
+async function fetchPageInsights(pageId, accessToken) {
+  try {
+    const metrics = "page_impressions,page_engaged_users,page_post_engagements,page_fan_adds";
+    const r = await fetch(
+      `https://graph.facebook.com/v25.0/${pageId}/insights?metric=${metrics}&period=day&date_preset=last_7d&access_token=${accessToken}`
+    );
+    const d = await r.json();
+    if (d.error) return { error: d.error.message };
+    return d.data || [];
+  } catch(e) { return { error: e.message }; }
+}
+
+async function fetchPostInsights(postId, accessToken) {
+  try {
+    const r = await fetch(
+      `https://graph.facebook.com/v25.0/${postId}?fields=message,created_time,likes.summary(true),comments.summary(true),shares&access_token=${accessToken}`
+    );
+    const d = await r.json();
+    if (d.error) return null;
+    return {
+      id: d.id,
+      message: d.message || "",
+      created: d.created_time,
+      likes: d.likes?.summary?.total_count || 0,
+      comments: d.comments?.summary?.total_count || 0,
+      shares: d.shares?.count || 0,
+    };
+  } catch { return null; }
+}
+
+async function fetchPagePosts(pageId, accessToken, limit=10) {
+  try {
+    const r = await fetch(
+      `https://graph.facebook.com/v25.0/${pageId}/posts?fields=message,created_time,likes.summary(true),comments.summary(true),shares&limit=${limit}&access_token=${accessToken}`
+    );
+    const d = await r.json();
+    if (d.error) return [];
+    return (d.data||[]).map(p=>({
+      id: p.id,
+      message: p.message || "",
+      created: p.created_time,
+      likes: p.likes?.summary?.total_count || 0,
+      comments: p.comments?.summary?.total_count || 0,
+      shares: p.shares?.count || 0,
+    }));
+  } catch { return []; }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// META ADS API — BOOST
+// ═══════════════════════════════════════════════════════════════════
+async function boostPost(postId, accessToken, adAccountId, budget, duration, targeting) {
+  try {
+    // Create campaign
+    const campR = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/campaigns`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        name: `Boost_${postId}_${Date.now()}`,
+        objective: "OUTCOME_ENGAGEMENT",
+        status: "PAUSED",
+        special_ad_categories: [],
+        access_token: accessToken
+      })
+    });
+    const camp = await campR.json();
+    if (camp.error) return { error: camp.error.message };
+
+    // Create ad set
+    const endTime = new Date(Date.now() + duration * 24 * 60 * 60 * 1000).toISOString();
+    const adSetR = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/adsets`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        name: `Boost_AdSet_${postId}`,
+        campaign_id: camp.id,
+        daily_budget: Math.round(budget * 100),
+        billing_event: "IMPRESSIONS",
+        optimization_goal: "POST_ENGAGEMENT",
+        targeting: targeting || { geo_locations: { countries: ["IL"] }, age_min: 18, age_max: 65 },
+        start_time: new Date().toISOString(),
+        end_time: endTime,
+        status: "PAUSED",
+        access_token: accessToken
+      })
+    });
+    const adSet = await adSetR.json();
+    if (adSet.error) return { error: adSet.error.message };
+
+    // Create ad from existing post
+    const adR = await fetch(`https://graph.facebook.com/v25.0/${adAccountId}/ads`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        name: `Boost_Ad_${postId}`,
+        adset_id: adSet.id,
+        creative: { object_story_id: postId },
+        status: "PAUSED",
+        access_token: accessToken
+      })
+    });
+    const ad = await adR.json();
+    if (ad.error) return { error: ad.error.message };
+
+    return { success: true, campaignId: camp.id, adSetId: adSet.id, adId: ad.id };
+  } catch(e) { return { error: e.message }; }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -166,26 +301,26 @@ function PipelineBar({ stages, pipeline, compact }) {
   if (!pipeline) return null;
   if (compact) {
     const cur = stages.find(s=>s.id===pipeline.current);
-    if (pipeline.done) return <Tag label="✅ פורסם" color="#10B981"/>;
+    if (pipeline.done) return <Tag label="פורסם" color="#10B981"/>;
     if (cur) return <span style={{display:"flex",alignItems:"center",gap:5,fontSize:11}}>
       <Spinner size={10} color={cur.color}/><span style={{color:cur.color}}>{cur.label}</span>
     </span>;
     return null;
   }
-  return <div style={{display:"flex",gap:4,marginTop:14}}>
+  return <div style={{display:"flex",gap:4,marginTop:14,flexWrap:"wrap"}}>
     {stages.map((s,i)=>{
       const st = pipeline.stages?.[s.id];
       const active = pipeline.current===s.id;
       return <div key={s.id} style={{display:"flex",alignItems:"center",gap:4}}>
         <div style={{ width:32,height:32,borderRadius:"50%",
-          background: st==="done"?s.color+"25":active?s.color+"15":"#111",
-          border:`2px solid ${st==="done"||active?s.color:"#222"}`,
+          background: st==="done"?s.color+"20":active?s.color+"10":T.inputBg,
+          border:`2px solid ${st==="done"||active?s.color:T.border}`,
           display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,
-          boxShadow:active?`0 0 12px ${s.color}55`:"none",transition:"all 0.4s" }}>
+          boxShadow:active?`0 0 12px ${s.color}33`:"none",transition:"all 0.4s" }}>
           {st==="done"?"✓":active?<Spinner size={12} color={s.color}/>:s.icon}
         </div>
-        <div style={{fontSize:9,color:st==="done"||active?s.color:"#333",fontWeight:active?700:400}}>{s.label}</div>
-        {i<stages.length-1&&<div style={{width:10,height:2,background:st==="done"?s.color:"#222",marginLeft:4}}/>}
+        <div style={{fontSize:9,color:st==="done"||active?s.color:T.textDim,fontWeight:active?700:400}}>{s.label}</div>
+        {i<stages.length-1&&<div style={{width:10,height:2,background:st==="done"?s.color:T.border,marginLeft:4}}/>}
       </div>;
     })}
   </div>;
@@ -214,22 +349,22 @@ function PostCard({ post, onUpdate, compact }) {
   }
 
   return <Card accent={post.pipeline?.done||post.ugc?.done?"#10B98133":undefined}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:6}}>
       <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
         <Tag label={post.platform} color={pl.color}/>
-        <Tag label={post.business} color="#666"/>
+        <Tag label={post.business} color={T.textMuted}/>
         {post.pipeline&&<PipelineBar stages={MEDIA_STAGES} pipeline={post.pipeline} compact/>}
         {post.ugc&&<PipelineBar stages={UGC_STAGES} pipeline={post.ugc} compact/>}
       </div>
-      <span style={{color:"#333",fontSize:11}}>{post.date}</span>
+      <span style={{color:T.textDim,fontSize:11}}>{post.date}</span>
     </div>
 
     {editing
       ? <textarea value={txt} onChange={e=>setTxt(e.target.value)} style={{
-          width:"100%",minHeight:80,background:"#111",border:"1px solid #333",
-          borderRadius:8,color:"#ddd",padding:10,fontSize:12,fontFamily:"inherit",
+          width:"100%",minHeight:80,background:T.inputBg,border:`1px solid ${T.inputBorder}`,
+          borderRadius:10,color:T.text,padding:12,fontSize:13,fontFamily:"inherit",
           direction:"rtl",resize:"vertical",boxSizing:"border-box"}}/>
-      : <p style={{color:"#bbb",fontSize:13,lineHeight:1.7,margin:"0 0 10px",
+      : <p style={{color:T.textSec,fontSize:13,lineHeight:1.7,margin:"0 0 10px",
           direction:"rtl",whiteSpace:"pre-wrap"}}>{txt}</p>
     }
 
@@ -239,21 +374,21 @@ function PostCard({ post, onUpdate, compact }) {
 
     <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
       {!post.approved
-        ? <Btn sm bg="#00ff8820" color="#00ff88" onClick={()=>onUpdate({...post,approved:true})}>✓ אשר</Btn>
-        : <Tag label="✓ מאושר" color="#00ff88"/>
+        ? <Btn sm bg="#10B98115" color="#10B981" onClick={()=>onUpdate({...post,approved:true})}>אשר</Btn>
+        : <Tag label="מאושר" color="#10B981"/>
       }
       {editing
-        ? <><Btn sm bg="#00ff8820" color="#00ff88" onClick={()=>{onUpdate({...post,content:txt});setEditing(false);}}>שמור</Btn>
-            <Btn sm onClick={()=>setEditing(false)}>ביטול</Btn></>
-        : <Btn sm onClick={()=>setEditing(true)}>✏️</Btn>
+        ? <><Btn sm bg="#10B98115" color="#10B981" onClick={()=>{onUpdate({...post,content:txt});setEditing(false);}}>שמור</Btn>
+            <Btn sm bg={T.inputBg} color={T.textMuted} onClick={()=>setEditing(false)}>ביטול</Btn></>
+        : <Btn sm bg={T.inputBg} color={T.textSec} onClick={()=>setEditing(true)}>ערוך</Btn>
       }
       {!post.pipeline
-        ? <Btn sm bg="#F59E0B20" color="#F59E0B" onClick={startMedia}>🖼️ מדיה AI</Btn>
-        : <Btn sm onClick={()=>setExp(p=>!p)}>{exp?"▲":"▼"} מדיה</Btn>
+        ? <Btn sm bg="#F59E0B15" color="#F59E0B" onClick={startMedia}>מדיה AI</Btn>
+        : <Btn sm bg={T.inputBg} color={T.textSec} onClick={()=>setExp(p=>!p)}>{exp?"▲":"▼"} מדיה</Btn>
       }
       {!post.ugc
-        ? <Btn sm bg="#EC489920" color="#EC4899" onClick={startUGC}>🎭 UGC</Btn>
-        : <Btn sm onClick={()=>setExp(p=>!p)}>{exp?"▲":"▼"} UGC</Btn>
+        ? <Btn sm bg="#EC489915" color="#EC4899" onClick={startUGC}>UGC</Btn>
+        : <Btn sm bg={T.inputBg} color={T.textSec} onClick={()=>setExp(p=>!p)}>{exp?"▲":"▼"} UGC</Btn>
       }
     </div>
 
@@ -280,16 +415,16 @@ function Dashboard({ posts, sources, businesses }) {
   ];
   return <div style={{animation:"fadeUp 0.3s ease"}}>
     <SectionTitle sub="סקירה כללית של המערכת">דשבורד</SectionTitle>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:28}}>
+    <div className="stats-grid" style={{display:"grid",gap:12,marginBottom:28}}>
       {stats.map(s=><Card key={s.label} style={{textAlign:"center",padding:16}}>
         <div style={{fontSize:24}}>{s.icon}</div>
         <div style={{fontSize:28,fontWeight:700,color:s.color,margin:"4px 0"}}>{s.value}</div>
-        <div style={{color:"#555",fontSize:11}}>{s.label}</div>
+        <div style={{color:T.textMuted,fontSize:11}}>{s.label}</div>
       </Card>)}
     </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+    <div className="two-col-grid" style={{display:"grid",gap:16}}>
       <Card>
-        <div style={{color:"#666",fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1}}>PIPELINE</div>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1}}>PIPELINE</div>
         {[
           ["Claude API","כתיבת תוכן + פרומפטים","#8B5CF6"],
           ["Flux (Replicate)","יצירת תמונות","#F59E0B"],
@@ -297,27 +432,27 @@ function Dashboard({ posts, sources, businesses }) {
           ["ElevenLabs","קול עברי (UGC)","#06B6D4"],
           ["D-ID","Avatar מדבר","#F59E0B"],
           ["Meta Graph API","פרסום אוטומטי","#1877F2"],
-        ].map(([name,desc,c])=><div key={name} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #111"}}>
+        ].map(([name,desc,c])=><div key={name} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:`1px solid ${T.borderLight}`}}>
           <div style={{width:8,height:8,borderRadius:"50%",background:c,flexShrink:0}}/>
           <div style={{flex:1}}>
-            <div style={{color:"#ccc",fontSize:12,fontWeight:600}}>{name}</div>
-            <div style={{color:"#444",fontSize:11}}>{desc}</div>
+            <div style={{color:T.text,fontSize:12,fontWeight:600}}>{name}</div>
+            <div style={{color:T.textMuted,fontSize:11}}>{desc}</div>
           </div>
           <Tag label="פעיל" color={c}/>
         </div>)}
       </Card>
       <Card>
-        <div style={{color:"#666",fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1}}>עלויות חודשיות</div>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1}}>עלויות חודשיות</div>
         {[
           ["100 פוסטים + מדיה","~$40","#10B981"],
           ["100 סרטוני UGC","~$19","#EC4899"],
           ["Backend (Railway)","$7","#8B5CF6"],
           ["סה\"כ","~$66/חודש","#F59E0B"],
-        ].map(([k,v,c])=><div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid #111"}}>
-          <span style={{color:"#666",fontSize:13}}>{k}</span>
+        ].map(([k,v,c])=><div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${T.borderLight}`}}>
+          <span style={{color:T.textSec,fontSize:13}}>{k}</span>
           <span style={{color:c,fontWeight:700,fontSize:13}}>{v}</span>
         </div>)}
-        <p style={{color:"#444",fontSize:11,marginTop:12,lineHeight:1.6}}>
+        <p style={{color:T.textMuted,fontSize:11,marginTop:12,lineHeight:1.6}}>
           עלות לליד ממוצעת: $2–8.<br/>
           על 20 לידים/חודש — ROI חיובי מהיום הראשון.
         </p>
@@ -346,45 +481,45 @@ function Sources({ sources, setSources }) {
 
   return <div style={{animation:"fadeUp 0.3s ease"}}>
     <SectionTitle sub="הוסף אתרים, תוכן ומתחרים">מקורות מידע</SectionTitle>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:24}}>
+    <div className="two-col-grid" style={{display:"grid",gap:16,marginBottom:24}}>
       <Card>
-        <div style={{color:"#888",fontSize:11,fontWeight:700,marginBottom:10}}>הוסף URL</div>
-        <div style={{display:"flex",gap:8,marginBottom:8}}>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:10}}>הוסף URL</div>
+        <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
           <input value={newUrl} onChange={e=>setNewUrl(e.target.value)} placeholder="https://..."
-            style={{flex:1,background:"#111",border:"1px solid #222",borderRadius:8,
-              padding:"8px 12px",color:"#ddd",fontSize:12,fontFamily:"monospace"}}/>
+            style={{flex:1,minWidth:150,background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,
+              padding:"9px 12px",color:T.text,fontSize:12,fontFamily:"monospace"}}/>
           <select value={role} onChange={e=>setRole(e.target.value)} style={{
-            background:"#111",border:"1px solid #222",color:"#aaa",
-            borderRadius:8,padding:"8px 10px",fontSize:12,fontFamily:"inherit"}}>
+            background:T.inputBg,border:`1px solid ${T.inputBorder}`,color:T.textSec,
+            borderRadius:10,padding:"9px 10px",fontSize:12,fontFamily:"inherit"}}>
             {["עסק","מתחרה","השראה","מקור"].map(r=><option key={r}>{r}</option>)}
           </select>
         </div>
         <Btn sm grad="linear-gradient(135deg,#8B5CF6,#3B82F6)" onClick={addUrl}>הוסף</Btn>
       </Card>
       <Card>
-        <div style={{color:"#888",fontSize:11,fontWeight:700,marginBottom:10}}>תוכן ידני</div>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:10}}>תוכן ידני</div>
         <textarea value={manualTxt} onChange={e=>setManualTxt(e.target.value)}
           placeholder="הדבק תיאור עסק, מסרים, יתרונות..."
-          style={{width:"100%",minHeight:70,background:"#111",border:"1px solid #222",
-            borderRadius:8,color:"#ddd",padding:10,fontSize:12,fontFamily:"inherit",
+          style={{width:"100%",minHeight:70,background:T.inputBg,border:`1px solid ${T.inputBorder}`,
+            borderRadius:10,color:T.text,padding:12,fontSize:12,fontFamily:"inherit",
             direction:"rtl",resize:"none",boxSizing:"border-box",marginBottom:8}}/>
-        <Btn sm bg="#7C3AED20" color="#a78bfa" onClick={addManual}>הוסף תוכן</Btn>
+        <Btn sm bg="#8B5CF615" color="#8B5CF6" onClick={addManual}>הוסף תוכן</Btn>
       </Card>
     </div>
     <div style={{display:"flex",flexDirection:"column",gap:10}}>
       {sources.map(s=>{
         const c = s.type==="competitor"?"#EF4444":s.type==="manual"?"#8B5CF6":"#10B981";
         return <Card key={s.id} style={{display:"flex",alignItems:"center",gap:14,padding:14}}>
-          <div style={{width:36,height:36,borderRadius:8,background:c+"20",
+          <div style={{width:36,height:36,borderRadius:10,background:c+"15",
             display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>
             {s.type==="url"?"🌐":s.type==="manual"?"✏️":"🎯"}
           </div>
-          <div style={{flex:1}}>
-            <div style={{color:"#eee",fontSize:13,fontWeight:600}}>{s.name}</div>
-            <div style={{color:"#444",fontSize:11,fontFamily:"monospace"}}>{s.url}</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{color:T.text,fontSize:13,fontWeight:600}}>{s.name}</div>
+            <div style={{color:T.textMuted,fontSize:11,fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.url}</div>
           </div>
           <Tag label={s.role} color={c}/>
-          <Btn sm onClick={()=>setSources(p=>p.filter(x=>x.id!==s.id))}>✕</Btn>
+          <Btn sm bg={T.inputBg} color={T.textMuted} onClick={()=>setSources(p=>p.filter(x=>x.id!==s.id))}>✕</Btn>
         </Card>;
       })}
     </div>
@@ -392,7 +527,7 @@ function Sources({ sources, setSources }) {
 }
 
 // CONTENT
-function Content({ posts, setPosts, sources, businesses }) {
+function Content({ posts, setPosts, sources, businesses, analyticsData }) {
   const BUSINESSES = businesses || DEFAULT_BUSINESSES;
   const [selBiz, setSelBiz] = useState(BUSINESSES[0]);
   const [selPlatforms, setSelPlatforms] = useState(["facebook","instagram"]);
@@ -413,8 +548,19 @@ function Content({ posts, setPosts, sources, businesses }) {
       const existingContent = existingBizPosts.length>0
         ? `\n\nפוסטים קיימים (אל תחזור עליהם!):\n${existingBizPosts.slice(0,5).map(p=>`- [${p.platform}] ${p.content.slice(0,60)}...`).join("\n")}`
         : "";
+
+      // Smart content: include engagement insights if available
+      let engagementHint = "";
+      const bizAnalytics = analyticsData?.[selBiz.id];
+      if (bizAnalytics?.topPosts?.length > 0) {
+        const top = bizAnalytics.topPosts.slice(0,3);
+        engagementHint = `\n\nנתוני ביצועים (פוסטים מוצלחים):
+${top.map(p=>`- "${p.message?.slice(0,50)}..." → ${p.likes} לייקים, ${p.comments} תגובות`).join("\n")}
+למד מהפוסטים המוצלחים — מה הטון? מה ה-hook? מה הנושא? צור תוכן דומה באיכות אבל ייחודי.`;
+      }
+
       const raw = await claudeCall(`אתה מומחה שיווק ישראלי. צור 2 פוסטים חדשים ושונים לעסק: ${selBiz.name}.${bizDesc}${scanInfo}${sourceInfo}
-פלטפורמות: ${platLabels}. סוגים: ${selTypes.join(", ")}. מטרה: לידים.${existingContent}
+פלטפורמות: ${platLabels}. סוגים: ${selTypes.join(", ")}. מטרה: לידים.${existingContent}${engagementHint}
 חשוב: התאם טון ושפה לעסק. צור תוכן ייחודי שלא דומה לפוסטים קיימים.
 החזר JSON בלבד: {"posts":[{"platform":"פייסבוק","type":"פוסט קצר","content":"...","hashtags":["..."]}]}`);
       const clean = raw.replace(/```json|```/g,"").trim();
@@ -424,8 +570,8 @@ function Content({ posts, setPosts, sources, businesses }) {
         date:"ד׳ 03.04 · 20:00", approved:false, media:null, ugc:null, pipeline:null
       }));
       setPosts(p=>[...newPosts,...p]);
-      setMsg(`✅ נוצרו ${newPosts.length} פוסטים עבור ${selBiz.name}`);
-    } catch(e) { setMsg(`⚠️ ${e.message || "שגיאה — בדוק API key בדף ניהול"}`); }
+      setMsg(`נוצרו ${newPosts.length} פוסטים עבור ${selBiz.name}`);
+    } catch(e) { setMsg(`שגיאה: ${e.message || "בדוק API key בדף ניהול"}`); }
     setLoading(false);
   }
 
@@ -434,25 +580,26 @@ function Content({ posts, setPosts, sources, businesses }) {
   }
 
   return <div style={{animation:"fadeUp 0.3s ease"}}>
-    <SectionTitle sub="יצירת פוסטים לפי עסק — AI בודק פוסטים קיימים">תוכן ומדיה</SectionTitle>
+    <SectionTitle sub="יצירת פוסטים לפי עסק — AI לומד מביצועים קודמים">תוכן ומדיה</SectionTitle>
 
     {/* Business selector */}
     <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
       {BUSINESSES.map(b=>{
         const cnt = posts.filter(p=>p.business===b.name).length;
         return <button key={b.id} onClick={()=>setSelBiz(b)} style={{
-          display:"flex",alignItems:"center",gap:8,padding:"10px 16px",borderRadius:10,cursor:"pointer",
-          background:selBiz?.id===b.id?b.color+"15":"#0d0d0d",
-          border:`1px solid ${selBiz?.id===b.id?b.color:"#1e1e1e"}`,fontFamily:"inherit",
-          color:selBiz?.id===b.id?"#eee":"#666",fontWeight:selBiz?.id===b.id?700:400,fontSize:13,transition:"all 0.2s"}}>
+          display:"flex",alignItems:"center",gap:8,padding:"10px 16px",borderRadius:12,cursor:"pointer",
+          background:selBiz?.id===b.id?b.color+"12":T.card,
+          border:`1px solid ${selBiz?.id===b.id?b.color:T.border}`,fontFamily:"inherit",
+          color:selBiz?.id===b.id?T.text:T.textMuted,fontWeight:selBiz?.id===b.id?700:400,fontSize:13,transition:"all 0.2s",
+          boxShadow: selBiz?.id===b.id?`0 0 0 2px ${b.color}33`:"none"}}>
           <span style={{fontSize:18}}>{b.icon}</span>{b.name}
-          <span style={{background:"#ffffff10",borderRadius:10,padding:"1px 7px",fontSize:10}}>{cnt}</span>
+          <span style={{background:T.inputBg,borderRadius:10,padding:"1px 7px",fontSize:10,color:T.textMuted}}>{cnt}</span>
         </button>;
       })}
     </div>
 
     {/* Existing posts notice */}
-    {existingBizPosts.length>0&&<div style={{background:"#8B5CF610",border:"1px solid #8B5CF622",borderRadius:8,
+    {existingBizPosts.length>0&&<div style={{background:"#8B5CF608",border:"1px solid #8B5CF618",borderRadius:10,
       padding:"10px 14px",marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
       <span style={{color:"#8B5CF6",fontSize:12}}>📋</span>
       <span style={{color:"#8B5CF6",fontSize:12}}>
@@ -464,26 +611,26 @@ function Content({ posts, setPosts, sources, businesses }) {
     <Card style={{marginBottom:20}}>
       <div style={{display:"flex",gap:16,flexWrap:"wrap",marginBottom:16}}>
         <div>
-          <div style={{color:"#555",fontSize:11,marginBottom:8}}>פלטפורמות</div>
-          <div style={{display:"flex",gap:6}}>
+          <div style={{color:T.textMuted,fontSize:11,marginBottom:8}}>פלטפורמות</div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {PLATFORMS.map(p=><button key={p.id} onClick={()=>setSelPlatforms(prev=>
               prev.includes(p.id)?prev.filter(x=>x!==p.id):[...prev,p.id])} style={{
-              background:selPlatforms.includes(p.id)?p.color+"20":"#111",
-              border:`1px solid ${selPlatforms.includes(p.id)?p.color:"#222"}`,
-              color:selPlatforms.includes(p.id)?p.color:"#555",
-              borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,fontFamily:"inherit"
+              background:selPlatforms.includes(p.id)?p.color+"12":T.inputBg,
+              border:`1px solid ${selPlatforms.includes(p.id)?p.color:T.inputBorder}`,
+              color:selPlatforms.includes(p.id)?p.color:T.textMuted,
+              borderRadius:10,padding:"7px 14px",cursor:"pointer",fontSize:12,fontFamily:"inherit"
             }}>{p.label}</button>)}
           </div>
         </div>
         <div>
-          <div style={{color:"#555",fontSize:11,marginBottom:8}}>סוגי תוכן</div>
-          <div style={{display:"flex",gap:6}}>
+          <div style={{color:T.textMuted,fontSize:11,marginBottom:8}}>סוגי תוכן</div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {CONTENT_TYPES.map(t=><button key={t} onClick={()=>setSelTypes(prev=>
               prev.includes(t)?prev.filter(x=>x!==t):[...prev,t])} style={{
-              background:selTypes.includes(t)?"#8B5CF620":"#111",
-              border:`1px solid ${selTypes.includes(t)?"#8B5CF6":"#222"}`,
-              color:selTypes.includes(t)?"#a78bfa":"#555",
-              borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,fontFamily:"inherit"
+              background:selTypes.includes(t)?"#8B5CF612":T.inputBg,
+              border:`1px solid ${selTypes.includes(t)?"#8B5CF6":T.inputBorder}`,
+              color:selTypes.includes(t)?"#8B5CF6":T.textMuted,
+              borderRadius:10,padding:"7px 14px",cursor:"pointer",fontSize:12,fontFamily:"inherit"
             }}>{t}</button>)}
           </div>
         </div>
@@ -492,23 +639,23 @@ function Content({ posts, setPosts, sources, businesses }) {
         <Btn disabled={loading||!selBiz}
           grad={loading||!selBiz?undefined:"linear-gradient(135deg,#8B5CF6,#3B82F6)"}
           onClick={generate}>
-          {loading?<><Spinner/>מייצר...</>:`⚡ צור פוסטים ל${selBiz?.name||"..."}`}
+          {loading?<><Spinner/>מייצר...</>:`צור פוסטים ל${selBiz?.name||"..."}`}
         </Btn>
         <Btn grad="linear-gradient(135deg,#EC4899,#F59E0B)"
           onClick={()=>existingBizPosts.filter(p=>!p.pipeline&&!p.ugc).forEach(post=>{
             updatePost(post.id,{...post,pipeline:{stages:Object.fromEntries(MEDIA_STAGES.map(s=>[s.id,"pending"])),current:null,done:false}});
             runPipeline(MEDIA_STAGES, upd=>setPosts(prev=>prev.map(p=>p.id===post.id?{...p,pipeline:upd}:p)));
           })}>
-          ⚡ הפעל מדיה AI
+          הפעל מדיה AI
         </Btn>
-        {msg&&<span style={{color:msg.includes("⚠")||msg.includes("שגיאה")?"#EF4444":"#10B981",fontSize:12}}>{msg}</span>}
+        {msg&&<span style={{color:msg.includes("שגיאה")?"#EF4444":"#10B981",fontSize:12,fontWeight:600}}>{msg}</span>}
       </div>
     </Card>
 
     {/* Posts filtered by business */}
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       {existingBizPosts.length===0
-        ? <Card><div style={{textAlign:"center",color:"#333",padding:30}}>אין פוסטים ל-{selBiz?.name} — לחץ "צור פוסטים"</div></Card>
+        ? <Card><div style={{textAlign:"center",color:T.textDim,padding:30}}>אין פוסטים ל-{selBiz?.name} — לחץ "צור פוסטים"</div></Card>
         : existingBizPosts.map(post=><PostCard key={post.id} post={post}
           onUpdate={upd=>setPosts(prev=>prev.map(p=>p.id===post.id?(typeof upd==="function"?upd(p):upd):p))}/>)}
     </div>
@@ -531,31 +678,31 @@ function MediaAI() {
           desc:"Gen-3 Alpha Turbo ממיר תמונה לסרטון 5 שניות עם תנועה טבעית — $0.25 לסרטון.",
           api:"Runway ML Gen-3 Turbo"},
         {step:"4",title:"Meta מפרסם אוטומטית",color:"#1877F2",
-          desc:"Video upload + scheduling דרך Meta Graph API v19. תומך ב-Reels ו-Feed.",
-          api:"Meta Graph API v19"},
-      ].map(item=><Card key={item.step} accent={item.color+"22"}>
+          desc:"Video upload + scheduling דרך Meta Graph API v25. תומך ב-Reels ו-Feed.",
+          api:"Meta Graph API v25"},
+      ].map(item=><Card key={item.step} accent={item.color+"18"}>
         <div style={{display:"flex",gap:14}}>
-          <div style={{width:40,height:40,borderRadius:10,background:item.color+"20",
-            border:`1px solid ${item.color}44`,display:"flex",alignItems:"center",
+          <div style={{width:40,height:40,borderRadius:12,background:item.color+"12",
+            border:`1px solid ${item.color}33`,display:"flex",alignItems:"center",
             justifyContent:"center",color:item.color,fontWeight:700,fontSize:16,flexShrink:0}}>
             {item.step}
           </div>
-          <div>
-            <div style={{color:"#eee",fontWeight:600,fontSize:14,marginBottom:4}}>{item.title}</div>
-            <div style={{color:"#666",fontSize:12,lineHeight:1.6,marginBottom:6}}>{item.desc}</div>
-            <code style={{color:item.color,fontSize:11,background:"#111",
-              padding:"2px 8px",borderRadius:4}}>{item.api}</code>
+          <div style={{minWidth:0}}>
+            <div style={{color:T.text,fontWeight:600,fontSize:14,marginBottom:4}}>{item.title}</div>
+            <div style={{color:T.textMuted,fontSize:12,lineHeight:1.6,marginBottom:6}}>{item.desc}</div>
+            <code style={{color:item.color,fontSize:11,background:item.color+"08",
+              padding:"3px 10px",borderRadius:6}}>{item.api}</code>
           </div>
         </div>
       </Card>)}
     </div>
     <Card>
-      <div style={{color:"#555",fontSize:11,fontWeight:700,marginBottom:12}}>עלויות ל-100 פוסטים</div>
+      <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:12}}>עלויות ל-100 פוסטים</div>
       {[["Claude (פרומפטים)","~$2","#8B5CF6"],["Flux (תמונות)","~$0.30","#F59E0B"],
         ["Runway (סרטונים)","~$25","#EC4899"],["Meta API","חינם","#1877F2"],["סה\"כ","~$27","#10B981"]]
         .map(([k,v,c])=><div key={k} style={{display:"flex",justifyContent:"space-between",
-          padding:"8px 0",borderBottom:"1px solid #111"}}>
-          <span style={{color:"#666",fontSize:12}}>{k}</span>
+          padding:"8px 0",borderBottom:`1px solid ${T.borderLight}`}}>
+          <span style={{color:T.textSec,fontSize:12}}>{k}</span>
           <span style={{color:c,fontWeight:700,fontSize:12}}>{v}</span>
         </div>)}
     </Card>
@@ -602,29 +749,29 @@ function UGCStudio() {
     <SectionTitle sub="סרטוני משפיעניות AI בעברית — D-ID + ElevenLabs">UGC Avatar Studio</SectionTitle>
 
     {/* Step indicator */}
-    <div style={{display:"flex",gap:0,marginBottom:24}}>
+    <div style={{display:"flex",gap:0,marginBottom:24,flexWrap:"wrap"}}>
       {STEPS_LABELS.map((s,i)=><div key={s} style={{display:"flex",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:6,
           padding:"6px 14px",borderRadius:20,
-          background:i===step?"#EC489915":i<step?"#10B98115":"transparent",
-          border:`1px solid ${i===step?"#EC4899":i<step?"#10B981":"#222"}`}}>
-          <span style={{width:18,height:18,borderRadius:"50%",background:i<step?"#10B981":i===step?"#EC4899":"#222",
+          background:i===step?"#EC489910":i<step?"#10B98110":"transparent",
+          border:`1px solid ${i===step?"#EC4899":i<step?"#10B981":T.border}`}}>
+          <span style={{width:18,height:18,borderRadius:"50%",background:i<step?"#10B981":i===step?"#EC4899":T.border,
             display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff",fontWeight:700,flexShrink:0}}>
             {i<step?"✓":i+1}
           </span>
-          <span style={{fontSize:12,color:i===step?"#EC4899":i<step?"#10B981":"#444",fontWeight:i===step?700:400}}>{s}</span>
+          <span style={{fontSize:12,color:i===step?"#EC4899":i<step?"#10B981":T.textDim,fontWeight:i===step?700:400}}>{s}</span>
         </div>
-        {i<STEPS_LABELS.length-1&&<div style={{width:20,height:1,background:i<step?"#10B981":"#222"}}/>}
+        {i<STEPS_LABELS.length-1&&<div style={{width:20,height:1,background:i<step?"#10B981":T.border}}/>}
       </div>)}
     </div>
 
     {step===0&&<div style={{animation:"fadeUp 0.3s ease"}}>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:20}}>
+      <div className="two-col-grid" style={{display:"grid",gap:14,marginBottom:20}}>
         {DEFAULT_BUSINESSES.map(b=><Card key={b.id} accent={biz.id===b.id?b.color:undefined}
           style={{cursor:"pointer",transition:"all 0.2s"}} onClick={()=>setBiz(b)}>
           <div style={{fontSize:32,marginBottom:8}}>{b.icon}</div>
-          <div style={{fontWeight:700,color:"#eee"}}>{b.name}</div>
-          <div style={{color:"#555",fontSize:12,marginTop:4}}>{b.type}</div>
+          <div style={{fontWeight:700,color:T.text}}>{b.name}</div>
+          <div style={{color:T.textMuted,fontSize:12,marginTop:4}}>{b.type}</div>
         </Card>)}
       </div>
       <Btn grad="linear-gradient(135deg,#EC4899,#8B5CF6)" onClick={()=>setStep(1)}>המשך ←</Btn>
@@ -632,74 +779,74 @@ function UGCStudio() {
 
     {step===1&&<div style={{animation:"fadeUp 0.3s ease"}}>
       <div style={{marginBottom:16}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <div style={{color:"#888",fontSize:11,fontWeight:700}}>בחר דמות</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
+          <div style={{color:T.textMuted,fontSize:11,fontWeight:700}}>בחר דמות</div>
           <div>
             <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}}
               onChange={e=>{const u=URL.createObjectURL(e.target.files[0]);
                 setAvatar({id:"custom",name:"דמות מותאמת",age:"—",desc:"תמונה שלך",color:"#10B981",img:u});}}/>
-            <Btn sm bg="#10B98115" color="#10B981"
+            <Btn sm bg="#10B98110" color="#10B981"
               style={{border:"1px solid #10B98133"}} onClick={()=>fileRef.current.click()}>
-              ⬆️ העלה תמונה
+              העלה תמונה
             </Btn>
           </div>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+        <div className="avatar-grid" style={{display:"grid",gap:10}}>
           {AVATAR_LIBRARY.map(av=><div key={av.id} onClick={()=>setAvatar(av)} style={{
-            background:avatar?.id===av.id?av.color+"18":"#0d0d0d",
-            border:`2px solid ${avatar?.id===av.id?av.color:"#1e1e1e"}`,
-            borderRadius:10,padding:12,cursor:"pointer",transition:"all 0.2s"}}>
-            <img src={av.img} alt={av.name} style={{width:"100%",aspectRatio:"1",objectFit:"cover",borderRadius:7,marginBottom:8}}/>
-            <div style={{color:"#eee",fontWeight:600,fontSize:13}}>{av.name}</div>
-            <div style={{color:"#555",fontSize:11}}>{av.age} · {av.desc}</div>
+            background:avatar?.id===av.id?av.color+"10":T.card,
+            border:`2px solid ${avatar?.id===av.id?av.color:T.border}`,
+            borderRadius:12,padding:12,cursor:"pointer",transition:"all 0.2s"}}>
+            <img src={av.img} alt={av.name} style={{width:"100%",aspectRatio:"1",objectFit:"cover",borderRadius:8,marginBottom:8}}/>
+            <div style={{color:T.text,fontWeight:600,fontSize:13}}>{av.name}</div>
+            <div style={{color:T.textMuted,fontSize:11}}>{av.age} · {av.desc}</div>
           </div>)}
         </div>
       </div>
 
       {avatar&&<Card style={{marginBottom:16}}>
-        <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:12}}>
-          <img src={avatar.img} alt="" style={{width:44,height:44,borderRadius:8,objectFit:"cover",border:`2px solid ${avatar.color}`}}/>
+        <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:12,flexWrap:"wrap"}}>
+          <img src={avatar.img} alt="" style={{width:44,height:44,borderRadius:10,objectFit:"cover",border:`2px solid ${avatar.color}`}}/>
           <div>
-            <div style={{color:"#eee",fontWeight:600}}>{avatar.name} מדברת על {biz.name}</div>
-            <div style={{color:"#555",fontSize:11}}>30-40 שניות · עברית טבעית</div>
+            <div style={{color:T.text,fontWeight:600}}>{avatar.name} מדברת על {biz.name}</div>
+            <div style={{color:T.textMuted,fontSize:11}}>30-40 שניות · עברית טבעית</div>
           </div>
         </div>
         <Btn sm grad="linear-gradient(135deg,#8B5CF6,#EC4899)" disabled={genLoading} onClick={genScript}>
-          {genLoading?<><Spinner size={12}/>כותב...</>:"✍️ כתוב סקריפט"}
+          {genLoading?<><Spinner size={12}/>כותב...</>:"כתוב סקריפט"}
         </Btn>
         {script&&<textarea value={script} onChange={e=>setScript(e.target.value)} style={{
-          width:"100%",minHeight:100,background:"#111",border:"1px solid #8B5CF633",
-          borderRadius:8,color:"#ccc",padding:12,fontSize:12,fontFamily:"inherit",
+          width:"100%",minHeight:100,background:T.inputBg,border:`1px solid #8B5CF633`,
+          borderRadius:10,color:T.text,padding:12,fontSize:12,fontFamily:"inherit",
           direction:"rtl",resize:"vertical",marginTop:12,boxSizing:"border-box"}}/>}
       </Card>}
 
       <div style={{display:"flex",gap:8}}>
-        <Btn onClick={()=>setStep(0)}>← חזור</Btn>
+        <Btn bg={T.inputBg} color={T.textSec} onClick={()=>setStep(0)}>← חזור</Btn>
         <Btn disabled={!avatar||script.length<20}
           grad={avatar&&script.length>=20?"linear-gradient(135deg,#EC4899,#F59E0B)":undefined}
           onClick={produce}>
-          ⚡ הפק סרטון
+          הפק סרטון
         </Btn>
       </div>
     </div>}
 
     {step===2&&<div style={{animation:"fadeUp 0.3s ease"}}>
-      <div style={{display:"flex",gap:14,alignItems:"center",marginBottom:20}}>
-        {avatar&&<img src={avatar.img} alt="" style={{width:60,height:60,borderRadius:10,objectFit:"cover",border:"2px solid #EC4899"}}/>}
+      <div style={{display:"flex",gap:14,alignItems:"center",marginBottom:20,flexWrap:"wrap"}}>
+        {avatar&&<img src={avatar.img} alt="" style={{width:60,height:60,borderRadius:12,objectFit:"cover",border:"2px solid #EC4899"}}/>}
         <div>
-          <h3 style={{margin:0,fontWeight:700}}>{loading?"מפיק סרטון UGC...":"✅ סרטון מוכן!"}</h3>
-          <p style={{color:"#444",fontSize:12,margin:"4px 0 0"}}>{avatar?.name} · {biz.name}</p>
+          <h3 style={{margin:0,fontWeight:700,color:T.text}}>{loading?"מפיק סרטון UGC...":"סרטון מוכן!"}</h3>
+          <p style={{color:T.textMuted,fontSize:12,margin:"4px 0 0"}}>{avatar?.name} · {biz.name}</p>
         </div>
       </div>
       <PipelineBar stages={UGC_STAGES} pipeline={pipeline}/>
       {pipeline?.done&&<div style={{marginTop:16}}>
         <Card accent="#10B98133">
-          <div style={{color:"#10B981",fontWeight:700,marginBottom:10}}>✅ פורסם בהצלחה</div>
+          <div style={{color:"#10B981",fontWeight:700,marginBottom:10}}>פורסם בהצלחה</div>
           {[["ElevenLabs","קול עברי טבעי","~$0.03"],["D-ID","Avatar מדבר","~$0.05"],
             ["Meta API","Reel פורסם","חינם"]].map(([k,d,v])=>
-            <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:"1px solid #111"}}>
-              <div><span style={{color:"#ccc",fontSize:12,fontWeight:600}}>{k}</span>
-                <span style={{color:"#555",fontSize:11,marginRight:8}}> · {d}</span></div>
+            <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.borderLight}`}}>
+              <div><span style={{color:T.text,fontSize:12,fontWeight:600}}>{k}</span>
+                <span style={{color:T.textMuted,fontSize:11,marginRight:8}}> · {d}</span></div>
               <span style={{color:"#10B981",fontSize:12,fontWeight:700}}>{v}</span>
             </div>)}
         </Card>
@@ -708,7 +855,7 @@ function UGCStudio() {
             onClick={()=>{setStep(0);setPipeline(null);setScript("");setAvatar(null);}}>
             + סרטון חדש
           </Btn>
-          <Btn onClick={()=>{setStep(1);setPipeline(null);}}>ערוך</Btn>
+          <Btn bg={T.inputBg} color={T.textSec} onClick={()=>{setStep(1);setPipeline(null);}}>ערוך</Btn>
         </div>
       </div>}
     </div>}
@@ -774,45 +921,45 @@ function Businesses({ businesses, setBusinesses, posts }) {
     {!adding ? <Btn grad="linear-gradient(135deg,#8B5CF6,#3B82F6)" onClick={()=>setAdding(true)} style={{marginBottom:20}}>
       + הוסף עסק חדש
     </Btn> : <Card style={{marginBottom:20}}>
-      <div style={{color:"#888",fontSize:11,fontWeight:700,marginBottom:12}}>עסק חדש</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+      <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:12}}>עסק חדש</div>
+      <div className="two-col-grid" style={{display:"grid",gap:12,marginBottom:12}}>
         <div>
-          <div style={{color:"#555",fontSize:11,marginBottom:4}}>שם העסק *</div>
+          <div style={{color:T.textMuted,fontSize:11,marginBottom:4}}>שם העסק *</div>
           <input value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} placeholder="שם העסק"
-            style={{width:"100%",background:"#111",border:"1px solid #222",borderRadius:7,padding:"8px 12px",color:"#ddd",fontSize:12,fontFamily:"inherit",boxSizing:"border-box"}}/>
+            style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,padding:"9px 12px",color:T.text,fontSize:12,fontFamily:"inherit",boxSizing:"border-box"}}/>
         </div>
         <div>
-          <div style={{color:"#555",fontSize:11,marginBottom:4}}>כתובת אתר</div>
+          <div style={{color:T.textMuted,fontSize:11,marginBottom:4}}>כתובת אתר</div>
           <input value={form.url} onChange={e=>setForm(p=>({...p,url:e.target.value}))} placeholder="https://..."
-            style={{width:"100%",background:"#111",border:"1px solid #222",borderRadius:7,padding:"8px 12px",color:"#ddd",fontSize:12,fontFamily:"monospace",boxSizing:"border-box"}}/>
+            style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,padding:"9px 12px",color:T.text,fontSize:12,fontFamily:"monospace",boxSizing:"border-box"}}/>
         </div>
       </div>
       <div style={{marginBottom:12}}>
-        <div style={{color:"#555",fontSize:11,marginBottom:4}}>תיאור העסק</div>
+        <div style={{color:T.textMuted,fontSize:11,marginBottom:4}}>תיאור העסק</div>
         <textarea value={form.description} onChange={e=>setForm(p=>({...p,description:e.target.value}))} placeholder="במה עוסק העסק, קהל יעד, יתרונות..."
-          style={{width:"100%",minHeight:60,background:"#111",border:"1px solid #222",borderRadius:7,color:"#ddd",padding:10,fontSize:12,fontFamily:"inherit",direction:"rtl",resize:"none",boxSizing:"border-box"}}/>
+          style={{width:"100%",minHeight:60,background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,color:T.text,padding:12,fontSize:12,fontFamily:"inherit",direction:"rtl",resize:"none",boxSizing:"border-box"}}/>
       </div>
-      <div style={{display:"flex",gap:16,marginBottom:16}}>
+      <div style={{display:"flex",gap:16,marginBottom:16,flexWrap:"wrap"}}>
         <div>
-          <div style={{color:"#555",fontSize:11,marginBottom:6}}>אייקון</div>
+          <div style={{color:T.textMuted,fontSize:11,marginBottom:6}}>אייקון</div>
           <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
             {BIZ_ICONS.map(ic=><button key={ic} onClick={()=>setForm(p=>({...p,icon:ic}))}
-              style={{width:30,height:30,background:form.icon===ic?"#8B5CF620":"#111",
-                border:`1px solid ${form.icon===ic?"#8B5CF6":"#222"}`,borderRadius:6,cursor:"pointer",fontSize:14}}>{ic}</button>)}
+              style={{width:32,height:32,background:form.icon===ic?"#8B5CF612":T.inputBg,
+                border:`1px solid ${form.icon===ic?"#8B5CF6":T.inputBorder}`,borderRadius:8,cursor:"pointer",fontSize:14}}>{ic}</button>)}
           </div>
         </div>
         <div>
-          <div style={{color:"#555",fontSize:11,marginBottom:6}}>צבע</div>
+          <div style={{color:T.textMuted,fontSize:11,marginBottom:6}}>צבע</div>
           <div style={{display:"flex",gap:4}}>
             {BIZ_COLORS.map(c=><button key={c} onClick={()=>setForm(p=>({...p,color:c}))}
-              style={{width:26,height:26,background:c,borderRadius:6,cursor:"pointer",
-                border:`2px solid ${form.color===c?"#fff":"transparent"}`}}/>)}
+              style={{width:28,height:28,background:c,borderRadius:8,cursor:"pointer",
+                border:`2px solid ${form.color===c?"#fff":"transparent"}`,boxShadow:form.color===c?`0 0 0 2px ${c}`:""}}/>)}
           </div>
         </div>
       </div>
       <div style={{display:"flex",gap:8}}>
         <Btn grad="linear-gradient(135deg,#10B981,#3B82F6)" onClick={addBiz}>שמור</Btn>
-        <Btn sm bg="#111" color="#666" onClick={()=>setAdding(false)}>ביטול</Btn>
+        <Btn sm bg={T.inputBg} color={T.textMuted} onClick={()=>setAdding(false)}>ביטול</Btn>
       </div>
     </Card>}
 
@@ -822,64 +969,64 @@ function Businesses({ businesses, setBusinesses, posts }) {
         const result = biz.scanResult;
         const bizPosts = posts?.filter(p=>p.business===biz.name)||[];
         const expanded = editId===biz.id;
-        return <Card key={biz.id} accent={biz.color+"44"}>
+        return <Card key={biz.id} accent={biz.color+"33"}>
           {/* Header */}
           <div style={{display:"flex",alignItems:"center",gap:14,cursor:"pointer"}} onClick={()=>setEditId(expanded?null:biz.id)}>
-            <div style={{width:48,height:48,borderRadius:10,background:biz.color+"20",border:`1px solid ${biz.color}33`,
+            <div style={{width:48,height:48,borderRadius:12,background:biz.color+"15",border:`1px solid ${biz.color}33`,
               display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>{biz.icon}</div>
-            <div style={{flex:1}}>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <span style={{color:"#eee",fontSize:15,fontWeight:700}}>{biz.name}</span>
-                {result&&!result.error&&<Tag label="נסרק ✓" color="#10B981"/>}
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                <span style={{color:T.text,fontSize:15,fontWeight:700}}>{biz.name}</span>
+                {result&&!result.error&&<Tag label="נסרק" color="#10B981"/>}
               </div>
               <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
-                {biz.url&&<Tag label={biz.url.replace(/https?:\/\/(www\.)?/,"")} color="#666"/>}
+                {biz.url&&<Tag label={biz.url.replace(/https?:\/\/(www\.)?/,"")} color={T.textMuted}/>}
                 <Tag label={`${bizPosts.length} פוסטים`} color="#8B5CF6"/>
                 {SOCIAL_PLATFORMS.filter(sp=>biz.social?.[sp.id]?.connected).map(sp=>
                   <Tag key={sp.id} label={sp.icon+" "+sp.label} color={sp.color}/>)}
               </div>
             </div>
-            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
               <Btn sm grad="linear-gradient(135deg,#8B5CF6,#06B6D4)" disabled={scanning[biz.id]} onClick={e=>{e.stopPropagation();scanBiz(biz);}}>
-                {scanning[biz.id]?<><Spinner size={10}/> סורק...</>:"🔍 סרוק AI"}
+                {scanning[biz.id]?<><Spinner size={10}/> סורק...</>:"סרוק AI"}
               </Btn>
-              <span style={{color:"#444",fontSize:16}}>{expanded?"▲":"▼"}</span>
+              <span style={{color:T.textDim,fontSize:16}}>{expanded?"▲":"▼"}</span>
             </div>
           </div>
 
-          {/* Expanded: scan results + social connections */}
-          {expanded&&<div style={{marginTop:16,borderTop:"1px solid #1a1a1a",paddingTop:16}}>
+          {/* Expanded */}
+          {expanded&&<div style={{marginTop:16,borderTop:`1px solid ${T.borderLight}`,paddingTop:16}}>
             {/* Description edit */}
             <div style={{marginBottom:14}}>
-              <div style={{color:"#555",fontSize:11,marginBottom:4}}>תיאור העסק</div>
+              <div style={{color:T.textMuted,fontSize:11,marginBottom:4}}>תיאור העסק</div>
               <textarea value={biz.description||""} onChange={e=>updateBiz(biz.id,{description:e.target.value})}
                 placeholder="תאר את העסק — ישמש את ה-AI ליצירת תוכן מותאם..."
-                style={{width:"100%",minHeight:50,background:"#111",border:"1px solid #222",borderRadius:7,color:"#ddd",
-                  padding:10,fontSize:12,fontFamily:"inherit",direction:"rtl",resize:"none",boxSizing:"border-box"}}/>
+                style={{width:"100%",minHeight:50,background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,color:T.text,
+                  padding:12,fontSize:12,fontFamily:"inherit",direction:"rtl",resize:"none",boxSizing:"border-box"}}/>
             </div>
 
             {/* URL edit */}
             <div style={{marginBottom:14}}>
-              <div style={{color:"#555",fontSize:11,marginBottom:4}}>כתובת אתר</div>
+              <div style={{color:T.textMuted,fontSize:11,marginBottom:4}}>כתובת אתר</div>
               <input value={biz.url||""} onChange={e=>updateBiz(biz.id,{url:e.target.value})} placeholder="https://..."
-                style={{width:"100%",background:"#111",border:"1px solid #222",borderRadius:7,padding:"8px 12px",color:"#ddd",fontSize:12,fontFamily:"monospace",boxSizing:"border-box"}}/>
+                style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,padding:"9px 12px",color:T.text,fontSize:12,fontFamily:"monospace",boxSizing:"border-box"}}/>
             </div>
 
             {/* Social connections per business */}
             <div style={{marginBottom:14}}>
-              <div style={{color:"#666",fontSize:11,fontWeight:700,marginBottom:10,letterSpacing:1}}>רשתות חברתיות — {biz.name}</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:10,letterSpacing:1}}>רשתות חברתיות — {biz.name}</div>
+              <div className="two-col-grid" style={{display:"grid",gap:10}}>
                 {SOCIAL_PLATFORMS.map(plat=>{
                   const conn = biz.social?.[plat.id] || {connected:false,tokens:{}};
                   const allFilled = plat.fields.every(f=>conn.tokens?.[f.key]);
-                  return <div key={plat.id} style={{background:"#080808",border:`1px solid ${conn.connected&&allFilled?plat.color+"44":"#161616"}`,
-                    borderRadius:8,padding:12,transition:"all 0.2s"}}>
+                  return <div key={plat.id} style={{background:T.inputBg,border:`1px solid ${conn.connected&&allFilled?plat.color+"33":T.borderLight}`,
+                    borderRadius:10,padding:12,transition:"all 0.2s"}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:conn.connected?10:0}}>
                       <span style={{fontSize:18}}>{plat.icon}</span>
-                      <span style={{color:"#ccc",fontSize:12,fontWeight:600,flex:1}}>{plat.label}</span>
+                      <span style={{color:T.text,fontSize:12,fontWeight:600,flex:1}}>{plat.label}</span>
                       <button onClick={()=>toggleSocial(biz.id,plat.id)} style={{
                         width:36,height:20,borderRadius:10,border:"none",cursor:"pointer",
-                        background:conn.connected?plat.color:"#333",position:"relative",transition:"all 0.2s"}}>
+                        background:conn.connected?plat.color:"#ccc",position:"relative",transition:"all 0.2s"}}>
                         <div style={{width:14,height:14,borderRadius:"50%",background:"#fff",
                           position:"absolute",top:3,transition:"all 0.2s",
                           ...(conn.connected?{left:19}:{left:3})}}/>
@@ -887,11 +1034,11 @@ function Businesses({ businesses, setBusinesses, posts }) {
                     </div>
                     {conn.connected&&<div style={{display:"flex",flexDirection:"column",gap:6}}>
                       {plat.fields.map(f=><div key={f.key}>
-                        <div style={{color:"#444",fontSize:9,marginBottom:2}}>{f.label}</div>
+                        <div style={{color:T.textDim,fontSize:9,marginBottom:2}}>{f.label}</div>
                         <input value={conn.tokens?.[f.key]||""} onChange={e=>setSocialToken(biz.id,plat.id,f.key,e.target.value)}
                           placeholder={f.hint} type="password"
-                          style={{width:"100%",background:"#0a0a0a",border:"1px solid #1a1a1a",borderRadius:5,
-                            padding:"5px 8px",color:"#ddd",fontSize:10,fontFamily:"monospace",boxSizing:"border-box"}}/>
+                          style={{width:"100%",background:T.card,border:`1px solid ${T.inputBorder}`,borderRadius:8,
+                            padding:"6px 8px",color:T.text,fontSize:10,fontFamily:"monospace",boxSizing:"border-box"}}/>
                       </div>)}
                     </div>}
                   </div>;
@@ -900,34 +1047,34 @@ function Businesses({ businesses, setBusinesses, posts }) {
             </div>
 
             {/* Scan results */}
-            {result&&!result.error&&<div style={{background:"#071a0f",border:"1px solid #10B98122",borderRadius:8,padding:14,marginBottom:14}}>
-              <div style={{color:"#10B981",fontWeight:600,fontSize:12,marginBottom:10}}>💡 תוצאות סריקת AI</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-                <div><span style={{color:"#555",fontSize:11}}>טון: </span><span style={{color:"#ddd",fontSize:12}}>{result.tone}</span></div>
-                <div><span style={{color:"#555",fontSize:11}}>קהל יעד: </span><span style={{color:"#ddd",fontSize:12}}>{result.audience}</span></div>
-                {result.bestPlatform&&<div><span style={{color:"#555",fontSize:11}}>פלטפורמה מומלצת: </span><span style={{color:"#ddd",fontSize:12}}>{result.bestPlatform}</span></div>}
-                {result.postFrequency&&<div><span style={{color:"#555",fontSize:11}}>תדירות: </span><span style={{color:"#ddd",fontSize:12}}>{result.postFrequency}</span></div>}
+            {result&&!result.error&&<div style={{background:"#10B98108",border:"1px solid #10B98118",borderRadius:10,padding:14,marginBottom:14}}>
+              <div style={{color:"#10B981",fontWeight:600,fontSize:12,marginBottom:10}}>תוצאות סריקת AI</div>
+              <div className="two-col-grid" style={{display:"grid",gap:10,marginBottom:10}}>
+                <div><span style={{color:T.textMuted,fontSize:11}}>טון: </span><span style={{color:T.text,fontSize:12}}>{result.tone}</span></div>
+                <div><span style={{color:T.textMuted,fontSize:11}}>קהל יעד: </span><span style={{color:T.text,fontSize:12}}>{result.audience}</span></div>
+                {result.bestPlatform&&<div><span style={{color:T.textMuted,fontSize:11}}>פלטפורמה מומלצת: </span><span style={{color:T.text,fontSize:12}}>{result.bestPlatform}</span></div>}
+                {result.postFrequency&&<div><span style={{color:T.textMuted,fontSize:11}}>תדירות: </span><span style={{color:T.text,fontSize:12}}>{result.postFrequency}</span></div>}
               </div>
               {result.strengths?.length>0&&<div style={{marginBottom:8}}>
-                <div style={{color:"#555",fontSize:10,marginBottom:4}}>יתרונות:</div>
+                <div style={{color:T.textMuted,fontSize:10,marginBottom:4}}>יתרונות:</div>
                 <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{result.strengths.map((s,i)=><Tag key={i} label={s} color="#10B981"/>)}</div>
               </div>}
               {result.contentIdeas?.length>0&&<div>
-                <div style={{color:"#555",fontSize:10,marginBottom:4}}>רעיונות לתוכן:</div>
+                <div style={{color:T.textMuted,fontSize:10,marginBottom:4}}>רעיונות לתוכן:</div>
                 <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{result.contentIdeas.map((s,i)=><Tag key={i} label={s} color="#8B5CF6"/>)}</div>
               </div>}
             </div>}
-            {result?.error&&<div style={{color:"#EF4444",fontSize:12,padding:10,background:"#EF444410",borderRadius:8,marginBottom:14}}>{result.error}</div>}
+            {result?.error&&<div style={{color:"#EF4444",fontSize:12,padding:10,background:"#EF444408",borderRadius:10,marginBottom:14}}>{result.error}</div>}
 
             {/* Remove */}
             <div style={{display:"flex",justifyContent:"flex-end"}}>
-              <Btn sm onClick={()=>removeBiz(biz.id)} bg="#EF444415" color="#EF4444">🗑️ מחק עסק</Btn>
+              <Btn sm onClick={()=>removeBiz(biz.id)} bg="#EF444410" color="#EF4444">מחק עסק</Btn>
             </div>
           </div>}
         </Card>;
       })}
     </div>
-    {businesses.length===0&&<Card><div style={{textAlign:"center",color:"#333",padding:30}}>הוסף את העסק הראשון שלך</div></Card>}
+    {businesses.length===0&&<Card><div style={{textAlign:"center",color:T.textDim,padding:30}}>הוסף את העסק הראשון שלך</div></Card>}
   </div>;
 }
 
@@ -936,6 +1083,10 @@ function Publish({ posts, businesses }) {
   const [publishing, setPublishing] = useState({});
   const [results, setResults] = useState({});
   const [selBizId, setSelBizId] = useState(businesses[0]?.id||"");
+  const [boostModal, setBoostModal] = useState(null);
+  const [boostForm, setBoostForm] = useState({ budget:5, duration:3, adAccountId:"" });
+  const [boosting, setBoosting] = useState(false);
+  const [boostResult, setBoostResult] = useState(null);
   const selBiz = businesses.find(b=>b.id===selBizId);
   const approved = posts.filter(p=>p.approved && (!selBiz || p.business===selBiz.name));
   const connectedPlatforms = selBiz ? SOCIAL_PLATFORMS.filter(sp=>{
@@ -962,34 +1113,52 @@ function Publish({ posts, businesses }) {
         });
         const d = await r.json();
         if (d.id) {
-          setResults(p=>({...p,[key]:"ok"}));
+          setResults(p=>({...p,[key]:{status:"ok",postId:d.id}}));
         } else {
-          setResults(p=>({...p,[key]: d.error?.message || "שגיאה בפרסום"}));
+          setResults(p=>({...p,[key]:{status:"error",msg: d.error?.message || "שגיאה בפרסום"}}));
         }
       } else if (platformId === "instagram") {
         const igUserId = tokens.META_IG_USER_ID;
         const accessToken = tokens.META_ACCESS_TOKEN;
         if (!igUserId || !accessToken) throw new Error("חסר IG User ID או Access Token");
-        setResults(p=>({...p,[key]:"אינסטגרם דורש תמונה — בקרוב"}));
+        setResults(p=>({...p,[key]:{status:"error",msg:"אינסטגרם דורש תמונה — בקרוב"}}));
       } else {
-        setResults(p=>({...p,[key]:"פלטפורמה לא נתמכת עדיין"}));
+        setResults(p=>({...p,[key]:{status:"error",msg:"פלטפורמה לא נתמכת עדיין"}}));
       }
     } catch (e) {
-      setResults(p=>({...p,[key]: e.message || "שגיאה"}));
+      setResults(p=>({...p,[key]:{status:"error",msg: e.message || "שגיאה"}}));
     }
     setPublishing(p=>({...p,[key]:false}));
   }
 
+  async function handleBoost() {
+    if (!boostModal || !boostForm.adAccountId) return;
+    setBoosting(true);
+    const biz = businesses.find(b=>b.name===boostModal.business);
+    const accessToken = biz?.social?.facebook?.tokens?.META_ACCESS_TOKEN;
+    const result = await boostPost(
+      boostModal.fbPostId,
+      accessToken,
+      boostForm.adAccountId.startsWith("act_") ? boostForm.adAccountId : `act_${boostForm.adAccountId}`,
+      boostForm.budget,
+      boostForm.duration,
+      { geo_locations: { countries: ["IL"] }, age_min: 18, age_max: 65 }
+    );
+    setBoostResult(result);
+    setBoosting(false);
+  }
+
   return <div style={{animation:"fadeUp 0.3s ease"}}>
-    <SectionTitle sub="פרסם תוכן מאושר לרשתות של כל עסק">פרסום</SectionTitle>
+    <SectionTitle sub="פרסם וקדם תוכן מאושר לרשתות של כל עסק">פרסום וקידום</SectionTitle>
 
     {/* Business selector */}
     <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
       {businesses.map(b=><button key={b.id} onClick={()=>setSelBizId(b.id)} style={{
-        display:"flex",alignItems:"center",gap:8,padding:"10px 18px",borderRadius:10,cursor:"pointer",
-        background:selBizId===b.id?b.color+"15":"#0d0d0d",
-        border:`1px solid ${selBizId===b.id?b.color:"#1e1e1e"}`,fontFamily:"inherit",
-        color:selBizId===b.id?"#eee":"#666",fontWeight:selBizId===b.id?700:400,fontSize:13,transition:"all 0.2s"}}>
+        display:"flex",alignItems:"center",gap:8,padding:"10px 18px",borderRadius:12,cursor:"pointer",
+        background:selBizId===b.id?b.color+"12":T.card,
+        border:`1px solid ${selBizId===b.id?b.color:T.border}`,fontFamily:"inherit",
+        color:selBizId===b.id?T.text:T.textMuted,fontWeight:selBizId===b.id?700:400,fontSize:13,transition:"all 0.2s",
+        boxShadow: selBizId===b.id?`0 0 0 2px ${b.color}33`:"none"}}>
         <span style={{fontSize:18}}>{b.icon}</span>{b.name}
         {SOCIAL_PLATFORMS.filter(sp=>b.social?.[sp.id]?.connected).length>0&&
           <span style={{fontSize:9,color:"#10B981"}}>● מחובר</span>}
@@ -997,12 +1166,12 @@ function Publish({ posts, businesses }) {
     </div>
 
     {selBiz&&<>
-      {/* Connected platforms for this business */}
+      {/* Connected platforms */}
       <Card style={{marginBottom:16}}>
-        <div style={{color:"#666",fontSize:11,fontWeight:700,marginBottom:10}}>רשתות מחוברות — {selBiz.icon} {selBiz.name}</div>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:10}}>רשתות מחוברות — {selBiz.icon} {selBiz.name}</div>
         {connectedPlatforms.length===0
-          ? <div style={{color:"#444",fontSize:12,padding:10}}>
-              אין רשתות מחוברות לעסק הזה. עבור ל<span style={{color:"#8B5CF6"}}>🏪 עסקים</span> → לחץ על העסק → חבר רשתות.
+          ? <div style={{color:T.textDim,fontSize:12,padding:10}}>
+              אין רשתות מחוברות לעסק הזה. עבור ל<span style={{color:"#8B5CF6",fontWeight:600}}>עסקים</span> → לחץ על העסק → חבר רשתות.
             </div>
           : <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               {connectedPlatforms.map(sp=><Tag key={sp.id} label={sp.icon+" "+sp.label+" ✓"} color={sp.color}/>)}
@@ -1011,40 +1180,111 @@ function Publish({ posts, businesses }) {
 
       {/* Posts to publish */}
       <Card>
-        <div style={{color:"#666",fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1}}>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1}}>
           פוסטים מאושרים — {selBiz.name} ({approved.length})
         </div>
         {approved.length===0
-          ? <div style={{textAlign:"center",color:"#333",padding:30}}>אין פוסטים מאושרים ל-{selBiz.name} — אשר פוסטים בדף תוכן</div>
+          ? <div style={{textAlign:"center",color:T.textDim,padding:30}}>אין פוסטים מאושרים ל-{selBiz.name} — אשר פוסטים בדף תוכן</div>
           : <div style={{display:"flex",flexDirection:"column",gap:10}}>
             {approved.map(post=>{
               const platMatch = PLATFORMS.find(p=>post.platform?.includes(p.label.split(" ")[0]));
-              return <div key={post.id} style={{background:"#111",borderRadius:10,padding:14,border:"1px solid #1a1a1a"}}>
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+              return <div key={post.id} style={{background:T.inputBg,borderRadius:12,padding:14,border:`1px solid ${T.borderLight}`}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
                   <Tag label={post.platform} color={platMatch?.color||"#888"}/>
-                  <Tag label={post.type||"פוסט"} color="#555"/>
-                  {post.pipeline?.done&&<Tag label="🖼️ מדיה" color="#F59E0B"/>}
-                  {post.ugc?.done&&<Tag label="🎭 UGC" color="#EC4899"/>}
+                  <Tag label={post.type||"פוסט"} color={T.textMuted}/>
+                  {post.pipeline?.done&&<Tag label="מדיה" color="#F59E0B"/>}
+                  {post.ugc?.done&&<Tag label="UGC" color="#EC4899"/>}
                 </div>
-                <p style={{color:"#888",fontSize:12,margin:"0 0 10px",direction:"rtl",lineHeight:1.6,
+                <p style={{color:T.textSec,fontSize:12,margin:"0 0 10px",direction:"rtl",lineHeight:1.6,
                   maxHeight:60,overflow:"hidden"}}>{post.content}</p>
                 <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                   {connectedPlatforms.map(sp=>{
                     const key=`${post.id}_${sp.id}`;
                     const res=results[key];
                     return <Btn key={sp.id} sm disabled={publishing[key]}
-                      bg={res==="ok"?"#10B98120":res?"#EF444420":"#1a1a1a"}
-                      color={res==="ok"?"#10B981":res?"#EF4444":sp.color}
+                      bg={res?.status==="ok"?"#10B98115":res?.status==="error"?"#EF444410":T.card}
+                      color={res?.status==="ok"?"#10B981":res?.status==="error"?"#EF4444":sp.color}
                       onClick={()=>publishPost(post,sp.id)}>
-                      {publishing[key]?<Spinner size={10}/>:res==="ok"?"✓ פורסם":res?`✗`:`${sp.icon} פרסם`}
+                      {publishing[key]?<Spinner size={10}/>:res?.status==="ok"?"פורסם":res?.status==="error"?"נכשל":`${sp.icon} פרסם`}
                     </Btn>;
                   })}
-                  {connectedPlatforms.length===0&&<span style={{color:"#444",fontSize:11}}>חבר רשת בדף עסקים</span>}
+                  {/* Boost button */}
+                  {connectedPlatforms.some(sp=>sp.id==="facebook") &&
+                    Object.entries(results).some(([k,v])=>k.startsWith(post.id+"_facebook")&&v?.status==="ok") &&
+                    <Btn sm grad="linear-gradient(135deg,#F59E0B,#EF4444)"
+                      onClick={()=>{
+                        const fbRes = results[`${post.id}_facebook`];
+                        setBoostModal({...post, fbPostId: fbRes?.postId});
+                        setBoostResult(null);
+                      }}>
+                      קדם
+                    </Btn>
+                  }
+                  {connectedPlatforms.length===0&&<span style={{color:T.textDim,fontSize:11}}>חבר רשת בדף עסקים</span>}
                 </div>
               </div>;
             })}
           </div>}
       </Card>
+
+      {/* Boost modal */}
+      {boostModal && <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:1000,
+        display:"flex",alignItems:"center",justifyContent:"center",padding:20}}
+        onClick={()=>setBoostModal(null)}>
+        <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:16,padding:24,
+          maxWidth:420,width:"100%",boxShadow:T.shadowLg,direction:"rtl"}}>
+          <h3 style={{margin:"0 0 16px",color:T.text,fontSize:18}}>קידום פוסט</h3>
+          <p style={{color:T.textSec,fontSize:12,margin:"0 0 16px",lineHeight:1.6}}>
+            {boostModal.content?.slice(0,80)}...
+          </p>
+          <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:16}}>
+            <div>
+              <label style={{color:T.textMuted,fontSize:11,display:"block",marginBottom:4}}>Ad Account ID</label>
+              <input value={boostForm.adAccountId} onChange={e=>setBoostForm(p=>({...p,adAccountId:e.target.value}))}
+                placeholder="act_123456789 או 123456789"
+                style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,
+                  padding:"9px 12px",color:T.text,fontSize:12,fontFamily:"monospace",boxSizing:"border-box"}}/>
+            </div>
+            <div style={{display:"flex",gap:12}}>
+              <div style={{flex:1}}>
+                <label style={{color:T.textMuted,fontSize:11,display:"block",marginBottom:4}}>תקציב יומי ($)</label>
+                <input type="number" value={boostForm.budget} onChange={e=>setBoostForm(p=>({...p,budget:+e.target.value}))}
+                  style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,
+                    padding:"9px 12px",color:T.text,fontSize:12,boxSizing:"border-box"}}/>
+              </div>
+              <div style={{flex:1}}>
+                <label style={{color:T.textMuted,fontSize:11,display:"block",marginBottom:4}}>ימים</label>
+                <input type="number" value={boostForm.duration} onChange={e=>setBoostForm(p=>({...p,duration:+e.target.value}))}
+                  style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,
+                    padding:"9px 12px",color:T.text,fontSize:12,boxSizing:"border-box"}}/>
+              </div>
+            </div>
+            <div style={{background:T.inputBg,borderRadius:10,padding:10}}>
+              <div style={{color:T.textMuted,fontSize:11}}>טרגוט: ישראל, 18-65</div>
+              <div style={{color:T.accent,fontSize:13,fontWeight:700,marginTop:4}}>
+                סה"כ: ${boostForm.budget * boostForm.duration}
+              </div>
+            </div>
+          </div>
+          {boostResult && (
+            boostResult.success
+              ? <div style={{background:"#10B98108",border:"1px solid #10B98118",borderRadius:10,padding:12,marginBottom:12}}>
+                  <span style={{color:"#10B981",fontWeight:600,fontSize:13}}>הקמפיין נוצר בסטטוס PAUSED</span>
+                  <div style={{color:T.textMuted,fontSize:11,marginTop:4}}>הפעל אותו מ-Facebook Ads Manager</div>
+                </div>
+              : <div style={{background:"#EF444408",borderRadius:10,padding:12,marginBottom:12,color:"#EF4444",fontSize:12}}>
+                  {boostResult.error}
+                </div>
+          )}
+          <div style={{display:"flex",gap:8}}>
+            <Btn grad="linear-gradient(135deg,#F59E0B,#EF4444)" disabled={boosting||!boostForm.adAccountId}
+              onClick={handleBoost}>
+              {boosting?<><Spinner size={12}/>יוצר קמפיין...</>:"צור קמפיין קידום"}
+            </Btn>
+            <Btn bg={T.inputBg} color={T.textMuted} onClick={()=>setBoostModal(null)}>ביטול</Btn>
+          </div>
+        </div>
+      </div>}
     </>}
   </div>;
 }
@@ -1059,42 +1299,42 @@ function Schedule({ posts }) {
     <SectionTitle sub="תזמון פרסום אוטומטי">לוח פרסומים</SectionTitle>
     <Card style={{marginBottom:20}}>
       <div style={{marginBottom:16}}>
-        <div style={{color:"#666",fontSize:11,fontWeight:700,marginBottom:10}}>ימי פרסום</div>
-        <div style={{display:"flex",gap:8}}>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:10}}>ימי פרסום</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           {DAYS.map((d,i)=><button key={d} onClick={()=>setDays(p=>p.includes(i)?p.filter(x=>x!==i):[...p,i])} style={{
-            width:38,height:38,background:days.includes(i)?"#8B5CF620":"#111",
-            border:`1px solid ${days.includes(i)?"#8B5CF6":"#222"}`,
-            color:days.includes(i)?"#a78bfa":"#444",borderRadius:7,
+            width:42,height:42,background:days.includes(i)?"#8B5CF610":T.inputBg,
+            border:`1px solid ${days.includes(i)?"#8B5CF6":T.inputBorder}`,
+            color:days.includes(i)?"#8B5CF6":T.textMuted,borderRadius:10,
             cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"inherit"}}>{d}</button>)}
         </div>
       </div>
       <div>
-        <div style={{color:"#666",fontSize:11,fontWeight:700,marginBottom:10}}>שעה</div>
-        <div style={{display:"flex",gap:8}}>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:10}}>שעה</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           {["12:00","18:00","20:00","21:00"].map(t=><button key={t} onClick={()=>setTime(t)} style={{
-            background:time===t?"#8B5CF620":"#111",border:`1px solid ${time===t?"#8B5CF6":"#222"}`,
-            color:time===t?"#a78bfa":"#555",borderRadius:7,padding:"6px 14px",
+            background:time===t?"#8B5CF610":T.inputBg,border:`1px solid ${time===t?"#8B5CF6":T.inputBorder}`,
+            color:time===t?"#8B5CF6":T.textMuted,borderRadius:10,padding:"7px 16px",
             cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>{t}</button>)}
         </div>
       </div>
     </Card>
     {approved.length===0
-      ? <Card><div style={{textAlign:"center",color:"#333",padding:30}}>אשר פוסטים בעמוד תוכן</div></Card>
+      ? <Card><div style={{textAlign:"center",color:T.textDim,padding:30}}>אשר פוסטים בעמוד תוכן</div></Card>
       : <div style={{display:"flex",flexDirection:"column",gap:10}}>
           {approved.map(post=>{
             const pl=PLATFORMS.find(p=>post.platform.includes(p.label.split(" ")[0]))||PLATFORMS[0];
-            return <Card key={post.id} style={{display:"flex",alignItems:"center",gap:12,padding:14}}>
-              <div style={{flex:1}}>
-                <div style={{display:"flex",gap:6,marginBottom:4}}>
+            return <Card key={post.id} style={{display:"flex",alignItems:"center",gap:12,padding:14,flexWrap:"wrap"}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",gap:6,marginBottom:4,flexWrap:"wrap"}}>
                   <Tag label={post.platform} color={pl.color}/>
-                  <Tag label={post.business} color="#666"/>
-                  {post.pipeline?.done&&<Tag label="🖼️ מדיה" color="#F59E0B"/>}
-                  {post.ugc?.done&&<Tag label="🎭 UGC" color="#EC4899"/>}
+                  <Tag label={post.business} color={T.textMuted}/>
+                  {post.pipeline?.done&&<Tag label="מדיה" color="#F59E0B"/>}
+                  {post.ugc?.done&&<Tag label="UGC" color="#EC4899"/>}
                 </div>
-                <p style={{color:"#777",fontSize:12,margin:0,direction:"rtl",
+                <p style={{color:T.textSec,fontSize:12,margin:0,direction:"rtl",
                   overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{post.content.split("\n")[0]}</p>
               </div>
-              <Btn sm grad="linear-gradient(135deg,#10B981,#3B82F6)">📡 פרסם</Btn>
+              <Btn sm grad="linear-gradient(135deg,#10B981,#3B82F6)">פרסם</Btn>
             </Card>;
           })}
         </div>
@@ -1102,40 +1342,168 @@ function Schedule({ posts }) {
   </div>;
 }
 
-// ANALYTICS
-function Analytics({ posts }) {
+// ANALYTICS — REAL DATA FROM META
+function Analytics({ posts, businesses, analyticsData, setAnalyticsData }) {
+  const [loading, setLoading] = useState(false);
+  const [selBizId, setSelBizId] = useState(businesses?.[0]?.id||"");
+  const [aiInsight, setAiInsight] = useState("");
+  const [insightLoading, setInsightLoading] = useState(false);
+  const selBiz = businesses?.find(b=>b.id===selBizId);
+
+  const bizData = analyticsData?.[selBizId] || {};
   const done = posts.filter(p=>p.pipeline?.done||p.ugc?.done).length;
+
+  async function fetchAnalytics() {
+    if (!selBiz) return;
+    const fbTokens = selBiz.social?.facebook?.tokens;
+    if (!fbTokens?.META_PAGE_ID || !fbTokens?.META_ACCESS_TOKEN) return;
+    setLoading(true);
+    try {
+      const [insights, pagePosts] = await Promise.all([
+        fetchPageInsights(fbTokens.META_PAGE_ID, fbTokens.META_ACCESS_TOKEN),
+        fetchPagePosts(fbTokens.META_PAGE_ID, fbTokens.META_ACCESS_TOKEN, 20)
+      ]);
+
+      const topPosts = [...pagePosts].sort((a,b)=>(b.likes+b.comments+b.shares)-(a.likes+a.comments+a.shares));
+      const totalLikes = pagePosts.reduce((s,p)=>s+p.likes,0);
+      const totalComments = pagePosts.reduce((s,p)=>s+p.comments,0);
+      const totalShares = pagePosts.reduce((s,p)=>s+p.shares,0);
+      const avgEngagement = pagePosts.length > 0 ? ((totalLikes+totalComments+totalShares)/pagePosts.length).toFixed(1) : 0;
+
+      const data = {
+        insights: insights.error ? null : insights,
+        posts: pagePosts,
+        topPosts,
+        totalLikes,
+        totalComments,
+        totalShares,
+        avgEngagement,
+        lastFetch: new Date().toISOString()
+      };
+
+      setAnalyticsData(prev=>({...prev, [selBizId]: data}));
+      localStorage.setItem("analytics_data", JSON.stringify({...analyticsData, [selBizId]: data}));
+    } catch(e) {
+      console.error("Analytics fetch error:", e);
+    }
+    setLoading(false);
+  }
+
+  async function generateInsight() {
+    if (!bizData.posts?.length) return;
+    setInsightLoading(true);
+    try {
+      const topContent = bizData.topPosts?.slice(0,5).map(p=>
+        `"${p.message?.slice(0,80)}" — ${p.likes} לייקים, ${p.comments} תגובות, ${p.shares} שיתופים`
+      ).join("\n");
+      const raw = await claudeCall(`אתה מנתח שיווק דיגיטלי מומחה. נתח את הביצועים של דף הפייסבוק "${selBiz?.name}":
+
+פוסטים מובילים:
+${topContent}
+
+ממוצע אינטראקציות לפוסט: ${bizData.avgEngagement}
+סה"כ: ${bizData.totalLikes} לייקים, ${bizData.totalComments} תגובות, ${bizData.totalShares} שיתופים
+
+נתח:
+1. מה הנושאים/סגנונות שמביאים הכי הרבה אינטראקציות?
+2. מה השעה/יום הכי טוב לפרסם?
+3. 3 המלצות קונקרטיות לשיפור התוכן.
+4. איזה סוג CTA עובד הכי טוב?
+
+כתוב בעברית, קצר וממוקד. עד 200 מילים.`, 500);
+      setAiInsight(raw);
+    } catch(e) { setAiInsight("שגיאה: " + e.message); }
+    setInsightLoading(false);
+  }
+
   return <div style={{animation:"fadeUp 0.3s ease"}}>
-    <SectionTitle sub="ביצועים ותובנות AI">ניתוח</SectionTitle>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginBottom:24}}>
-      {[["לידים השבוע","14","#10B981"],["Avg Engagement","8.3%","#8B5CF6"],["מדיה הופקה",done,"#EC4899"]]
-        .map(([l,v,c])=><Card key={l} style={{textAlign:"center"}}>
-          <div style={{fontSize:32,fontWeight:700,color:c}}>{v}</div>
-          <div style={{color:"#555",fontSize:12,marginTop:4}}>{l}</div>
-        </Card>)}
+    <SectionTitle sub="ביצועים אמיתיים מ-Meta + תובנות AI">ניתוח ביצועים</SectionTitle>
+
+    {/* Business selector */}
+    <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap",alignItems:"center"}}>
+      {businesses?.map(b=><button key={b.id} onClick={()=>setSelBizId(b.id)} style={{
+        display:"flex",alignItems:"center",gap:8,padding:"10px 18px",borderRadius:12,cursor:"pointer",
+        background:selBizId===b.id?b.color+"12":T.card,
+        border:`1px solid ${selBizId===b.id?b.color:T.border}`,fontFamily:"inherit",
+        color:selBizId===b.id?T.text:T.textMuted,fontWeight:selBizId===b.id?700:400,fontSize:13,transition:"all 0.2s"}}>
+        <span style={{fontSize:18}}>{b.icon}</span>{b.name}
+      </button>)}
+      <Btn sm grad="linear-gradient(135deg,#8B5CF6,#3B82F6)" disabled={loading} onClick={fetchAnalytics}>
+        {loading?<><Spinner size={12}/>טוען...</>:"עדכן נתונים"}
+      </Btn>
     </div>
-    <Card>
-      <div style={{color:"#555",fontSize:11,fontWeight:700,marginBottom:14}}>תובנות AI</div>
-      {[["🏆","פוסט מוביל","ערב קולנוע תחת כיפת השמיים","#F59E0B"],
-        ["📅","יום הכי טוב","יום ג׳","#8B5CF6"],
-        ["⏰","שעה מומלצת","20:00","#EC4899"],
-        ["📈","סוג תוכן מוביל","סרטוני UGC","#10B981"]]
-        .map(([icon,label,val,color])=><div key={label} style={{display:"flex",
+
+    {/* Stats */}
+    <div className="stats-grid-3" style={{display:"grid",gap:14,marginBottom:24}}>
+      {[
+        ["סה\"כ לייקים", bizData.totalLikes||0, "#EC4899"],
+        ["סה\"כ תגובות", bizData.totalComments||0, "#8B5CF6"],
+        ["סה\"כ שיתופים", bizData.totalShares||0, "#3B82F6"],
+        ["ממוצע אינטראקציות", bizData.avgEngagement||0, "#10B981"],
+        ["פוסטים שנבדקו", bizData.posts?.length||0, "#F59E0B"],
+        ["מדיה הופקה", done, "#06B6D4"],
+      ].map(([l,v,c])=><Card key={l} style={{textAlign:"center",padding:16}}>
+        <div style={{fontSize:28,fontWeight:700,color:c}}>{v}</div>
+        <div style={{color:T.textMuted,fontSize:12,marginTop:4}}>{l}</div>
+      </Card>)}
+    </div>
+
+    {/* Top posts */}
+    {bizData.topPosts?.length > 0 && <Card style={{marginBottom:20}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1}}>פוסטים מובילים</div>
+        <Btn sm grad="linear-gradient(135deg,#10B981,#06B6D4)" disabled={insightLoading} onClick={generateInsight}>
+          {insightLoading?<><Spinner size={12}/>מנתח...</>:"תובנות AI"}
+        </Btn>
+      </div>
+      {bizData.topPosts.slice(0,5).map((p,i)=><div key={p.id||i} style={{display:"flex",alignItems:"center",gap:12,
+        padding:"10px 0",borderBottom:i<4?`1px solid ${T.borderLight}`:"none"}}>
+        <div style={{width:28,height:28,borderRadius:8,background:["#F59E0B","#8B5CF6","#EC4899","#10B981","#3B82F6"][i]+"15",
+          display:"flex",alignItems:"center",justifyContent:"center",color:["#F59E0B","#8B5CF6","#EC4899","#10B981","#3B82F6"][i],
+          fontWeight:700,fontSize:12,flexShrink:0}}>
+          {i+1}
+        </div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{color:T.text,fontSize:12,direction:"rtl",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+            {p.message?.slice(0,60) || "(ללא טקסט)"}
+          </div>
+        </div>
+        <div style={{display:"flex",gap:10,flexShrink:0}}>
+          <span style={{color:"#EC4899",fontSize:11,fontWeight:600}}>{p.likes}</span>
+          <span style={{color:"#8B5CF6",fontSize:11,fontWeight:600}}>{p.comments}</span>
+          <span style={{color:"#3B82F6",fontSize:11,fontWeight:600}}>{p.shares}</span>
+        </div>
+      </div>)}
+      <div style={{display:"flex",gap:12,marginTop:8}}>
+        <span style={{color:"#EC4899",fontSize:10}}>● לייקים</span>
+        <span style={{color:"#8B5CF6",fontSize:10}}>● תגובות</span>
+        <span style={{color:"#3B82F6",fontSize:10}}>● שיתופים</span>
+      </div>
+    </Card>}
+
+    {/* AI Insight */}
+    {aiInsight && <Card style={{marginBottom:20}}>
+      <div style={{color:"#10B981",fontWeight:600,fontSize:13,marginBottom:10}}>תובנות AI</div>
+      <p style={{color:T.textSec,fontSize:13,margin:0,lineHeight:1.8,direction:"rtl",whiteSpace:"pre-wrap"}}>{aiInsight}</p>
+    </Card>}
+
+    {/* Fallback static insights */}
+    {!bizData.posts?.length && <Card>
+      <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14}}>תובנות (לחץ "עדכן נתונים" לנתונים אמיתיים)</div>
+      {[["יום הכי טוב","יום ג׳","#8B5CF6"],
+        ["שעה מומלצת","20:00","#EC4899"],
+        ["סוג תוכן מוביל","סרטוני UGC","#10B981"]]
+        .map(([label,val,color])=><div key={label} style={{display:"flex",
           justifyContent:"space-between",alignItems:"center",padding:"10px 14px",
-          background:"#111",borderRadius:8,marginBottom:8}}>
-          <span style={{display:"flex",gap:8,alignItems:"center"}}>
-            <span>{icon}</span><span style={{color:"#666",fontSize:12}}>{label}</span>
-          </span>
+          background:T.inputBg,borderRadius:10,marginBottom:8}}>
+          <span style={{color:T.textSec,fontSize:12}}>{label}</span>
           <span style={{color,fontWeight:600,fontSize:13}}>{val}</span>
         </div>)}
-      <div style={{background:"#071a0f",border:"1px solid #10B98122",borderRadius:8,padding:14,marginTop:12}}>
-        <div style={{color:"#10B981",fontWeight:600,fontSize:12,marginBottom:6}}>💡 המלצה לשבוע הבא</div>
-        <p style={{color:"#666",fontSize:12,margin:0,lineHeight:1.7,direction:"rtl"}}>
-          סרטוני UGC מביאים 3.2x יותר לידים מפוסטים רגילים. מומלץ להגדיל ל-3 UGC בשבוע.
-          שילוב של hook שאלתי + CTA רך מביא engagement גבוה ב-40%.
-        </p>
-      </div>
-    </Card>
+    </Card>}
+
+    {bizData.lastFetch && <div style={{color:T.textDim,fontSize:10,marginTop:8,textAlign:"center"}}>
+      עודכן לאחרונה: {new Date(bizData.lastFetch).toLocaleString("he-IL")}
+    </div>}
   </div>;
 }
 
@@ -1230,25 +1598,25 @@ function Admin() {
 
     {/* API Keys */}
     <Card style={{marginBottom:20}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-        <div style={{color:"#666",fontSize:11,fontWeight:700,letterSpacing:1}}>API KEYS</div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1}}>API KEYS</div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          {saved&&<span style={{color:"#10B981",fontSize:11}}>✓ נשמר</span>}
+          {saved&&<span style={{color:"#10B981",fontSize:11}}>נשמר</span>}
           <Btn sm grad="linear-gradient(135deg,#10B981,#3B82F6)"
             onClick={()=>{
               const blob = new Blob([envFileContent],{type:"text/plain"});
               const a = document.createElement("a"); a.href=URL.createObjectURL(blob);
               a.download=".env"; a.click();
-            }}>⬇️ ייצא .env</Btn>
+            }}>ייצא .env</Btn>
         </div>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
         {API_KEYS_CONFIG.map(k=>{
           const val = keys[k.id]||"";
           const result = testResults[k.id];
-          return <div key={k.id} style={{display:"grid",gridTemplateColumns:"180px 1fr auto auto",gap:8,alignItems:"center"}}>
+          return <div key={k.id} className="admin-key-row" style={{display:"grid",gap:8,alignItems:"center"}}>
             <div>
-              <div style={{color:"#ccc",fontSize:12,fontWeight:600}}>{k.label}</div>
+              <div style={{color:T.text,fontSize:12,fontWeight:600}}>{k.label}</div>
               <div style={{color:k.color,fontSize:10}}>{k.service}</div>
             </div>
             <div style={{position:"relative"}}>
@@ -1257,23 +1625,23 @@ function Admin() {
                 value={val}
                 placeholder={k.hint}
                 onChange={e=>saveKeys({...keys,[k.id]:e.target.value})}
-                style={{width:"100%",background:"#111",border:`1px solid ${val?"#333":"#1a1a1a"}`,
-                  borderRadius:7,padding:"7px 32px 7px 10px",color:"#ddd",fontSize:12,
+                style={{width:"100%",background:T.inputBg,border:`1px solid ${val?T.inputBorder:T.borderLight}`,
+                  borderRadius:10,padding:"8px 32px 8px 10px",color:T.text,fontSize:12,
                   fontFamily:"monospace",boxSizing:"border-box"}}
               />
               <button onClick={()=>setVisible(p=>({...p,[k.id]:!p[k.id]}))}
                 style={{position:"absolute",left:8,top:"50%",transform:"translateY(-50%)",
-                  background:"none",border:"none",color:"#444",cursor:"pointer",fontSize:12}}>
+                  background:"none",border:"none",color:T.textDim,cursor:"pointer",fontSize:12}}>
                 {visible[k.id]?"🙈":"👁"}
               </button>
             </div>
             <Btn sm disabled={!val||testing[k.id]} onClick={()=>testKey(k.id)}
-              bg={result==="ok"?"#10B98120":result?"#EF444420":"#1a1a1a"}
-              color={result==="ok"?"#10B981":result?"#EF4444":"#888"}>
+              bg={result==="ok"?"#10B98110":result?"#EF444410":T.inputBg}
+              color={result==="ok"?"#10B981":result?"#EF4444":T.textMuted}>
               {testing[k.id]?<Spinner size={10}/>:result==="ok"?"✓":result?"✗":"בדוק"}
             </Btn>
             <div style={{width:8,height:8,borderRadius:"50%",
-              background:val?(result==="ok"?"#10B981":result?"#EF4444":"#666"):"#222",
+              background:val?(result==="ok"?"#10B981":result?"#EF4444":T.textMuted):T.border,
               flexShrink:0}}/>
           </div>;
         })}
@@ -1282,15 +1650,15 @@ function Admin() {
 
     {/* Users */}
     <Card style={{marginBottom:20}}>
-      <div style={{color:"#666",fontSize:11,fontWeight:700,marginBottom:16,letterSpacing:1}}>משתמשים</div>
+      <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:16,letterSpacing:1}}>משתמשים</div>
       <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
         <input value={newUser.email} onChange={e=>setNewUser(p=>({...p,email:e.target.value}))}
           placeholder="email@example.com" type="email"
-          style={{flex:1,minWidth:200,background:"#111",border:"1px solid #222",borderRadius:7,
-            padding:"7px 12px",color:"#ddd",fontSize:12,fontFamily:"inherit"}}/>
+          style={{flex:1,minWidth:180,background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,
+            padding:"8px 12px",color:T.text,fontSize:12,fontFamily:"inherit"}}/>
         <select value={newUser.role} onChange={e=>setNewUser(p=>({...p,role:e.target.value}))}
-          style={{background:"#111",border:"1px solid #222",color:"#aaa",
-            borderRadius:7,padding:"7px 10px",fontSize:12,fontFamily:"inherit"}}>
+          style={{background:T.inputBg,border:`1px solid ${T.inputBorder}`,color:T.textSec,
+            borderRadius:10,padding:"8px 10px",fontSize:12,fontFamily:"inherit"}}>
           {["admin","editor","viewer"].map(r=><option key={r}>{r}</option>)}
         </select>
         <Btn sm grad="linear-gradient(135deg,#8B5CF6,#3B82F6)" onClick={inviteUser}>+ הזמן</Btn>
@@ -1298,25 +1666,25 @@ function Admin() {
       {loadingUsers
         ? <div style={{textAlign:"center",padding:20}}><Spinner/></div>
         : users.length===0
-          ? <div style={{color:"#333",fontSize:12,textAlign:"center",padding:16}}>אין משתמשים — הזמן את הראשון</div>
+          ? <div style={{color:T.textDim,fontSize:12,textAlign:"center",padding:16}}>אין משתמשים — הזמן את הראשון</div>
           : <div style={{display:"flex",flexDirection:"column",gap:8}}>
               {users.map(u=>{
-                const roleColor = u.role==="admin"?"#EC4899":u.role==="editor"?"#F59E0B":"#666";
+                const roleColor = u.role==="admin"?"#EC4899":u.role==="editor"?"#F59E0B":T.textMuted;
                 return <div key={u.id} style={{display:"flex",alignItems:"center",gap:12,
-                  padding:"10px 14px",background:"#111",borderRadius:8}}>
+                  padding:"10px 14px",background:T.inputBg,borderRadius:10}}>
                   <div style={{width:32,height:32,borderRadius:"50%",
-                    background:roleColor+"20",border:`1px solid ${roleColor}33`,
+                    background:roleColor+"15",border:`1px solid ${roleColor}33`,
                     display:"flex",alignItems:"center",justifyContent:"center",
                     color:roleColor,fontSize:13,fontWeight:700,flexShrink:0}}>
                     {(u.email||u.name||"?")[0].toUpperCase()}
                   </div>
-                  <div style={{flex:1}}>
-                    <div style={{color:"#ccc",fontSize:13}}>{u.email||u.name}</div>
-                    <div style={{color:"#444",fontSize:11}}>{u.created_at ? new Date(u.created_at).toLocaleDateString("he-IL") : ""}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{color:T.text,fontSize:13}}>{u.email||u.name}</div>
+                    <div style={{color:T.textDim,fontSize:11}}>{u.created_at ? new Date(u.created_at).toLocaleDateString("he-IL") : ""}</div>
                   </div>
                   <Tag label={u.role||"viewer"} color={roleColor}/>
                   {u.role!=="admin"&&
-                    <Btn sm onClick={()=>removeUser(u.id)}>✕</Btn>}
+                    <Btn sm bg={T.inputBg} color={T.textMuted} onClick={()=>removeUser(u.id)}>✕</Btn>}
                 </div>;
               })}
             </div>
@@ -1325,16 +1693,16 @@ function Admin() {
 
     {/* Env preview */}
     <Card>
-      <div style={{color:"#666",fontSize:11,fontWeight:700,marginBottom:12,letterSpacing:1}}>.env PREVIEW</div>
-      <pre style={{background:"#060606",border:"1px solid #1a1a1a",borderRadius:8,
-        padding:14,fontSize:10,color:"#444",overflowX:"auto",margin:0,lineHeight:1.8}}>
+      <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:12,letterSpacing:1}}>.env PREVIEW</div>
+      <pre style={{background:T.inputBg,border:`1px solid ${T.borderLight}`,borderRadius:10,
+        padding:14,fontSize:10,color:T.textDim,overflowX:"auto",margin:0,lineHeight:1.8}}>
         {API_KEYS_CONFIG.map(k=>
           `${k.id}=${keys[k.id] ? (visible["all"] ? keys[k.id] : "•".repeat(Math.min(keys[k.id].length,20))) : ""}`
         ).join("\n")}
       </pre>
       <div style={{marginTop:10}}>
-        <Btn sm onClick={()=>setVisible(p=>({...p,all:!p.all}))} bg="#111" color="#666">
-          {visible.all?"🙈 הסתר":"👁 הצג הכל"}
+        <Btn sm onClick={()=>setVisible(p=>({...p,all:!p.all}))} bg={T.inputBg} color={T.textMuted}>
+          {visible.all?"הסתר":"הצג הכל"}
         </Btn>
       </div>
     </Card>
@@ -1351,7 +1719,10 @@ export default function App() {
   const [businesses, setBusinesses] = useState(()=>{
     try { const s=localStorage.getItem("businesses"); return s?JSON.parse(s):DEFAULT_BUSINESSES; } catch { return DEFAULT_BUSINESSES; }
   });
-  const [sideOpen, setSideOpen] = useState(true);
+  const [analyticsData, setAnalyticsData] = useState(()=>{
+    try { return JSON.parse(localStorage.getItem("analytics_data")||"{}"); } catch { return {}; }
+  });
+  const [mobileNav, setMobileNav] = useState(false);
 
   useEffect(()=>{ localStorage.setItem("businesses",JSON.stringify(businesses)); },[businesses]);
 
@@ -1359,9 +1730,9 @@ export default function App() {
   const published = posts.filter(p=>p.pipeline?.done||p.ugc?.done).length;
 
   return (
-    <div style={{display:"flex",minHeight:"100vh",background:"#060606",
+    <div style={{display:"flex",minHeight:"100vh",background:T.bg,
       fontFamily:"'IBM Plex Sans Hebrew','Assistant',sans-serif",
-      direction:"rtl",color:"#e8e8e8"}}>
+      direction:"rtl",color:T.text}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@300;400;600;700&display=swap');
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -1369,22 +1740,54 @@ export default function App() {
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
         * { box-sizing: border-box; }
         ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-thumb { background: #222; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
         textarea, input, select { outline: none; }
+
+        /* Responsive layout */
+        .stats-grid { grid-template-columns: repeat(5, 1fr); }
+        .stats-grid-3 { grid-template-columns: repeat(3, 1fr); }
+        .two-col-grid { grid-template-columns: 1fr 1fr; }
+        .avatar-grid { grid-template-columns: repeat(3, 1fr); }
+        .admin-key-row { grid-template-columns: 180px 1fr auto auto; }
+        .desktop-sidebar { display: flex; }
+        .mobile-bottom-nav { display: none; }
+        .mobile-menu-btn { display: none; }
+
+        @media (max-width: 900px) {
+          .stats-grid { grid-template-columns: repeat(3, 1fr) !important; }
+          .stats-grid-3 { grid-template-columns: repeat(2, 1fr) !important; }
+          .two-col-grid { grid-template-columns: 1fr !important; }
+          .avatar-grid { grid-template-columns: repeat(2, 1fr) !important; }
+          .admin-key-row { grid-template-columns: 1fr !important; }
+        }
+
+        @media (max-width: 768px) {
+          .desktop-sidebar { display: none !important; }
+          .mobile-bottom-nav { display: flex !important; }
+          .mobile-menu-btn { display: flex !important; }
+          .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+          .stats-grid-3 { grid-template-columns: repeat(2, 1fr) !important; }
+        }
+
+        @media (max-width: 480px) {
+          .stats-grid { grid-template-columns: 1fr 1fr !important; }
+          .stats-grid-3 { grid-template-columns: 1fr 1fr !important; }
+          .avatar-grid { grid-template-columns: 1fr 1fr !important; }
+        }
       `}</style>
 
-      {/* SIDEBAR */}
-      <div style={{width:200,background:"#080808",borderLeft:"1px solid #111",
-        display:"flex",flexDirection:"column",position:"sticky",top:0,height:"100vh",flexShrink:0}}>
+      {/* SIDEBAR — Desktop */}
+      <div className="desktop-sidebar" style={{width:220,background:T.sidebar,borderLeft:`1px solid ${T.border}`,
+        flexDirection:"column",position:"sticky",top:0,height:"100vh",flexShrink:0,boxShadow:"2px 0 8px rgba(0,0,0,0.03)"}}>
         {/* Logo */}
-        <div style={{padding:"18px 16px",borderBottom:"1px solid #111"}}>
+        <div style={{padding:"18px 16px",borderBottom:`1px solid ${T.borderLight}`}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div style={{width:32,height:32,borderRadius:8,
+            <div style={{width:36,height:36,borderRadius:10,
               background:"linear-gradient(135deg,#EC4899,#8B5CF6,#F59E0B)",
-              display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>⚡</div>
+              display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:"#fff"}}>⚡</div>
             <div>
-              <div style={{fontWeight:700,fontSize:13,lineHeight:1.2}}>AI Marketing</div>
-              <div style={{color:"#333",fontSize:10}}>Platform</div>
+              <div style={{fontWeight:700,fontSize:14,lineHeight:1.2,color:T.text}}>AI Marketing</div>
+              <div style={{color:T.textDim,fontSize:10}}>Platform</div>
             </div>
           </div>
         </div>
@@ -1393,10 +1796,10 @@ export default function App() {
         <nav style={{flex:1,padding:"12px 8px",overflowY:"auto"}}>
           {NAV_ITEMS.map(item=><button key={item.id} onClick={()=>setPage(item.id)} style={{
             width:"100%",display:"flex",alignItems:"center",gap:10,
-            background:page===item.id?"#ffffff08":"transparent",
-            border:`1px solid ${page===item.id?"#ffffff15":"transparent"}`,
-            borderRadius:8,padding:"9px 12px",cursor:"pointer",
-            color:page===item.id?"#eee":"#444",fontWeight:page===item.id?600:400,
+            background:page===item.id?T.accent+"10":"transparent",
+            border:`1px solid ${page===item.id?T.accent+"22":"transparent"}`,
+            borderRadius:10,padding:"10px 12px",cursor:"pointer",
+            color:page===item.id?T.accent:T.textMuted,fontWeight:page===item.id?600:400,
             fontSize:13,fontFamily:"inherit",marginBottom:2,transition:"all 0.15s",
             textAlign:"right",justifyContent:"flex-start"
           }}>
@@ -1406,7 +1809,7 @@ export default function App() {
         </nav>
 
         {/* Status */}
-        <div style={{padding:"12px 12px",borderTop:"1px solid #111"}}>
+        <div style={{padding:"12px 12px",borderTop:`1px solid ${T.borderLight}`}}>
           {running>0&&<div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
             <span style={{color:"#8B5CF6",fontSize:10,animation:"pulse 1.5s infinite"}}>●</span>
             <span style={{color:"#8B5CF6",fontSize:11}}>{running} פועל</span>
@@ -1415,43 +1818,91 @@ export default function App() {
             <span style={{color:"#10B981",fontSize:10}}>●</span>
             <span style={{color:"#10B981",fontSize:11}}>{published} פורסם</span>
           </div>}
-          {!running&&!published&&<div style={{color:"#333",fontSize:11}}>מוכן</div>}
+          {!running&&!published&&<div style={{color:T.textDim,fontSize:11}}>מוכן</div>}
         </div>
       </div>
 
       {/* MAIN */}
-      <div style={{flex:1,overflowY:"auto",maxHeight:"100vh"}}>
+      <div style={{flex:1,overflowY:"auto",maxHeight:"100vh",paddingBottom:70}}>
         {/* Top bar */}
-        <div style={{padding:"14px 28px",borderBottom:"1px solid #111",
-          background:"#080808",position:"sticky",top:0,zIndex:50,
-          display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-          <div style={{color:"#eee",fontWeight:700,fontSize:15}}>
-            {NAV_ITEMS.find(n=>n.id===page)?.icon} {NAV_ITEMS.find(n=>n.id===page)?.label}
+        <div style={{padding:"14px 20px",borderBottom:`1px solid ${T.borderLight}`,
+          background:T.topbar,position:"sticky",top:0,zIndex:50,
+          display:"flex",alignItems:"center",justifyContent:"space-between",
+          boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            {/* Mobile menu toggle */}
+            <button className="mobile-menu-btn" onClick={()=>setMobileNav(!mobileNav)}
+              style={{display:"none",alignItems:"center",justifyContent:"center",
+                width:36,height:36,borderRadius:10,border:`1px solid ${T.border}`,
+                background:T.card,cursor:"pointer",fontSize:18}}>
+              ☰
+            </button>
+            <div style={{color:T.text,fontWeight:700,fontSize:16}}>
+              {NAV_ITEMS.find(n=>n.id===page)?.icon} {NAV_ITEMS.find(n=>n.id===page)?.label}
+            </div>
           </div>
-          <div style={{display:"flex",gap:10,alignItems:"center"}}>
-            <div style={{background:"#10B98115",border:"1px solid #10B98133",
-              color:"#10B981",borderRadius:8,padding:"5px 12px",fontSize:11}}>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <div style={{background:"#10B98110",border:"1px solid #10B98122",
+              color:"#10B981",borderRadius:10,padding:"5px 12px",fontSize:11,fontWeight:600}}>
               {posts.filter(p=>p.approved).length} מאושרים
             </div>
-            <div style={{background:"#EC489915",border:"1px solid #EC489933",
-              color:"#EC4899",borderRadius:8,padding:"5px 12px",fontSize:11}}>
+            <div style={{background:"#EC489910",border:"1px solid #EC489922",
+              color:"#EC4899",borderRadius:10,padding:"5px 12px",fontSize:11,fontWeight:600}}>
               {posts.length} פוסטים
             </div>
           </div>
         </div>
 
-        <div style={{padding:"28px",maxWidth:900,margin:"0 auto"}}>
+        {/* Mobile nav dropdown */}
+        {mobileNav && <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",zIndex:100}}
+          onClick={()=>setMobileNav(false)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:"0 0 0 20px",
+            padding:16,maxWidth:260,marginRight:0,marginLeft:"auto",boxShadow:T.shadowLg,
+            maxHeight:"80vh",overflowY:"auto"}}>
+            {NAV_ITEMS.map(item=><button key={item.id} onClick={()=>{setPage(item.id);setMobileNav(false);}} style={{
+              width:"100%",display:"flex",alignItems:"center",gap:10,
+              background:page===item.id?T.accent+"10":"transparent",
+              border:"none",borderRadius:10,padding:"12px 14px",cursor:"pointer",
+              color:page===item.id?T.accent:T.textSec,fontWeight:page===item.id?600:400,
+              fontSize:14,fontFamily:"inherit",marginBottom:2}}>
+              <span style={{fontSize:17}}>{item.icon}</span>
+              {item.label}
+            </button>)}
+          </div>
+        </div>}
+
+        <div style={{padding:"20px",maxWidth:920,margin:"0 auto"}}>
           {page==="dashboard"&&<Dashboard posts={posts} sources={sources} businesses={businesses}/>}
           {page==="businesses"&&<Businesses businesses={businesses} setBusinesses={setBusinesses} posts={posts}/>}
           {page==="sources"&&<Sources sources={sources} setSources={setSources}/>}
-          {page==="content"&&<Content posts={posts} setPosts={setPosts} sources={sources} businesses={businesses}/>}
+          {page==="content"&&<Content posts={posts} setPosts={setPosts} sources={sources} businesses={businesses} analyticsData={analyticsData}/>}
           {page==="media"&&<MediaAI/>}
           {page==="ugc"&&<UGCStudio/>}
           {page==="publish"&&<Publish posts={posts} businesses={businesses}/>}
           {page==="schedule"&&<Schedule posts={posts}/>}
-          {page==="analytics"&&<Analytics posts={posts}/>}
+          {page==="analytics"&&<Analytics posts={posts} businesses={businesses} analyticsData={analyticsData} setAnalyticsData={setAnalyticsData}/>}
           {page==="admin"&&<Admin/>}
         </div>
+      </div>
+
+      {/* MOBILE BOTTOM NAV */}
+      <div className="mobile-bottom-nav" style={{display:"none",position:"fixed",bottom:0,left:0,right:0,
+        background:T.card,borderTop:`1px solid ${T.border}`,zIndex:100,
+        justifyContent:"space-around",padding:"6px 4px",boxShadow:"0 -2px 10px rgba(0,0,0,0.06)"}}>
+        {NAV_ITEMS.slice(0,5).map(item=><button key={item.id} onClick={()=>setPage(item.id)} style={{
+          display:"flex",flexDirection:"column",alignItems:"center",gap:2,
+          background:"transparent",border:"none",cursor:"pointer",padding:"4px 8px",
+          color:page===item.id?T.accent:T.textDim,fontFamily:"inherit",minWidth:0}}>
+          <span style={{fontSize:18}}>{item.icon}</span>
+          <span style={{fontSize:9,fontWeight:page===item.id?700:400}}>{item.label}</span>
+        </button>)}
+        <button onClick={()=>setMobileNav(true)} style={{
+          display:"flex",flexDirection:"column",alignItems:"center",gap:2,
+          background:"transparent",border:"none",cursor:"pointer",padding:"4px 8px",
+          color:T.textDim,fontFamily:"inherit"}}>
+          <span style={{fontSize:18}}>⋯</span>
+          <span style={{fontSize:9}}>עוד</span>
+        </button>
       </div>
     </div>
   );
