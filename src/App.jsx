@@ -920,16 +920,13 @@ async function runRealUGCPipeline(script, avatar, biz, onUpdate) {
   }
 }
 
-// Fallback simulation for UGC pipeline (when API keys not available)
-async function runPipeline(stages, onUpdate) {
-  const s = Object.fromEntries(stages.map(st=>[st.id,"pending"]));
-  for (const stage of stages) {
-    s[stage.id] = "running";
-    onUpdate({ stages:{...s}, current:stage.id, done:false });
-    await sleep(stage.ms);
-    s[stage.id] = "done";
-  }
-  onUpdate({ stages:{...s}, current:null, done:true });
+// Check which UGC API keys are missing and return error
+function checkUGCKeys() {
+  const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
+  const missing = [];
+  if (!keys.ELEVENLABS_API_KEY) missing.push("ElevenLabs (קול עברי)");
+  if (!keys.DID_API_KEY) missing.push("D-ID (אווטר וידאו)");
+  return missing;
 }
 
 function PipelineBar({ stages, pipeline, compact }) {
@@ -984,10 +981,18 @@ function PostCard({ post, onUpdate, compact, businesses }) {
     await runRealPipeline(post, businesses||[], upd => onUpdate(p=>({...p, pipeline:upd})));
   }
   async function startUGC() {
+    const missing = checkUGCKeys();
+    if (missing.length > 0) {
+      onUpdate({...post, ugc:{ stages:{}, current:null, done:false, error:`חסרים מפתחות API: ${missing.join(", ")}. הגדר בדף ניהול ⚙️` }});
+      setExp(true);
+      return;
+    }
     const init = { stages:Object.fromEntries(UGC_STAGES.map(s=>[s.id,"pending"])), current:null, done:false };
     onUpdate({...post, ugc:init});
     setExp(true);
-    await runPipeline(UGC_STAGES, upd => onUpdate(p=>({...p, ugc:upd})));
+    const biz = (businesses||[]).find(b=>b.name===post.business) || {};
+    const avatar = { img:"https://picsum.photos/seed/w1/200/200", name:"דמות AI" };
+    await runRealUGCPipeline(post.content, avatar, biz, upd => onUpdate(p=>({...p, ugc:upd})));
   }
 
   return <Card accent={post.pipeline?.done||post.ugc?.done?"#10B98133":undefined}>
@@ -1606,17 +1611,17 @@ function UGCStudio() {
   }
 
   async function produce() {
+    const missing = checkUGCKeys();
+    if (missing.length > 0) {
+      setPipeline({ stages:{}, current:null, done:false, error:`חסרים מפתחות API: ${missing.join(", ")}. הגדר בדף ניהול ⚙️` });
+      setStep(2);
+      return;
+    }
     setLoading(true);
     const init = { stages:Object.fromEntries(UGC_STAGES.map(s=>[s.id,"pending"])), current:null, done:false };
     setPipeline(init);
     setStep(2);
-    // Use real UGC pipeline if ElevenLabs + D-ID keys exist, otherwise fallback to simulation
-    const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
-    if (keys.ELEVENLABS_API_KEY && keys.DID_API_KEY) {
-      await runRealUGCPipeline(script, avatar, biz, upd=>setPipeline(upd));
-    } else {
-      await runPipeline(UGC_STAGES, upd=>setPipeline(upd));
-    }
+    await runRealUGCPipeline(script, avatar, biz, upd=>setPipeline(upd));
     setLoading(false);
   }
 
