@@ -159,6 +159,60 @@ async function claudeCall(prompt, maxTokens=800) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// POST METRICS — TRACK LIKES/COMMENTS OVER TIME
+// ═══════════════════════════════════════════════════════════════════
+async function fetchPostMetrics(posts, businesses) {
+  const today = new Date().toISOString().split("T")[0];
+  const metricsHistory = JSON.parse(localStorage.getItem("post_metrics")||"{}");
+  const results = [];
+  let permissionError = false;
+
+  for (const post of posts) {
+    if (!post.fbPostId || !post.published) continue;
+    const biz = businesses.find(b=>b.name===post.business);
+    const accessToken = biz?.social?.facebook?.tokens?.META_ACCESS_TOKEN;
+    if (!accessToken) continue;
+
+    try {
+      // Try engagement fields first
+      const r = await fetch(`https://graph.facebook.com/v25.0/${post.fbPostId}?fields=likes.summary(true),comments.summary(true),shares&access_token=${accessToken}`);
+      const d = await r.json();
+      if (d.error) {
+        if (d.error.code === 10 || d.error.message?.includes("pages_read_engagement")) {
+          permissionError = true;
+          // Fallback: store post as verified-published with 0 metrics
+          const metrics = { likes: 0, comments: 0, shares: 0, date: today, needsPermission: true };
+          if (!metricsHistory[post.fbPostId]) metricsHistory[post.fbPostId] = [];
+          const todayIdx = metricsHistory[post.fbPostId].findIndex(m=>m.date===today);
+          if (todayIdx >= 0) metricsHistory[post.fbPostId][todayIdx] = metrics;
+          else metricsHistory[post.fbPostId].push(metrics);
+          results.push({ postId: post.fbPostId, business: post.business, ...metrics });
+        }
+        continue;
+      }
+
+      const metrics = {
+        likes: d.likes?.summary?.total_count || 0,
+        comments: d.comments?.summary?.total_count || 0,
+        shares: d.shares?.count || 0,
+        date: today,
+        needsPermission: false
+      };
+
+      if (!metricsHistory[post.fbPostId]) metricsHistory[post.fbPostId] = [];
+      const todayIdx = metricsHistory[post.fbPostId].findIndex(m=>m.date===today);
+      if (todayIdx >= 0) metricsHistory[post.fbPostId][todayIdx] = metrics;
+      else metricsHistory[post.fbPostId].push(metrics);
+
+      results.push({ postId: post.fbPostId, business: post.business, ...metrics });
+    } catch {}
+  }
+
+  localStorage.setItem("post_metrics", JSON.stringify(metricsHistory));
+  return { results, permissionError };
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // META GRAPH API — ANALYTICS
 // ═══════════════════════════════════════════════════════════════════
 async function fetchPageInsights(pageId, accessToken) {
@@ -179,7 +233,18 @@ async function fetchPostInsights(postId, accessToken) {
       `https://graph.facebook.com/v25.0/${postId}?fields=message,created_time,likes.summary(true),comments.summary(true),shares&access_token=${accessToken}`
     );
     const d = await r.json();
-    if (d.error) return null;
+    if (d.error) {
+      // Fallback: try without engagement fields
+      const r2 = await fetch(
+        `https://graph.facebook.com/v25.0/${postId}?fields=message,created_time&access_token=${accessToken}`
+      );
+      const d2 = await r2.json();
+      if (d2.error) return null;
+      return {
+        id: d2.id, message: d2.message || "", created: d2.created_time,
+        likes: null, comments: null, shares: null, needsPermission: true
+      };
+    }
     return {
       id: d.id,
       message: d.message || "",
@@ -193,11 +258,26 @@ async function fetchPostInsights(postId, accessToken) {
 
 async function fetchPagePosts(pageId, accessToken, limit=10) {
   try {
-    const r = await fetch(
+    // Try with engagement fields first
+    let r = await fetch(
       `https://graph.facebook.com/v25.0/${pageId}/posts?fields=message,created_time,likes.summary(true),comments.summary(true),shares&limit=${limit}&access_token=${accessToken}`
     );
-    const d = await r.json();
-    if (d.error) return [];
+    let d = await r.json();
+    if (d.error) {
+      // Fallback: fetch posts without engagement fields (works with Standard Access)
+      r = await fetch(
+        `https://graph.facebook.com/v25.0/${pageId}/posts?fields=message,created_time&limit=${limit}&access_token=${accessToken}`
+      );
+      d = await r.json();
+      if (d.error) return [];
+      return (d.data||[]).map(p=>({
+        id: p.id,
+        message: p.message || "",
+        created: p.created_time,
+        likes: null, comments: null, shares: null,
+        needsPermission: true
+      }));
+    }
     return (d.data||[]).map(p=>({
       id: p.id,
       message: p.message || "",
@@ -292,6 +372,39 @@ async function searchCompetitors(bizName, bizDescription) {
   } catch { return []; }
 }
 
+// Scrape a competitor's Facebook page (used by Businesses page)
+async function scrapeCompetitorPage(url) {
+  // If it's a Facebook URL, use the FB scraper
+  if (url.includes("facebook.com")) {
+    return await scrapeFacebookPage(url);
+  }
+  // Otherwise scrape the website for content
+  const text = await scrapeWebsite(url);
+  // Return as array of post-like objects
+  return [{ text: text.slice(0, 500), likes: 0, comments: 0, shares: 0, date: "", url }];
+}
+
+// Analyze competitor data with AI
+async function analyzeCompetitors(bizName, competitorData) {
+  const summary = competitorData.map(c => {
+    const topPosts = c.posts.sort((a,b) => (b.likes+b.comments) - (a.likes+a.comments)).slice(0, 3);
+    return `${c.name} (${c.url}):\n${topPosts.map(p => `  - "${(p.text||"").slice(0,60)}..." → ${p.likes} לייקים, ${p.comments} תגובות`).join("\n")}`;
+  }).join("\n\n");
+
+  const raw = await claudeCall(`אתה מנתח שיווקי. נתח את המתחרים של "${bizName}":
+${summary}
+
+החזר JSON בלבד:
+{"insights":"תובנה מרכזית","strengths":["יתרון1","יתרון2"],"weaknesses":["חולשה1","חולשה2"],"opportunities":["הזדמנות1","הזדמנות2"],"topContent":"סוג התוכן שעובד הכי טוב","recommendation":"המלצה אסטרטגית"}`, 800);
+
+  const clean = raw.replace(/```json|```/g, "").trim();
+  try { return JSON.parse(clean); } catch {
+    const m = clean.match(/\{[\s\S]*\}/);
+    if (m) try { return JSON.parse(m[0]); } catch {}
+    return { insights: clean.slice(0, 200), strengths: [], weaknesses: [], opportunities: [], recommendation: "" };
+  }
+}
+
 // Full business scan: website + find competitors + scrape them
 async function fullBusinessScan(biz, onProgress) {
   const results = { websiteContent: null, fbPosts: null, competitors: [], competitorPosts: [], searchResults: [] };
@@ -370,10 +483,23 @@ ${biz.description ? `תיאור: ${biz.description}` : ""}${searchInfo}
 שם: "${biz.name}"${biz.url?`\nאתר: ${biz.url}`:""}${biz.description?`\nתיאור: ${biz.description}`:""}${websiteInfo}${ownPostsInfo}${compList}${compInfo}
 
 נתח הכל והחזר JSON בלבד:
-{"tone":"טון המותג","audience":"קהל יעד","strengths":["יתרון1","יתרון2","יתרון3"],"contentIdeas":["רעיון1","רעיון2","רעיון3","רעיון4"],"bestPlatform":"פלטפורמה מומלצת","postFrequency":"תדירות","competitorInsights":"תובנה מרכזית מהמתחרים","topThemes":["נושא1","נושא2","נושא3"],"bestHooks":["hook1","hook2"],"gaps":["פער1","פער2"],"recommendation":"המלצה אסטרטגית"}`, 800);
+{"tone":"טון המותג","audience":"קהל יעד","strengths":["יתרון1","יתרון2","יתרון3"],"contentIdeas":["רעיון1","רעיון2","רעיון3","רעיון4"],"bestPlatform":"פלטפורמה מומלצת","postFrequency":"תדירות","competitorInsights":"תובנה מרכזית מהמתחרים","topThemes":["נושא1","נושא2","נושא3"],"bestHooks":["hook1","hook2"],"gaps":["פער1","פער2"],"recommendation":"המלצה אסטרטגית"}
+חשוב: החזר JSON תקין בלבד, ללא טקסט נוסף.`, 1200);
 
   const clean = raw.replace(/```json|```/g,"").trim();
-  results.analysis = JSON.parse(clean);
+  try {
+    results.analysis = JSON.parse(clean);
+  } catch {
+    // Try to extract JSON from the response
+    const jsonMatch = clean.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try { results.analysis = JSON.parse(jsonMatch[0]); } catch {
+        results.analysis = { tone: "לא זמין", audience: "לא זמין", strengths: [], contentIdeas: [], recommendation: clean.slice(0, 200) };
+      }
+    } else {
+      results.analysis = { tone: "לא זמין", audience: "לא זמין", strengths: [], contentIdeas: [], recommendation: clean.slice(0, 200) };
+    }
+  }
   return results;
 }
 
@@ -438,13 +564,12 @@ async function boostPost(postId, accessToken, adAccountId, budget, duration, tar
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// PIPELINE SIMULATION
+// MEDIA PIPELINE — REAL AI IMAGE GENERATION + PUBLISH
 // ═══════════════════════════════════════════════════════════════════
 const MEDIA_STAGES = [
-  { id:"prompt",  label:"פרומפט",  icon:"🧠", color:"#8B5CF6", ms:2500 },
-  { id:"image",   label:"Flux",    icon:"🖼️", color:"#F59E0B", ms:4000 },
-  { id:"video",   label:"Runway",  icon:"🎬", color:"#EC4899", ms:8000 },
-  { id:"publish", label:"Meta",    icon:"📡", color:"#1877F2", ms:2000 },
+  { id:"prompt",  label:"פרומפט",  icon:"🧠", color:"#8B5CF6" },
+  { id:"image",   label:"Flux",    icon:"🖼️", color:"#F59E0B" },
+  { id:"publish", label:"Meta",    icon:"📡", color:"#1877F2" },
 ];
 const UGC_STAGES = [
   { id:"script",  label:"סקריפט", icon:"✍️", color:"#8B5CF6", ms:2000 },
@@ -454,6 +579,348 @@ const UGC_STAGES = [
   { id:"publish", label:"Meta",   icon:"📡", color:"#1877F2", ms:2000 },
 ];
 
+async function generateImageWithFlux(prompt) {
+  const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
+  const token = keys.REPLICATE_API_TOKEN;
+  if (!token) throw new Error("הגדר REPLICATE_API_TOKEN בדף ניהול");
+
+  const baseUrl = "/replicate-api"; // Vite proxy to avoid CORS
+
+  // Start prediction
+  const resp = await fetch(`${baseUrl}/v1/models/black-forest-labs/flux-1.1-pro/predictions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+    body: JSON.stringify({ input: { prompt, aspect_ratio: "1:1", output_format: "jpg", safety_tolerance: 5 } })
+  });
+  const prediction = await resp.json();
+  if (prediction.error) throw new Error(prediction.error);
+
+  // Poll for result via proxy
+  const predictionId = prediction.id;
+  if (!predictionId) throw new Error("Replicate: missing prediction ID");
+  for (let i = 0; i < 60; i++) {
+    await sleep(2000);
+    const poll = await fetch(`${baseUrl}/v1/predictions/${predictionId}`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    const result = await poll.json();
+    if (result.status === "succeeded") return result.output;
+    if (result.status === "failed" || result.status === "canceled") throw new Error(result.error || "Image generation failed");
+  }
+  throw new Error("Timeout: image generation took too long");
+}
+
+async function runRealPipeline(post, businesses, onUpdate) {
+  const stages = MEDIA_STAGES;
+  const s = Object.fromEntries(stages.map(st=>[st.id,"pending"]));
+
+  // STAGE 1: Generate image prompt with Claude
+  s.prompt = "running";
+  onUpdate({ stages:{...s}, current:"prompt", done:false });
+  let imagePrompt;
+  try {
+    imagePrompt = await claudeCall(
+      `אתה מומחה ליצירת תמונות AI. קרא את הפוסט הבא וצור prompt באנגלית ליצירת תמונה שתתאים לו בפייסבוק/אינסטגרם.
+הפוסט: "${post.content}"
+כתוב רק את ה-prompt באנגלית, שורה אחת, ללא הסברים. התמונה צריכה להיות מקצועית, מושכת, ומתאימה לשיווק ברשתות חברתיות. אל תכלול טקסט בתמונה.`, 200
+    );
+  } catch(e) {
+    imagePrompt = "Professional marketing image, vibrant colors, eye-catching social media post, travel theme, 4k quality";
+  }
+  s.prompt = "done";
+  onUpdate({ stages:{...s}, current:"prompt", done:false });
+
+  // STAGE 2: Generate image with Flux
+  s.image = "running";
+  onUpdate({ stages:{...s}, current:"image", done:false });
+  let imageUrl;
+  try {
+    imageUrl = await generateImageWithFlux(imagePrompt);
+  } catch(e) {
+    s.image = "error";
+    onUpdate({ stages:{...s}, current:null, done:false, error: `שגיאה ביצירת תמונה: ${e.message}` });
+    return { error: e.message };
+  }
+  s.image = "done";
+  onUpdate({ stages:{...s}, current:"image", done:false, imageUrl });
+
+  // STAGE 3: Publish to Facebook/Instagram with image
+  s.publish = "running";
+  onUpdate({ stages:{...s}, current:"publish", done:false, imageUrl });
+  try {
+    const biz = businesses.find(b=>b.name===post.business);
+    const fbTokens = biz?.social?.facebook?.tokens;
+    if (fbTokens?.META_PAGE_ID && fbTokens?.META_ACCESS_TOKEN) {
+      const pageId = fbTokens.META_PAGE_ID;
+      const accessToken = fbTokens.META_ACCESS_TOKEN;
+      const hashtags = (post.hashtags||[]).map(h=>h.startsWith("#")?h:`#${h}`).join(" ");
+      const message = post.content + (hashtags ? "\n\n" + hashtags : "");
+
+      const r = await fetch(`https://graph.facebook.com/v25.0/${pageId}/photos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: imageUrl, message, access_token: accessToken })
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error.message);
+      s.publish = "done";
+      onUpdate({ stages:{...s}, current:null, done:true, imageUrl, postId: d.post_id || d.id });
+      return { imageUrl, postId: d.post_id || d.id };
+    } else {
+      // No FB tokens — just mark image as done, skip publish
+      s.publish = "done";
+      onUpdate({ stages:{...s}, current:null, done:true, imageUrl, postId: null });
+      return { imageUrl, postId: null };
+    }
+  } catch(e) {
+    s.publish = "error";
+    onUpdate({ stages:{...s}, current:null, done:false, imageUrl, error: `שגיאה בפרסום: ${e.message}` });
+    return { imageUrl, error: e.message };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ELEVENLABS TTS — Real Hebrew Text-to-Speech
+// ═══════════════════════════════════════════════════════════════════
+async function elevenLabsTTS(text, voiceId) {
+  const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
+  const apiKey = keys.ELEVENLABS_API_KEY;
+  if (!apiKey) throw new Error("הגדר ELEVENLABS_API_KEY בדף ניהול");
+
+  // Default Hebrew female voice if not specified
+  const voice = voiceId || "EXAVITQu4vr4xnSDxMaL"; // Sarah
+  const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "xi-api-key": apiKey },
+    body: JSON.stringify({
+      text,
+      model_id: "eleven_multilingual_v2",
+      voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+    })
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail?.message || err.detail || `ElevenLabs error: ${r.status}`);
+  }
+  const blob = await r.blob();
+  // Upload audio to a temporary hosting or return as data URL
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// D-ID — Avatar Video Generation
+// ═══════════════════════════════════════════════════════════════════
+async function didCreateTalk(imageUrl, audioUrl) {
+  const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
+  const apiKey = keys.DID_API_KEY;
+  if (!apiKey) throw new Error("הגדר DID_API_KEY בדף ניהול");
+
+  // If audio is a data URL, we need to use D-ID's text-based approach or upload
+  const isDataUrl = audioUrl.startsWith("data:");
+
+  let body;
+  if (isDataUrl) {
+    // Use D-ID's built-in TTS as fallback (send script text instead)
+    body = {
+      source_url: imageUrl,
+      script: {
+        type: "audio",
+        audio_url: audioUrl
+      },
+      config: { stitch: true }
+    };
+  } else {
+    body = {
+      source_url: imageUrl,
+      script: { type: "audio", audio_url: audioUrl },
+      config: { stitch: true }
+    };
+  }
+
+  const r = await fetch("https://api.d-id.com/talks", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Basic ${apiKey}`
+    },
+    body: JSON.stringify(body)
+  });
+  const data = await r.json();
+  if (data.kind === "BadRequestError" || data.status === "error") {
+    throw new Error(data.description || data.message || "D-ID error");
+  }
+  const talkId = data.id;
+  if (!talkId) throw new Error("D-ID: missing talk ID");
+
+  // Poll for result
+  for (let i = 0; i < 60; i++) {
+    await sleep(3000);
+    const poll = await fetch(`https://api.d-id.com/talks/${talkId}`, {
+      headers: { "Authorization": `Basic ${apiKey}` }
+    });
+    const result = await poll.json();
+    if (result.status === "done") return result.result_url;
+    if (result.status === "error" || result.status === "rejected") {
+      throw new Error(result.error?.description || "D-ID video generation failed");
+    }
+  }
+  throw new Error("Timeout: D-ID video generation took too long");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// RUNWAY ML — Image to Video
+// ═══════════════════════════════════════════════════════════════════
+async function runwayImageToVideo(imageUrl) {
+  const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
+  const apiKey = keys.RUNWAYML_API_SECRET;
+  if (!apiKey) throw new Error("הגדר RUNWAYML_API_SECRET בדף ניהול");
+
+  const r = await fetch("https://api.dev.runwayml.com/v1/image_to_video", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+      "X-Runway-Version": "2024-11-06"
+    },
+    body: JSON.stringify({
+      model: "gen3a_turbo",
+      promptImage: imageUrl,
+      duration: 5,
+      ratio: "9:16"
+    })
+  });
+  const data = await r.json();
+  if (data.error) throw new Error(data.error);
+  const taskId = data.id;
+  if (!taskId) throw new Error("Runway: missing task ID");
+
+  for (let i = 0; i < 60; i++) {
+    await sleep(5000);
+    const poll = await fetch(`https://api.dev.runwayml.com/v1/tasks/${taskId}`, {
+      headers: { "Authorization": `Bearer ${apiKey}`, "X-Runway-Version": "2024-11-06" }
+    });
+    const result = await poll.json();
+    if (result.status === "SUCCEEDED") return result.output?.[0] || result.output;
+    if (result.status === "FAILED") throw new Error(result.failure || "Runway video generation failed");
+  }
+  throw new Error("Timeout: Runway video generation took too long");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// REAL UGC PIPELINE — ElevenLabs + D-ID + Optional Runway
+// ═══════════════════════════════════════════════════════════════════
+async function runRealUGCPipeline(script, avatar, biz, onUpdate) {
+  const stages = UGC_STAGES;
+  const s = Object.fromEntries(stages.map(st => [st.id, "pending"]));
+
+  // STAGE 1: Script (already written)
+  s.script = "running";
+  onUpdate({ stages: {...s}, current: "script", done: false });
+  await sleep(500); // brief pause for UI
+  s.script = "done";
+  onUpdate({ stages: {...s}, current: "script", done: false });
+
+  // STAGE 2: Generate audio with ElevenLabs
+  s.tts = "running";
+  onUpdate({ stages: {...s}, current: "tts", done: false });
+  let audioUrl;
+  try {
+    audioUrl = await elevenLabsTTS(script);
+  } catch (e) {
+    s.tts = "error";
+    onUpdate({ stages: {...s}, current: null, done: false, error: `שגיאה ב-ElevenLabs: ${e.message}` });
+    return { error: e.message };
+  }
+  s.tts = "done";
+  onUpdate({ stages: {...s}, current: "tts", done: false, audioUrl });
+
+  // STAGE 3: Generate avatar video with D-ID
+  s.avatar = "running";
+  onUpdate({ stages: {...s}, current: "avatar", done: false, audioUrl });
+  let videoUrl;
+  try {
+    videoUrl = await didCreateTalk(avatar.img, audioUrl);
+  } catch (e) {
+    s.avatar = "error";
+    onUpdate({ stages: {...s}, current: null, done: false, audioUrl, error: `שגיאה ב-D-ID: ${e.message}` });
+    return { audioUrl, error: e.message };
+  }
+  s.avatar = "done";
+  onUpdate({ stages: {...s}, current: "avatar", done: false, videoUrl });
+
+  // STAGE 4: Background video (optional Runway enhancement)
+  s.bg = "running";
+  onUpdate({ stages: {...s}, current: "bg", done: false, videoUrl });
+  try {
+    // Try Runway for background, but don't fail if unavailable
+    const keys = JSON.parse(localStorage.getItem("admin_keys") || "{}");
+    if (keys.RUNWAYML_API_SECRET) {
+      // Generate a complementary background video using Flux image + Runway
+      const bgPrompt = `Professional marketing background for ${biz.name}, subtle motion, bokeh effect, 9:16 vertical`;
+      const bgImage = await generateImageWithFlux(bgPrompt).catch(() => null);
+      if (bgImage) {
+        const bgVideo = await runwayImageToVideo(bgImage).catch(() => null);
+        if (bgVideo) {
+          s.bg = "done";
+          onUpdate({ stages: {...s}, current: "bg", done: false, videoUrl, bgVideoUrl: bgVideo });
+        } else {
+          s.bg = "done"; // Skip if fails, not critical
+        }
+      } else {
+        s.bg = "done";
+      }
+    } else {
+      s.bg = "done"; // Skip if no Runway key
+    }
+  } catch {
+    s.bg = "done"; // Non-critical stage
+  }
+  onUpdate({ stages: {...s}, current: "bg", done: false, videoUrl });
+
+  // STAGE 5: Publish to Meta (optional)
+  s.publish = "running";
+  onUpdate({ stages: {...s}, current: "publish", done: false, videoUrl });
+  try {
+    const fbTokens = biz?.social?.facebook?.tokens;
+    if (fbTokens?.META_PAGE_ID && fbTokens?.META_ACCESS_TOKEN && videoUrl) {
+      // Post the video to Facebook
+      const pageId = fbTokens.META_PAGE_ID;
+      const accessToken = fbTokens.META_ACCESS_TOKEN;
+      const message = `${script.slice(0, 200)}...\n\n#UGC #${biz.name.replace(/\s/g, "")}`;
+
+      const r = await fetch(`https://graph.facebook.com/v25.0/${pageId}/videos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          file_url: videoUrl,
+          description: message,
+          access_token: accessToken
+        })
+      });
+      const d = await r.json();
+      if (d.id) {
+        s.publish = "done";
+        onUpdate({ stages: {...s}, current: null, done: true, videoUrl, postId: d.id });
+        return { videoUrl, postId: d.id };
+      }
+    }
+    // No tokens or no video — still mark as done
+    s.publish = "done";
+    onUpdate({ stages: {...s}, current: null, done: true, videoUrl });
+    return { videoUrl };
+  } catch (e) {
+    s.publish = "error";
+    onUpdate({ stages: {...s}, current: null, done: false, videoUrl, error: `שגיאה בפרסום: ${e.message}` });
+    return { videoUrl, error: e.message };
+  }
+}
+
+// Fallback simulation for UGC pipeline (when API keys not available)
 async function runPipeline(stages, onUpdate) {
   const s = Object.fromEntries(stages.map(st=>[st.id,"pending"]));
   for (const stage of stages) {
@@ -470,34 +937,41 @@ function PipelineBar({ stages, pipeline, compact }) {
   if (compact) {
     const cur = stages.find(s=>s.id===pipeline.current);
     if (pipeline.done) return <Tag label="פורסם" color="#10B981"/>;
+    if (pipeline.error) return <Tag label="שגיאה" color="#EF4444"/>;
     if (cur) return <span style={{display:"flex",alignItems:"center",gap:5,fontSize:11}}>
       <Spinner size={10} color={cur.color}/><span style={{color:cur.color}}>{cur.label}</span>
     </span>;
     return null;
   }
-  return <div style={{display:"flex",gap:4,marginTop:14,flexWrap:"wrap"}}>
-    {stages.map((s,i)=>{
-      const st = pipeline.stages?.[s.id];
-      const active = pipeline.current===s.id;
-      return <div key={s.id} style={{display:"flex",alignItems:"center",gap:4}}>
-        <div style={{ width:32,height:32,borderRadius:"50%",
-          background: st==="done"?s.color+"20":active?s.color+"10":T.inputBg,
-          border:`2px solid ${st==="done"||active?s.color:T.border}`,
-          display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,
-          boxShadow:active?`0 0 12px ${s.color}33`:"none",transition:"all 0.4s" }}>
-          {st==="done"?"✓":active?<Spinner size={12} color={s.color}/>:s.icon}
-        </div>
-        <div style={{fontSize:9,color:st==="done"||active?s.color:T.textDim,fontWeight:active?700:400}}>{s.label}</div>
-        {i<stages.length-1&&<div style={{width:10,height:2,background:st==="done"?s.color:T.border,marginLeft:4}}/>}
-      </div>;
-    })}
+  return <div style={{marginTop:14}}>
+    <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+      {stages.map((s,i)=>{
+        const st = pipeline.stages?.[s.id];
+        const active = pipeline.current===s.id;
+        return <div key={s.id} style={{display:"flex",alignItems:"center",gap:4}}>
+          <div style={{ width:32,height:32,borderRadius:"50%",
+            background: st==="done"?s.color+"20":st==="error"?"#EF444420":active?s.color+"10":T.inputBg,
+            border:`2px solid ${st==="done"?s.color:st==="error"?"#EF4444":active?s.color:T.border}`,
+            display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,
+            boxShadow:active?`0 0 12px ${s.color}33`:"none",transition:"all 0.4s" }}>
+            {st==="done"?"✓":st==="error"?"✗":active?<Spinner size={12} color={s.color}/>:s.icon}
+          </div>
+          <div style={{fontSize:9,color:st==="done"||active?s.color:st==="error"?"#EF4444":T.textDim,fontWeight:active?700:400}}>{s.label}</div>
+          {i<stages.length-1&&<div style={{width:10,height:2,background:st==="done"?s.color:T.border,marginLeft:4}}/>}
+        </div>;
+      })}
+    </div>
+    {pipeline.imageUrl&&<div style={{marginTop:10}}>
+      <img src={pipeline.imageUrl} alt="AI generated" style={{width:120,height:120,borderRadius:10,objectFit:"cover",border:`1px solid ${T.border}`}}/>
+    </div>}
+    {pipeline.error&&<div style={{marginTop:8,color:"#EF4444",fontSize:11,fontWeight:600}}>{pipeline.error}</div>}
   </div>;
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // POST CARD
 // ═══════════════════════════════════════════════════════════════════
-function PostCard({ post, onUpdate, compact }) {
+function PostCard({ post, onUpdate, compact, businesses }) {
   const [exp, setExp] = useState(false);
   const [editing, setEditing] = useState(false);
   const [txt, setTxt] = useState(post.content);
@@ -507,7 +981,7 @@ function PostCard({ post, onUpdate, compact }) {
     const init = { stages:Object.fromEntries(MEDIA_STAGES.map(s=>[s.id,"pending"])), current:null, done:false };
     onUpdate({...post, pipeline:init});
     setExp(true);
-    await runPipeline(MEDIA_STAGES, upd => onUpdate(p=>({...p, pipeline:upd})));
+    await runRealPipeline(post, businesses||[], upd => onUpdate(p=>({...p, pipeline:upd})));
   }
   async function startUGC() {
     const init = { stages:Object.fromEntries(UGC_STAGES.map(s=>[s.id,"pending"])), current:null, done:false };
@@ -537,7 +1011,7 @@ function PostCard({ post, onUpdate, compact }) {
     }
 
     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
-      {post.hashtags.map(h=><span key={h} style={{color:pl.color,fontSize:11}}>#{h}</span>)}
+      {(post.hashtags||[]).map(h=><span key={h} style={{color:pl.color,fontSize:11}}>#{h}</span>)}
     </div>
 
     <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
@@ -572,14 +1046,43 @@ function PostCard({ post, onUpdate, compact }) {
 // DASHBOARD
 function Dashboard({ posts, sources, businesses }) {
   const approved = posts.filter(p=>p.approved).length;
+  const published = posts.filter(p=>p.published).length;
   const withMedia = posts.filter(p=>p.pipeline?.done).length;
   const withUGC = posts.filter(p=>p.ugc?.done).length;
+  const [metricsLoading, setMetricsLoading] = useState(false);
+  const [latestMetrics, setLatestMetrics] = useState(()=>{
+    try {
+      const h = JSON.parse(localStorage.getItem("post_metrics")||"{}");
+      // Get latest metrics for each post
+      return Object.entries(h).map(([postId, history])=>{
+        const latest = history[history.length-1];
+        const post = posts.find(p=>p.fbPostId===postId);
+        return { postId, ...latest, business: post?.business, content: post?.content?.slice(0,60) };
+      }).filter(m=>m.business);
+    } catch { return []; }
+  });
+
+  const [permWarning, setPermWarning] = useState(false);
+
+  async function refreshMetrics() {
+    setMetricsLoading(true);
+    try {
+      const { results, permissionError } = await fetchPostMetrics(posts, businesses);
+      setPermWarning(permissionError);
+      setLatestMetrics(results.map(m=>{
+        const post = posts.find(p=>p.fbPostId===m.postId);
+        return { ...m, content: post?.content?.slice(0,60) };
+      }));
+    } catch {}
+    setMetricsLoading(false);
+  }
+
   const stats = [
     { label:"עסקים", value:businesses?.length||0, color:"#F59E0B", icon:"🏪" },
     { label:"פוסטים", value:posts.length, color:"#8B5CF6", icon:"✍️" },
     { label:"מאושרים", value:approved, color:"#10B981", icon:"✅" },
+    { label:"פורסמו", value:published, color:"#1877F2", icon:"📡" },
     { label:"עם מדיה AI", value:withMedia, color:"#F59E0B", icon:"🖼️" },
-    { label:"סרטוני UGC", value:withUGC, color:"#EC4899", icon:"🎭" },
   ];
   return <div style={{animation:"fadeUp 0.3s ease"}}>
     <SectionTitle sub="סקירה כללית של המערכת">דשבורד</SectionTitle>
@@ -590,6 +1093,57 @@ function Dashboard({ posts, sources, businesses }) {
         <div style={{color:T.textMuted,fontSize:11}}>{s.label}</div>
       </Card>)}
     </div>
+
+    {/* Published posts metrics */}
+    {published > 0 && <Card style={{marginBottom:20}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1}}>📊 ביצועי פוסטים שפורסמו</div>
+        <Btn sm bg="#1877F212" color="#1877F2" onClick={refreshMetrics} disabled={metricsLoading}>
+          {metricsLoading?<><Spinner size={12}/>מעדכן...</>:"עדכן נתונים"}
+        </Btn>
+      </div>
+      {permWarning && <div style={{background:"#FEF3C7",border:"1px solid #F59E0B",borderRadius:8,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
+        <span style={{fontSize:16}}>⚠️</span>
+        <div style={{flex:1}}>
+          <div style={{color:"#92400E",fontSize:11,fontWeight:600}}>חסרה הרשאת Advanced Access ל-pages_read_engagement</div>
+          <div style={{color:"#A16207",fontSize:10}}>נדרש App Review ב-Meta Developer Console כדי לקרוא לייקים ותגובות. ההרשאה הוספה לאפליקציה אך ממתינה לאישור.</div>
+        </div>
+      </div>}
+      {latestMetrics.length > 0
+        ? <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {latestMetrics.map((m,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+              padding:"10px 14px",background:T.inputBg,borderRadius:10,gap:12}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{color:T.textSec,fontSize:11,fontWeight:600}}>{m.business}</div>
+                <div style={{color:T.textMuted,fontSize:10,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",direction:"rtl"}}>{m.content}...</div>
+              </div>
+              {m.needsPermission
+                ? <div style={{color:"#F59E0B",fontSize:10,fontWeight:600,flexShrink:0}}>⚠️ ממתין להרשאה</div>
+                : <div style={{display:"flex",gap:16,flexShrink:0}}>
+                    <div style={{textAlign:"center"}}>
+                      <div style={{color:"#1877F2",fontWeight:700,fontSize:16}}>{m.likes||0}</div>
+                      <div style={{color:T.textDim,fontSize:9}}>לייקים</div>
+                    </div>
+                    <div style={{textAlign:"center"}}>
+                      <div style={{color:"#10B981",fontWeight:700,fontSize:16}}>{m.comments||0}</div>
+                      <div style={{color:T.textDim,fontSize:9}}>תגובות</div>
+                    </div>
+                    <div style={{textAlign:"center"}}>
+                      <div style={{color:"#F59E0B",fontWeight:700,fontSize:16}}>{m.shares||0}</div>
+                      <div style={{color:T.textDim,fontSize:9}}>שיתופים</div>
+                    </div>
+                  </div>
+              }
+            </div>)}
+            {latestMetrics[0]?.date && <div style={{color:T.textDim,fontSize:9,textAlign:"center",marginTop:4}}>
+              עודכן: {latestMetrics[0].date}
+            </div>}
+          </div>
+        : <div style={{color:T.textDim,fontSize:12,textAlign:"center",padding:20}}>
+            לחץ "עדכן נתונים" לראות לייקים ותגובות
+          </div>
+      }
+    </Card>}
     <div className="two-col-grid" style={{display:"grid",gap:16}}>
       <Card>
         <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1}}>PIPELINE</div>
@@ -695,7 +1249,7 @@ function Sources({ sources, setSources }) {
 }
 
 // CONTENT
-function Content({ posts, setPosts, sources, businesses, analyticsData }) {
+function Content({ posts, setPosts, sources, businesses, setBusinesses, analyticsData }) {
   const BUSINESSES = businesses || DEFAULT_BUSINESSES;
   const [selBiz, setSelBiz] = useState(BUSINESSES[0]);
   const [selPlatforms, setSelPlatforms] = useState(["facebook","instagram"]);
@@ -703,23 +1257,139 @@ function Content({ posts, setPosts, sources, businesses, analyticsData }) {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
+  function updateBiz(id, upd) { setBusinesses?.(p=>p.map(b=>b.id===id?{...b,...upd}:b)); }
+
   const existingBizPosts = posts.filter(p=>p.business===selBiz?.name);
+
+  // Quick scan using Facebook Graph API + website (no Apify needed)
+  async function quickScan(biz) {
+    const results = { websiteContent: null, fbPosts: null, fbAbout: null };
+
+    // 1. Read Facebook page info + recent posts via Graph API
+    const fbTokens = biz.social?.facebook?.tokens;
+    if (fbTokens?.META_PAGE_ID && fbTokens?.META_ACCESS_TOKEN) {
+      setMsg("📖 קורא את דף הפייסבוק...");
+      try {
+        const pageR = await fetch(`https://graph.facebook.com/v25.0/${fbTokens.META_PAGE_ID}?fields=name,about,description,category,website,fan_count&access_token=${fbTokens.META_ACCESS_TOKEN}`);
+        const pageD = await pageR.json();
+        if (!pageD.error) results.fbAbout = pageD;
+      } catch {}
+      try {
+        const postsR = await fetch(`https://graph.facebook.com/v25.0/${fbTokens.META_PAGE_ID}/posts?fields=message,created_time,likes.summary(true),comments.summary(true)&limit=20&access_token=${fbTokens.META_ACCESS_TOKEN}`);
+        const postsD = await postsR.json();
+        if (postsD.data) results.fbPosts = postsD.data.filter(p=>p.message).map(p=>({
+          text: p.message, date: p.created_time,
+          likes: p.likes?.summary?.total_count||0, comments: p.comments?.summary?.total_count||0
+        }));
+      } catch {}
+    }
+
+    // 2. Read website content (try fetch, fallback to Apify if available)
+    if (biz.url) {
+      setMsg("🌐 קורא את האתר...");
+      try {
+        const r = await fetch(biz.url);
+        if (r.ok) {
+          const html = await r.text();
+          const doc = new DOMParser().parseFromString(html, "text/html");
+          doc.querySelectorAll("script,style,nav,footer,header").forEach(el=>el.remove());
+          results.websiteContent = (doc.body?.textContent||"").replace(/\s+/g," ").trim().slice(0,3000);
+        }
+      } catch {
+        // CORS blocked — try Apify if available
+        const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
+        if (keys.APIFY_API_TOKEN) {
+          try { results.websiteContent = await scrapeWebsite(biz.url); } catch {}
+        }
+      }
+    }
+
+    // 3. AI analysis of everything we found
+    setMsg("🧠 AI מנתח את העסק...");
+    const fbAboutText = results.fbAbout ? `\nמידע מפייסבוק: ${results.fbAbout.about||""} ${results.fbAbout.description||""} (קטגוריה: ${results.fbAbout.category||""})` : "";
+    const websiteText = results.websiteContent ? `\nתוכן מהאתר:\n${results.websiteContent.slice(0,1500)}` : "";
+    const fbPostsText = results.fbPosts?.length > 0
+      ? `\nפוסטים אחרונים בפייסבוק:\n${results.fbPosts.slice(0,8).map(p=>`- "${p.text.slice(0,120)}..." (${p.likes} לייקים, ${p.comments} תגובות)`).join("\n")}`
+      : "";
+
+    const raw = await claudeCall(`אתה מנתח שיווקי מומחה. נתח את העסק הבא באופן מקיף:
+שם: "${biz.name}"${biz.url?`\nאתר: ${biz.url}`:""}${biz.description?`\nתיאור: ${biz.description}`:""}${fbAboutText}${websiteText}${fbPostsText}
+
+נתח הכל והחזר JSON בלבד:
+{"tone":"טון המותג","audience":"קהל יעד","strengths":["יתרון1","יתרון2","יתרון3"],"contentIdeas":["רעיון1","רעיון2","רעיון3","רעיון4"],"bestPlatform":"פלטפורמה מומלצת","postFrequency":"תדירות","recommendation":"המלצה אסטרטגית"}
+חשוב: החזר JSON תקין בלבד, ללא טקסט נוסף.`, 800);
+
+    const clean = raw.replace(/```json|```/g,"").trim();
+    try { results.analysis = JSON.parse(clean); } catch {
+      const m = clean.match(/\{[\s\S]*\}/);
+      if (m) try { results.analysis = JSON.parse(m[0]); } catch {}
+    }
+    if (!results.analysis) results.analysis = { tone:"לא זמין", audience:"לא זמין", strengths:[], contentIdeas:[] };
+
+    return results;
+  }
 
   async function generate() {
     setLoading(true); setMsg("");
     try {
+      // ═══ AUTO-SCAN: learn about the business before creating content ═══
+      let activeBiz = { ...selBiz };
+      const scanAge = activeBiz.lastQuickScan ? Date.now() - new Date(activeBiz.lastQuickScan).getTime() : Infinity;
+      const needsScan = !activeBiz.scanResult || activeBiz.scanResult.error || scanAge > 7*24*3600*1000;
+
+      if (needsScan) {
+        setMsg("🔍 לומד על העסק לפני יצירת תוכן...");
+        try {
+          const scanResults = await quickScan(activeBiz);
+          const bizUpdate = {
+            scanResult: scanResults.analysis,
+            fullScanData: scanResults,
+            lastQuickScan: new Date().toISOString()
+          };
+          updateBiz(activeBiz.id, bizUpdate);
+          activeBiz = { ...activeBiz, ...bizUpdate };
+          setMsg("✅ סריקה הושלמה — יוצר פוסטים...");
+        } catch(e) {
+          setMsg("⚠️ הסריקה נכשלה — יוצר תוכן עם המידע הקיים...");
+        }
+      }
+
+      // ═══ BUILD RICH PROMPT ═══
       const platLabels = PLATFORMS.filter(p=>selPlatforms.includes(p.id)).map(p=>p.label).join(", ");
-      const bizSources = sources.filter(s=>s.name===selBiz.name||s.role==="עסק");
+      const bizSources = sources.filter(s=>s.name===activeBiz.name||s.role==="עסק");
       const sourceInfo = bizSources.length>0 ? `\nמקורות מידע: ${bizSources.map(s=>s.url||s.name).join(", ")}` : "";
-      const bizDesc = selBiz.description ? `\nתיאור: ${selBiz.description}` : "";
-      const scanInfo = selBiz.scanResult && !selBiz.scanResult.error ? `\nטון מותג: ${selBiz.scanResult.tone}. קהל יעד: ${selBiz.scanResult.audience}.` : "";
+      const bizDesc = activeBiz.description ? `\nתיאור: ${activeBiz.description}` : "";
+      const scanInfo = activeBiz.scanResult && !activeBiz.scanResult.error
+        ? `\nטון מותג: ${activeBiz.scanResult.tone}. קהל יעד: ${activeBiz.scanResult.audience}.`
+        : "";
+
+      // Rich context from scan data (website + FB posts + strengths)
+      let richContext = "";
+      const fsd = activeBiz.fullScanData;
+      if (fsd) {
+        if (fsd.websiteContent) {
+          richContext += `\n\nתוכן מהאתר של העסק (חובה ללמוד ממנו!):\n${fsd.websiteContent.slice(0,1500)}`;
+        }
+        if (fsd.fbAbout) {
+          const fb = fsd.fbAbout;
+          richContext += `\n\nמידע מפייסבוק: ${fb.about||""} ${fb.description||""} (קטגוריה: ${fb.category||""})`;
+        }
+        if (fsd.fbPosts?.length > 0) {
+          richContext += `\n\nפוסטים אחרונים מדף הפייסבוק (למד מהסגנון!):
+${fsd.fbPosts.slice(0,5).map(p=>`- "${p.text.slice(0,120)}..." → ${p.likes} לייקים, ${p.comments} תגובות`).join("\n")}`;
+        }
+        const analysis = activeBiz.scanResult;
+        if (analysis?.strengths?.length) richContext += `\nיתרונות העסק: ${analysis.strengths.join(", ")}`;
+        if (analysis?.contentIdeas?.length) richContext += `\nרעיונות תוכן מומלצים: ${analysis.contentIdeas.join(", ")}`;
+      }
+
       const existingContent = existingBizPosts.length>0
         ? `\n\nפוסטים קיימים (אל תחזור עליהם!):\n${existingBizPosts.slice(0,5).map(p=>`- [${p.platform}] ${p.content.slice(0,60)}...`).join("\n")}`
         : "";
 
-      // Smart content: include engagement insights if available
+      // Engagement insights
       let engagementHint = "";
-      const bizAnalytics = analyticsData?.[selBiz.id];
+      const bizAnalytics = analyticsData?.[activeBiz.id];
       if (bizAnalytics?.topPosts?.length > 0) {
         const top = bizAnalytics.topPosts.slice(0,3);
         engagementHint = `\n\nנתוני ביצועים (פוסטים מוצלחים):
@@ -729,16 +1399,16 @@ ${top.map(p=>`- "${p.message?.slice(0,50)}..." → ${p.likes} לייקים, ${p.
 
       // Competitor insights
       let competitorHint = "";
-      if (selBiz.competitorAnalysis) {
-        const ca = selBiz.competitorAnalysis;
-        competitorHint = `\n\nתובנות ממתחרים (Apify):
+      if (activeBiz.competitorAnalysis) {
+        const ca = activeBiz.competitorAnalysis;
+        competitorHint = `\n\nתובנות ממתחרים:
 נושאים חמים: ${ca.topThemes?.join(", ")||""}
 Hooks שעובדים: ${ca.bestHooks?.join(", ")||""}
 פערים שאפשר לנצל: ${ca.gaps?.join(", ")||""}
 ${ca.recommendation||""}`;
       }
-      if (selBiz.competitorData?.some(d=>d.posts?.length>0)) {
-        const topCompPosts = selBiz.competitorData.flatMap(d=>d.posts||[])
+      if (activeBiz.competitorData?.some(d=>d.posts?.length>0)) {
+        const topCompPosts = activeBiz.competitorData.flatMap(d=>d.posts||[])
           .sort((a,b)=>(b.likes+b.comments)-(a.likes+a.comments)).slice(0,3);
         if (topCompPosts.length>0) {
           competitorHint += `\nפוסטים מובילים של מתחרים:
@@ -747,14 +1417,27 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
         }
       }
 
-      const raw = await claudeCall(`אתה מומחה שיווק ישראלי. צור 2 פוסטים חדשים ושונים לעסק: ${selBiz.name}.${bizDesc}${scanInfo}${sourceInfo}
+      setMsg("✍️ Claude יוצר פוסטים...");
+      const raw = await claudeCall(`אתה מומחה שיווק ישראלי. צור 2 פוסטים חדשים ושונים לעסק: ${activeBiz.name}.${bizDesc}${scanInfo}${richContext}${sourceInfo}
 פלטפורמות: ${platLabels}. סוגים: ${selTypes.join(", ")}. מטרה: לידים.${existingContent}${engagementHint}${competitorHint}
-חשוב: התאם טון ושפה לעסק. צור תוכן ייחודי שלא דומה לפוסטים קיימים.
-החזר JSON בלבד: {"posts":[{"platform":"פייסבוק","type":"פוסט קצר","content":"...","hashtags":["..."]}]}`);
+חשוב: התאם טון ושפה לעסק. צור תוכן ייחודי שלא דומה לפוסטים קיימים. השתמש במונחים ובשפה של העסק עצמו.
+החזר JSON בלבד: {"posts":[{"platform":"פייסבוק","type":"פוסט קצר","content":"...","hashtags":["..."]}]}
+חשוב: החזר JSON תקין בלבד, ללא טקסט נוסף לפני או אחרי ה-JSON.`, 2000);
       const clean = raw.replace(/```json|```/g,"").trim();
-      const arr = JSON.parse(clean).posts;
+      let arr;
+      try { arr = JSON.parse(clean).posts; } catch {
+        const jsonMatch = clean.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try { arr = JSON.parse(jsonMatch[0]).posts; } catch {
+            const fixAttempt = clean.replace(/\n[^{}\[\]"]*$/, "").trim();
+            try { arr = JSON.parse(fixAttempt).posts; } catch {
+              throw new Error("Claude returned invalid JSON — try again");
+            }
+          }
+        } else { throw new Error("Claude returned invalid JSON — try again"); }
+      }
       const newPosts = arr.map((p,i)=>({
-        id:Date.now()+i, business:selBiz.name, ...p,
+        id:Date.now()+i, business:activeBiz.name, ...p,
         date:"ד׳ 03.04 · 20:00", approved:false, media:null, ugc:null, pipeline:null
       }));
       setPosts(p=>[...newPosts,...p]);
@@ -832,7 +1515,7 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
         <Btn grad="linear-gradient(135deg,#EC4899,#F59E0B)"
           onClick={()=>existingBizPosts.filter(p=>!p.pipeline&&!p.ugc).forEach(post=>{
             updatePost(post.id,{...post,pipeline:{stages:Object.fromEntries(MEDIA_STAGES.map(s=>[s.id,"pending"])),current:null,done:false}});
-            runPipeline(MEDIA_STAGES, upd=>setPosts(prev=>prev.map(p=>p.id===post.id?{...p,pipeline:upd}:p)));
+            runRealPipeline(post, BUSINESSES, upd=>setPosts(prev=>prev.map(p=>p.id===post.id?{...p,pipeline:upd}:p)));
           })}>
           הפעל מדיה AI
         </Btn>
@@ -844,7 +1527,7 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       {existingBizPosts.length===0
         ? <Card><div style={{textAlign:"center",color:T.textDim,padding:30}}>אין פוסטים ל-{selBiz?.name} — לחץ "צור פוסטים"</div></Card>
-        : existingBizPosts.map(post=><PostCard key={post.id} post={post}
+        : existingBizPosts.map(post=><PostCard key={post.id} post={post} businesses={BUSINESSES}
           onUpdate={upd=>setPosts(prev=>prev.map(p=>p.id===post.id?(typeof upd==="function"?upd(p):upd):p))}/>)}
     </div>
   </div>;
@@ -926,8 +1609,14 @@ function UGCStudio() {
     setLoading(true);
     const init = { stages:Object.fromEntries(UGC_STAGES.map(s=>[s.id,"pending"])), current:null, done:false };
     setPipeline(init);
-    setStep(3);
-    await runPipeline(UGC_STAGES, upd=>setPipeline(upd));
+    setStep(2);
+    // Use real UGC pipeline if ElevenLabs + D-ID keys exist, otherwise fallback to simulation
+    const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
+    if (keys.ELEVENLABS_API_KEY && keys.DID_API_KEY) {
+      await runRealUGCPipeline(script, avatar, biz, upd=>setPipeline(upd));
+    } else {
+      await runPipeline(UGC_STAGES, upd=>setPipeline(upd));
+    }
     setLoading(false);
   }
 
@@ -1027,11 +1716,20 @@ function UGCStudio() {
         </div>
       </div>
       <PipelineBar stages={UGC_STAGES} pipeline={pipeline}/>
+      {pipeline?.error&&<Card accent="#EF444433" style={{marginTop:16}}>
+        <div style={{color:"#EF4444",fontWeight:700,marginBottom:6}}>שגיאה</div>
+        <div style={{color:T.textSec,fontSize:12}}>{pipeline.error}</div>
+      </Card>}
       {pipeline?.done&&<div style={{marginTop:16}}>
         <Card accent="#10B98133">
-          <div style={{color:"#10B981",fontWeight:700,marginBottom:10}}>פורסם בהצלחה</div>
+          <div style={{color:"#10B981",fontWeight:700,marginBottom:10}}>
+            {pipeline.videoUrl ? "סרטון UGC מוכן!" : "הופק בהצלחה"}
+          </div>
+          {pipeline.videoUrl && <div style={{marginBottom:12}}>
+            <video src={pipeline.videoUrl} controls style={{width:"100%",maxHeight:300,borderRadius:10,background:"#000"}}/>
+          </div>}
           {[["ElevenLabs","קול עברי טבעי","~$0.03"],["D-ID","Avatar מדבר","~$0.05"],
-            ["Meta API","Reel פורסם","חינם"]].map(([k,d,v])=>
+            ["Meta API",pipeline.postId?"Reel פורסם":"לא פורסם","חינם"]].map(([k,d,v])=>
             <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.borderLight}`}}>
               <div><span style={{color:T.text,fontSize:12,fontWeight:600}}>{k}</span>
                 <span style={{color:T.textMuted,fontSize:11,marginRight:8}}> · {d}</span></div>
@@ -1284,13 +1982,16 @@ function Businesses({ businesses, setBusinesses, posts }) {
                       </button>
                     </div>
                     {conn.connected&&<div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {plat.fields.map(f=><div key={f.key}>
-                        <div style={{color:T.textDim,fontSize:9,marginBottom:2}}>{f.label}</div>
-                        <input value={conn.tokens?.[f.key]||""} onChange={e=>setSocialToken(biz.id,plat.id,f.key,e.target.value)}
-                          placeholder={f.hint} type="password"
-                          style={{width:"100%",background:T.card,border:`1px solid ${T.inputBorder}`,borderRadius:8,
-                            padding:"6px 8px",color:T.text,fontSize:10,fontFamily:"monospace",boxSizing:"border-box"}}/>
-                      </div>)}
+                      {plat.fields.map(f=>{
+                        const isSecret = f.key.includes("TOKEN") || f.key.includes("PASSWORD") || f.key.includes("SECRET");
+                        return <div key={f.key}>
+                          <div style={{color:T.textDim,fontSize:9,marginBottom:2}}>{f.label}</div>
+                          <input value={conn.tokens?.[f.key]||""} onChange={e=>setSocialToken(biz.id,plat.id,f.key,e.target.value)}
+                            placeholder={f.hint} type={isSecret?"password":"text"}
+                            style={{width:"100%",background:T.card,border:`1px solid ${T.inputBorder}`,borderRadius:8,
+                              padding:"6px 8px",color:T.text,fontSize:10,fontFamily:"monospace",boxSizing:"border-box"}}/>
+                        </div>;
+                      })}
                     </div>}
                   </div>;
                 })}
@@ -1426,7 +2127,7 @@ function Businesses({ businesses, setBusinesses, posts }) {
 }
 
 // PUBLISH
-function Publish({ posts, businesses }) {
+function Publish({ posts, setPosts, businesses }) {
   const [publishing, setPublishing] = useState({});
   const [results, setResults] = useState({});
   const [selBizId, setSelBizId] = useState(businesses[0]?.id||"");
@@ -1453,14 +2154,24 @@ function Publish({ posts, businesses }) {
         const pageId = tokens.META_PAGE_ID;
         const accessToken = tokens.META_ACCESS_TOKEN;
         if (!pageId || !accessToken) throw new Error("חסר Page ID או Access Token");
-        const r = await fetch(`https://graph.facebook.com/v25.0/${pageId}/feed`, {
+        const imageUrl = post.pipeline?.imageUrl;
+        const endpoint = imageUrl
+          ? `https://graph.facebook.com/v25.0/${pageId}/photos`
+          : `https://graph.facebook.com/v25.0/${pageId}/feed`;
+        const body = imageUrl
+          ? { url: imageUrl, message, access_token: accessToken }
+          : { message, access_token: accessToken };
+        const r = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, access_token: accessToken })
+          body: JSON.stringify(body)
         });
         const d = await r.json();
-        if (d.id) {
-          setResults(p=>({...p,[key]:{status:"ok",postId:d.id}}));
+        if (d.id || d.post_id) {
+          const fbPostId = d.post_id||d.id;
+          setResults(p=>({...p,[key]:{status:"ok",postId:fbPostId}}));
+          // Save FB post ID on the post for tracking metrics
+          setPosts?.(prev=>prev.map(p=>p.id===post.id?{...p, fbPostId, publishedAt:new Date().toISOString(), published:true}:p));
         } else {
           setResults(p=>({...p,[key]:{status:"error",msg: d.error?.message || "שגיאה בפרסום"}}));
         }
@@ -1468,7 +2179,59 @@ function Publish({ posts, businesses }) {
         const igUserId = tokens.META_IG_USER_ID;
         const accessToken = tokens.META_ACCESS_TOKEN;
         if (!igUserId || !accessToken) throw new Error("חסר IG User ID או Access Token");
-        setResults(p=>({...p,[key]:{status:"error",msg:"אינסטגרם דורש תמונה — בקרוב"}}));
+        const imageUrl = post.pipeline?.imageUrl;
+        if (!imageUrl) throw new Error("אינסטגרם דורש תמונה — צור מדיה AI קודם");
+
+        // Step 1: Create media container
+        const containerR = await fetch(`https://graph.facebook.com/v25.0/${igUserId}/media`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image_url: imageUrl, caption: message, access_token: accessToken })
+        });
+        const container = await containerR.json();
+        if (container.error) throw new Error(container.error.message);
+        const creationId = container.id;
+        if (!creationId) throw new Error("Instagram: missing creation ID");
+
+        // Step 2: Wait for container to be ready, then publish
+        await sleep(3000);
+        const pubR = await fetch(`https://graph.facebook.com/v25.0/${igUserId}/media_publish`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ creation_id: creationId, access_token: accessToken })
+        });
+        const pubD = await pubR.json();
+        if (pubD.error) throw new Error(pubD.error.message);
+        if (pubD.id) {
+          setResults(p=>({...p,[key]:{status:"ok",postId:pubD.id}}));
+          setPosts?.(prev=>prev.map(p=>p.id===post.id?{...p, igPostId:pubD.id, publishedAt:new Date().toISOString(), published:true}:p));
+        } else {
+          setResults(p=>({...p,[key]:{status:"error",msg:"שגיאה לא צפויה"}}));
+        }
+      } else if (platformId === "wordpress") {
+        const wpUrl = tokens.WORDPRESS_URL;
+        const wpPassword = tokens.WORDPRESS_APP_PASSWORD;
+        if (!wpUrl || !wpPassword) throw new Error("חסר WordPress URL או App Password");
+        // WordPress REST API — create a post
+        const wpR = await fetch(`${wpUrl}/wp-json/wp/v2/posts`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Basic " + btoa("admin:" + wpPassword)
+          },
+          body: JSON.stringify({
+            title: post.content.split("\n")[0].replace(/[#🎬✈️🍕💇🏋️🏠🚗📸🎵🛍️💻🎓🏥⚖️]/g,"").trim(),
+            content: post.content.replace(/\n/g, "<br/>"),
+            status: "publish"
+          })
+        });
+        const wpD = await wpR.json();
+        if (wpD.id) {
+          setResults(p=>({...p,[key]:{status:"ok",postId:wpD.id, wpLink: wpD.link}}));
+          setPosts?.(prev=>prev.map(p=>p.id===post.id?{...p, wpPostId:wpD.id, publishedAt:new Date().toISOString(), published:true}:p));
+        } else {
+          setResults(p=>({...p,[key]:{status:"error",msg: wpD.message||"שגיאה ב-WordPress"}}));
+        }
       } else {
         setResults(p=>({...p,[key]:{status:"error",msg:"פלטפורמה לא נתמכת עדיין"}}));
       }
@@ -1637,13 +2400,88 @@ function Publish({ posts, businesses }) {
 }
 
 // SCHEDULE
-function Schedule({ posts }) {
+function Schedule({ posts, setPosts, businesses }) {
   const DAYS = ["א׳","ב׳","ג׳","ד׳","ה׳","ו׳","ש׳"];
-  const [days, setDays] = useState([1,3]);
-  const [time, setTime] = useState("20:00");
-  const approved = posts.filter(p=>p.approved);
+  const [days, setDays] = useState(()=>{
+    try { return JSON.parse(localStorage.getItem("schedule_days")||"[1,3]"); } catch { return [1,3]; }
+  });
+  const [time, setTime] = useState(()=>localStorage.getItem("schedule_time")||"20:00");
+  const [saved, setSaved] = useState(false);
+  const [scheduledPosts, setScheduledPosts] = useState(()=>{
+    try { return JSON.parse(localStorage.getItem("scheduled_posts")||"[]"); } catch { return []; }
+  });
+  const [publishing, setPublishing] = useState({});
+  const approved = posts.filter(p=>p.approved && !p.published);
+
+  function saveSchedule() {
+    localStorage.setItem("schedule_days", JSON.stringify(days));
+    localStorage.setItem("schedule_time", time);
+    // Generate upcoming schedule dates
+    const upcoming = [];
+    const now = new Date();
+    for (let w = 0; w < 4; w++) { // next 4 weeks
+      for (const day of days.sort((a,b)=>a-b)) {
+        const d = new Date(now);
+        d.setDate(d.getDate() + ((7 + day - d.getDay()) % 7) + (w * 7));
+        if (d <= now) d.setDate(d.getDate() + 7);
+        const [h, m] = time.split(":");
+        d.setHours(parseInt(h), parseInt(m), 0, 0);
+        if (d > now) upcoming.push(d.toISOString());
+      }
+    }
+    // Assign approved posts to schedule slots
+    const scheduled = approved.slice(0, upcoming.length).map((post, i) => ({
+      postId: post.id,
+      scheduledAt: upcoming[i],
+      platform: post.platform,
+      business: post.business,
+      content: post.content.split("\n")[0]
+    }));
+    setScheduledPosts(scheduled);
+    localStorage.setItem("scheduled_posts", JSON.stringify(scheduled));
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  async function publishNow(post) {
+    const key = post.id;
+    setPublishing(p=>({...p,[key]:true}));
+    try {
+      const biz = businesses.find(b=>b.name===post.business);
+      const fbTokens = biz?.social?.facebook?.tokens;
+      if (!fbTokens?.META_PAGE_ID || !fbTokens?.META_ACCESS_TOKEN) throw new Error("חסר טוקנים");
+      const pageId = fbTokens.META_PAGE_ID;
+      const accessToken = fbTokens.META_ACCESS_TOKEN;
+      const hashtags = (post.hashtags||[]).map(h=>h.startsWith("#")?h:`#${h}`).join(" ");
+      const message = post.content + (hashtags ? "\n\n" + hashtags : "");
+      const imageUrl = post.pipeline?.imageUrl;
+      const endpoint = imageUrl
+        ? `https://graph.facebook.com/v25.0/${pageId}/photos`
+        : `https://graph.facebook.com/v25.0/${pageId}/feed`;
+      const body = imageUrl
+        ? { url: imageUrl, message, access_token: accessToken }
+        : { message, access_token: accessToken };
+      const r = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const d = await r.json();
+      if (d.id || d.post_id) {
+        setPosts?.(prev=>prev.map(p=>p.id===post.id?{...p, fbPostId:d.post_id||d.id, publishedAt:new Date().toISOString(), published:true}:p));
+        setScheduledPosts(prev=>prev.filter(s=>s.postId!==post.id));
+        localStorage.setItem("scheduled_posts", JSON.stringify(scheduledPosts.filter(s=>s.postId!==post.id)));
+      } else {
+        throw new Error(d.error?.message || "שגיאה בפרסום");
+      }
+    } catch(e) {
+      alert("שגיאה: " + e.message);
+    }
+    setPublishing(p=>({...p,[key]:false}));
+  }
+
   return <div style={{animation:"fadeUp 0.3s ease"}}>
-    <SectionTitle sub="תזמון פרסום אוטומטי">לוח פרסומים</SectionTitle>
+    <SectionTitle sub="תזמון פרסום אוטומטי — בחר ימים, שעה וגם פרסם ידנית">לוח פרסומים</SectionTitle>
     <Card style={{marginBottom:20}}>
       <div style={{marginBottom:16}}>
         <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:10}}>ימי פרסום</div>
@@ -1655,7 +2493,7 @@ function Schedule({ posts }) {
             cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"inherit"}}>{d}</button>)}
         </div>
       </div>
-      <div>
+      <div style={{marginBottom:16}}>
         <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:10}}>שעה</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           {["12:00","18:00","20:00","21:00"].map(t=><button key={t} onClick={()=>setTime(t)} style={{
@@ -1664,27 +2502,86 @@ function Schedule({ posts }) {
             cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>{t}</button>)}
         </div>
       </div>
+      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+        <Btn grad="linear-gradient(135deg,#8B5CF6,#3B82F6)" onClick={saveSchedule}>
+          שמור תזמון
+        </Btn>
+        {saved&&<span style={{color:"#10B981",fontSize:12,fontWeight:600}}>✓ נשמר</span>}
+      </div>
     </Card>
-    {approved.length===0
-      ? <Card><div style={{textAlign:"center",color:T.textDim,padding:30}}>אשר פוסטים בעמוד תוכן</div></Card>
-      : <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          {approved.map(post=>{
-            const pl=PLATFORMS.find(p=>post.platform.includes(p.label.split(" ")[0]))||PLATFORMS[0];
-            return <Card key={post.id} style={{display:"flex",alignItems:"center",gap:12,padding:14,flexWrap:"wrap"}}>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{display:"flex",gap:6,marginBottom:4,flexWrap:"wrap"}}>
-                  <Tag label={post.platform} color={pl.color}/>
-                  <Tag label={post.business} color={T.textMuted}/>
-                  {post.pipeline?.done&&<Tag label="מדיה" color="#F59E0B"/>}
-                  {post.ugc?.done&&<Tag label="UGC" color="#EC4899"/>}
-                </div>
-                <p style={{color:T.textSec,fontSize:12,margin:0,direction:"rtl",
-                  overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{post.content.split("\n")[0]}</p>
+
+    {/* Scheduled posts */}
+    {scheduledPosts.length > 0 && <Card style={{marginBottom:20}}>
+      <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1}}>
+        פרסומים מתוזמנים ({scheduledPosts.length})
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {scheduledPosts.map((sp, idx) => {
+          const post = posts.find(p=>p.id===sp.postId);
+          const schedDate = new Date(sp.scheduledAt);
+          const dateStr = schedDate.toLocaleDateString("he-IL",{weekday:"short",month:"short",day:"numeric"});
+          const timeStr = schedDate.toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
+          const isPast = schedDate < new Date();
+          const pl = PLATFORMS.find(p=>sp.platform?.includes(p.label.split(" ")[0]))||PLATFORMS[0];
+          return <div key={idx} style={{display:"flex",alignItems:"center",gap:12,padding:14,
+            background:isPast?"#F59E0B08":T.inputBg,borderRadius:12,
+            border:`1px solid ${isPast?"#F59E0B33":T.borderLight}`,flexWrap:"wrap"}}>
+            <div style={{width:44,textAlign:"center",flexShrink:0}}>
+              <div style={{color:isPast?"#F59E0B":T.accent,fontSize:11,fontWeight:700}}>{dateStr}</div>
+              <div style={{color:T.text,fontSize:16,fontWeight:700}}>{timeStr}</div>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",gap:6,marginBottom:4,flexWrap:"wrap"}}>
+                <Tag label={sp.platform||"פייסבוק"} color={pl.color}/>
+                <Tag label={sp.business} color={T.textMuted}/>
+                {isPast&&<Tag label="מאחר" color="#F59E0B"/>}
               </div>
-              <Btn sm grad="linear-gradient(135deg,#10B981,#3B82F6)">פרסם</Btn>
-            </Card>;
-          })}
-        </div>
+              <p style={{color:T.textSec,fontSize:12,margin:0,direction:"rtl",
+                overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sp.content}</p>
+            </div>
+            {post && <Btn sm disabled={publishing[post.id]}
+              grad={isPast?"linear-gradient(135deg,#F59E0B,#EF4444)":"linear-gradient(135deg,#10B981,#3B82F6)"}
+              onClick={()=>publishNow(post)}>
+              {publishing[post.id]?<Spinner size={10}/>:isPast?"פרסם עכשיו":"פרסם"}
+            </Btn>}
+          </div>;
+        })}
+      </div>
+    </Card>}
+
+    {/* Approved posts waiting to be scheduled */}
+    {approved.length===0
+      ? <Card><div style={{textAlign:"center",color:T.textDim,padding:30}}>אשר פוסטים בעמוד תוכן כדי לתזמן אותם</div></Card>
+      : <Card>
+          <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1}}>
+            ממתינים לתזמון ({approved.length})
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {approved.map(post=>{
+              const pl=PLATFORMS.find(p=>post.platform.includes(p.label.split(" ")[0]))||PLATFORMS[0];
+              const isScheduled = scheduledPosts.some(s=>s.postId===post.id);
+              return <div key={post.id} style={{display:"flex",alignItems:"center",gap:12,padding:14,
+                background:isScheduled?"#10B98108":T.inputBg,borderRadius:12,
+                border:`1px solid ${isScheduled?"#10B98133":T.borderLight}`,flexWrap:"wrap"}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",gap:6,marginBottom:4,flexWrap:"wrap"}}>
+                    <Tag label={post.platform} color={pl.color}/>
+                    <Tag label={post.business} color={T.textMuted}/>
+                    {post.pipeline?.done&&<Tag label="מדיה" color="#F59E0B"/>}
+                    {isScheduled&&<Tag label="מתוזמן" color="#10B981"/>}
+                  </div>
+                  <p style={{color:T.textSec,fontSize:12,margin:0,direction:"rtl",
+                    overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{post.content.split("\n")[0]}</p>
+                </div>
+                <Btn sm disabled={publishing[post.id]}
+                  grad="linear-gradient(135deg,#10B981,#3B82F6)"
+                  onClick={()=>publishNow(post)}>
+                  {publishing[post.id]?<Spinner size={10}/>:"פרסם עכשיו"}
+                </Btn>
+              </div>;
+            })}
+          </div>
+        </Card>
     }
   </div>;
 }
@@ -1895,16 +2792,57 @@ function Admin() {
 
   async function testKey(keyId) {
     setTesting(p=>({...p,[keyId]:true}));
+    const val = keys[keyId];
     try {
+      // Try backend first
       const r = await fetch("/api/admin/test-key", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ keyId, value: keys[keyId] })
+        body:JSON.stringify({ keyId, value: val })
       });
       const d = await r.json();
       setTestResults(p=>({...p,[keyId]: d.ok ? "ok" : d.error||"failed"}));
     } catch {
-      setTestResults(p=>({...p,[keyId]:"שגיאת רשת"}));
+      // Backend unavailable — test directly from browser
+      try {
+        let ok = false;
+        if (keyId === "ANTHROPIC_API_KEY") {
+          const r = await fetch("https://api.anthropic.com/v1/models", {
+            headers: {"x-api-key":val,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"}
+          });
+          ok = r.ok;
+        } else if (keyId === "REPLICATE_API_TOKEN") {
+          const r = await fetch("/replicate-api/v1/account", { headers: {"Authorization":`Bearer ${val}`} });
+          ok = r.ok;
+        } else if (keyId === "ELEVENLABS_API_KEY") {
+          const r = await fetch("https://api.elevenlabs.io/v1/user", { headers: {"xi-api-key":val} });
+          ok = r.ok;
+        } else if (keyId === "META_ACCESS_TOKEN") {
+          const r = await fetch(`https://graph.facebook.com/v25.0/me?access_token=${val}`);
+          ok = r.ok;
+        } else if (keyId === "DID_API_KEY") {
+          const r = await fetch("https://api.d-id.com/credits", { headers: {"Authorization":`Basic ${btoa(val+':')}`} });
+          ok = r.ok;
+        } else if (keyId === "SUPABASE_URL") {
+          ok = val.startsWith("https://") && val.includes(".supabase.");
+        } else if (keyId === "SUPABASE_SERVICE_KEY") {
+          ok = val.startsWith("eyJ");
+        } else if (keyId === "APIFY_API_TOKEN") {
+          const r = await fetch(`https://api.apify.com/v2/users/me?token=${val}`);
+          ok = r.ok;
+        } else if (keyId === "META_PAGE_ID" || keyId === "META_IG_USER_ID") {
+          ok = /^\d{5,}$/.test(val);
+        } else if (keyId === "WORDPRESS_URL") {
+          ok = val.startsWith("http");
+        } else if (keyId === "REDIS_URL") {
+          ok = val.startsWith("redis://") || val.startsWith("rediss://");
+        } else {
+          ok = val.length > 5; // generic check
+        }
+        setTestResults(p=>({...p,[keyId]: ok ? "ok" : "invalid"}));
+      } catch(e) {
+        setTestResults(p=>({...p,[keyId]: e.message || "שגיאה"}));
+      }
     }
     setTesting(p=>({...p,[keyId]:false}));
   }
@@ -1913,25 +2851,51 @@ function Admin() {
     setLoadingUsers(true);
     try {
       const r = await fetch("/api/admin/users");
+      if (!r.ok) throw new Error("backend unavailable");
       const d = await r.json();
-      setUsers(d);
-    } catch { setUsers([]); }
+      if (Array.isArray(d)) { setUsers(d); }
+      else {
+        // Backend returned error or no Supabase — load from localStorage
+        const local = JSON.parse(localStorage.getItem("local_users")||"[]");
+        setUsers(local);
+      }
+    } catch {
+      // Backend unavailable — use localStorage
+      const local = JSON.parse(localStorage.getItem("local_users")||"[]");
+      setUsers(local);
+    }
     setLoadingUsers(false);
   }
 
   async function inviteUser() {
     if (!newUser.email.trim()) return;
-    await fetch("/api/admin/users/invite", {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(newUser)
-    });
+    try {
+      const r = await fetch("/api/admin/users/invite", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(newUser)
+      });
+      if (!r.ok) throw new Error("backend");
+    } catch {
+      // Backend unavailable — save locally
+      const u = { id: Date.now().toString(), email: newUser.email, role: newUser.role, created_at: new Date().toISOString() };
+      const updated = [...users, u];
+      setUsers(updated);
+      localStorage.setItem("local_users", JSON.stringify(updated));
+    }
     setNewUser({ email:"", role:"viewer" });
     loadUsers();
   }
 
   async function removeUser(id) {
-    await fetch(`/api/admin/users/${id}`, { method:"DELETE" });
+    try {
+      const r = await fetch(`/api/admin/users/${id}`, { method:"DELETE" });
+      if (!r.ok) throw new Error("backend");
+    } catch {
+      // Remove locally
+      const updated = users.filter(u=>u.id!==id);
+      localStorage.setItem("local_users", JSON.stringify(updated));
+    }
     setUsers(p=>p.filter(u=>u.id!==id));
   }
 
@@ -2062,7 +3026,9 @@ function Admin() {
 // ═══════════════════════════════════════════════════════════════════
 export default function App() {
   const [page, setPage] = useState("dashboard");
-  const [posts, setPosts] = useState(SAMPLE_POSTS);
+  const [posts, setPosts] = useState(()=>{
+    try { const s=localStorage.getItem("posts"); return s?JSON.parse(s):SAMPLE_POSTS; } catch { return SAMPLE_POSTS; }
+  });
   const [sources, setSources] = useState(SOURCES_INIT);
   const [businesses, setBusinesses] = useState(()=>{
     try { const s=localStorage.getItem("businesses"); return s?JSON.parse(s):DEFAULT_BUSINESSES; } catch { return DEFAULT_BUSINESSES; }
@@ -2072,7 +3038,41 @@ export default function App() {
   });
   const [mobileNav, setMobileNav] = useState(false);
 
+  useEffect(()=>{ localStorage.setItem("posts",JSON.stringify(posts)); },[posts]);
   useEffect(()=>{ localStorage.setItem("businesses",JSON.stringify(businesses)); },[businesses]);
+
+  // One-time token update via URL hash (e.g. #token-update:base64data)
+  useEffect(()=>{
+    const hash = window.location.hash;
+    if (hash.startsWith('#token-update:')) {
+      try {
+        const encoded = hash.slice('#token-update:'.length);
+        const data = JSON.parse(decodeURIComponent(escape(atob(encoded))));
+        if (data.type === 'updateTokens' && data.pages) {
+          const nameMap = {
+            '992114487328961': 'צייד טיסות',
+            '183582055509492': 'הקולנוע הנודד',
+            '111528414079620': 'החידונאים'
+          };
+          setBusinesses(prev => {
+            const updated = prev.map(b => ({...b, social:{...b.social, facebook:{...b.social?.facebook, tokens:{...b.social?.facebook?.tokens}}}}));
+            for (const page of data.pages) {
+              const bizName = nameMap[page.id] || page.name;
+              const biz = updated.find(b => b.name === bizName);
+              if (biz) {
+                biz.social.facebook.tokens.META_ACCESS_TOKEN = page.token;
+                biz.social.facebook.pageId = page.id;
+              }
+            }
+            return updated;
+          });
+          window.history.replaceState(null, '', window.location.pathname);
+          window.__tokensUpdated = true;
+          console.log('Tokens updated for', data.pages.length, 'pages');
+        }
+      } catch(e) { console.error('Token update error:', e); }
+    }
+  }, []);
 
   const running = posts.filter(p=>(p.pipeline&&!p.pipeline.done)||(p.ugc&&!p.ugc.done)).length;
   const published = posts.filter(p=>p.pipeline?.done||p.ugc?.done).length;
@@ -2223,11 +3223,11 @@ export default function App() {
           {page==="dashboard"&&<Dashboard posts={posts} sources={sources} businesses={businesses}/>}
           {page==="businesses"&&<Businesses businesses={businesses} setBusinesses={setBusinesses} posts={posts}/>}
           {page==="sources"&&<Sources sources={sources} setSources={setSources}/>}
-          {page==="content"&&<Content posts={posts} setPosts={setPosts} sources={sources} businesses={businesses} analyticsData={analyticsData}/>}
+          {page==="content"&&<Content posts={posts} setPosts={setPosts} sources={sources} businesses={businesses} setBusinesses={setBusinesses} analyticsData={analyticsData}/>}
           {page==="media"&&<MediaAI/>}
           {page==="ugc"&&<UGCStudio/>}
-          {page==="publish"&&<Publish posts={posts} businesses={businesses}/>}
-          {page==="schedule"&&<Schedule posts={posts}/>}
+          {page==="publish"&&<Publish posts={posts} setPosts={setPosts} businesses={businesses}/>}
+          {page==="schedule"&&<Schedule posts={posts} setPosts={setPosts} businesses={businesses}/>}
           {page==="analytics"&&<Analytics posts={posts} businesses={businesses} analyticsData={analyticsData} setAnalyticsData={setAnalyticsData}/>}
           {page==="admin"&&<Admin/>}
         </div>

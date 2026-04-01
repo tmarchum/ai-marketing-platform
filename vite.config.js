@@ -5,11 +5,16 @@ export default defineConfig({
   plugins: [react()],
   base: process.env.NODE_ENV === 'production' ? '/ai-marketing-platform/' : '/',
   server: {
-    port: 3001,
+    port: 5173,
     proxy: {
       '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
+      },
+      '/replicate-api': {
+        target: 'https://api.replicate.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/replicate-api/, ''),
       },
     },
   },
