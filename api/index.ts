@@ -237,6 +237,71 @@ app.get('/api/runway/tasks/:id', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// ELEVENLABS PROXY — Hebrew text-to-speech
+// ══════════════════════════════════════════════════════════════
+
+app.post('/api/elevenlabs/tts', async (req, res) => {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'ELEVENLABS_API_KEY not set' });
+  try {
+    const { text, voiceId } = req.body;
+    const voice = voiceId || 'EXAVITQu4vr4xnSDxMaL'; // Sarah - default Hebrew voice
+    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'xi-api-key': apiKey },
+      body: JSON.stringify({
+        text: text || '',
+        model_id: 'eleven_multilingual_v2',
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+      }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ message: `HTTP ${r.status}` }));
+      return res.status(r.status).json({ error: err.detail?.message || err.message || `HTTP ${r.status}` });
+    }
+    const arrayBuf = await r.arrayBuffer();
+    const base64 = Buffer.from(arrayBuf).toString('base64');
+    res.json({ audioBase64: base64, contentType: r.headers.get('content-type') || 'audio/mpeg' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// D-ID PROXY — talking avatar video
+// ══════════════════════════════════════════════════════════════
+
+app.post('/api/did/talks', async (req, res) => {
+  const apiKey = process.env.DID_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'DID_API_KEY not set' });
+  try {
+    const r = await fetch('https://api.d-id.com/talks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Basic ${apiKey}` },
+      body: JSON.stringify(req.body),
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/did/talks/:id', async (req, res) => {
+  const apiKey = process.env.DID_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'DID_API_KEY not set' });
+  try {
+    const r = await fetch(`https://api.d-id.com/talks/${req.params.id}`, {
+      headers: { Authorization: `Basic ${apiKey}` },
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 // ADMIN — key testing
 // ══════════════════════════════════════════════════════════════
 

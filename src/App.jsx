@@ -675,86 +675,44 @@ async function runRealPipeline(post, businesses, onUpdate) {
 // ELEVENLABS TTS — Real Hebrew Text-to-Speech
 // ═══════════════════════════════════════════════════════════════════
 async function elevenLabsTTS(text, voiceId) {
-  const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
-  const apiKey = keys.ELEVENLABS_API_KEY;
-  if (!apiKey) throw new Error("הגדר ELEVENLABS_API_KEY בדף ניהול");
-
-  // Default Hebrew female voice if not specified
-  const voice = voiceId || "EXAVITQu4vr4xnSDxMaL"; // Sarah
-  const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
+  // Use server-side proxy (works on both localhost and Vercel)
+  const r = await fetch("/api/elevenlabs/tts", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "xi-api-key": apiKey },
-    body: JSON.stringify({
-      text,
-      model_id: "eleven_multilingual_v2",
-      voice_settings: { stability: 0.5, similarity_boost: 0.75 }
-    })
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, voiceId: voiceId || "EXAVITQu4vr4xnSDxMaL" })
   });
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}));
-    throw new Error(err.detail?.message || err.detail || `ElevenLabs error: ${r.status}`);
-  }
-  const blob = await r.blob();
-  // Upload audio to a temporary hosting or return as data URL
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
+  const data = await r.json();
+  if (data.error) throw new Error(data.error);
+  return `data:${data.contentType};base64,${data.audioBase64}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // D-ID — Avatar Video Generation
 // ═══════════════════════════════════════════════════════════════════
 async function didCreateTalk(imageUrl, audioUrl) {
-  const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
-  const apiKey = keys.DID_API_KEY;
-  if (!apiKey) throw new Error("הגדר DID_API_KEY בדף ניהול");
+  // Use server-side proxy (works on both localhost and Vercel)
+  const body = {
+    source_url: imageUrl,
+    script: { type: "audio", audio_url: audioUrl },
+    config: { stitch: true }
+  };
 
-  // If audio is a data URL, we need to use D-ID's text-based approach or upload
-  const isDataUrl = audioUrl.startsWith("data:");
-
-  let body;
-  if (isDataUrl) {
-    // Use D-ID's built-in TTS as fallback (send script text instead)
-    body = {
-      source_url: imageUrl,
-      script: {
-        type: "audio",
-        audio_url: audioUrl
-      },
-      config: { stitch: true }
-    };
-  } else {
-    body = {
-      source_url: imageUrl,
-      script: { type: "audio", audio_url: audioUrl },
-      config: { stitch: true }
-    };
-  }
-
-  const r = await fetch("https://api.d-id.com/talks", {
+  const r = await fetch("/api/did/talks", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Basic ${apiKey}`
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
   const data = await r.json();
-  if (data.kind === "BadRequestError" || data.status === "error") {
-    throw new Error(data.description || data.message || "D-ID error");
+  if (data.error || data.kind === "BadRequestError" || data.status === "error") {
+    throw new Error(data.error || data.description || data.message || "D-ID error");
   }
   const talkId = data.id;
   if (!talkId) throw new Error("D-ID: missing talk ID");
 
-  // Poll for result
+  // Poll for result via server proxy
   for (let i = 0; i < 60; i++) {
     await sleep(3000);
-    const poll = await fetch(`https://api.d-id.com/talks/${talkId}`, {
-      headers: { "Authorization": `Basic ${apiKey}` }
-    });
+    const poll = await fetch(`/api/did/talks/${talkId}`);
     const result = await poll.json();
     if (result.status === "done") return result.result_url;
     if (result.status === "error" || result.status === "rejected") {
