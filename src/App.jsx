@@ -1012,7 +1012,7 @@ function PostCard({ post, onUpdate, compact, businesses }) {
             <Btn sm bg={T.inputBg} color={T.textMuted} onClick={()=>setEditing(false)}>ביטול</Btn></>
         : <Btn sm bg={T.inputBg} color={T.textSec} onClick={()=>setEditing(true)}>ערוך</Btn>
       }
-      {!post.pipeline
+      {!post.pipeline || (!post.pipeline.done && !post.pipeline.current && (!post.pipeline.stages || Object.keys(post.pipeline.stages).length===0))
         ? <Btn sm bg="#F59E0B15" color="#F59E0B" onClick={startMedia}>מדיה AI</Btn>
         : <Btn sm bg={T.inputBg} color={T.textSec} onClick={()=>setExp(p=>!p)}>{exp?"▲":"▼"} מדיה</Btn>
       }
@@ -1501,7 +1501,7 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
           {loading?<><Spinner/>מייצר...</>:`צור פוסטים ל${selBiz?.name||"..."}`}
         </Btn>
         <Btn grad="linear-gradient(135deg,#EC4899,#F59E0B)"
-          onClick={()=>existingBizPosts.filter(p=>!p.pipeline&&!p.ugc).forEach(post=>{
+          onClick={()=>existingBizPosts.filter(p=>(!p.pipeline||!p.pipeline.done&&!p.pipeline.current)&&!p.ugc).forEach(post=>{
             updatePost(post.id,{...post,pipeline:{stages:Object.fromEntries(MEDIA_STAGES.map(s=>[s.id,"pending"])),current:null,done:false}});
             runRealPipeline(post, BUSINESSES, upd=>setPosts(prev=>prev.map(p=>p.id===post.id?{...p,pipeline:upd}:p)));
           })}>
