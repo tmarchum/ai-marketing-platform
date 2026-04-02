@@ -1,10 +1,10 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY || '';
-
 let _supabase: SupabaseClient | null = null;
 let _warned = false;
+
+function getUrl() { return process.env.SUPABASE_URL || ''; }
+function getKey() { return process.env.SUPABASE_SERVICE_KEY || ''; }
 
 function warn() {
   if (!_warned) {
@@ -14,17 +14,19 @@ function warn() {
 }
 
 export function isSupabaseConfigured(): boolean {
-  return Boolean(supabaseUrl && supabaseKey);
+  return Boolean(getUrl() && getKey());
 }
 
 // Lazy init — only create client when actually needed and configured
 function getClient(): SupabaseClient | null {
   if (_supabase) return _supabase;
-  if (!supabaseUrl || !supabaseKey) {
+  const url = getUrl();
+  const key = getKey();
+  if (!url || !key) {
     warn();
     return null;
   }
-  _supabase = createClient(supabaseUrl, supabaseKey);
+  _supabase = createClient(url, key);
   return _supabase;
 }
 
