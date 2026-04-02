@@ -166,50 +166,69 @@ async function fetchPostMetrics(posts, businesses) {
   const metricsHistory = JSON.parse(localStorage.getItem("post_metrics")||"{}");
   const results = [];
   let permissionError = false;
+  const pageMetrics = {};
 
-  for (const post of posts) {
-    if (!post.fbPostId || !post.published) continue;
-    const biz = businesses.find(b=>b.name===post.business);
-    const accessToken = biz?.social?.facebook?.tokens?.META_ACCESS_TOKEN;
-    if (!accessToken) continue;
-
+  // Step 1: For each business with FB tokens, use the new fb-metrics endpoint
+  const seenPages = new Set();
+  for (const biz of businesses) {
+    const pageId = biz.social?.facebook?.tokens?.META_PAGE_ID;
+    const accessToken = biz.social?.facebook?.tokens?.META_ACCESS_TOKEN;
+    if (!pageId || !accessToken || seenPages.has(pageId)) continue;
+    seenPages.add(pageId);
     try {
-      // Try engagement fields first
-      const r = await fetch(`https://graph.facebook.com/v25.0/${post.fbPostId}?fields=likes.summary(true),comments.summary(true),shares&access_token=${accessToken}`);
+      const r = await fetch(`/api/fb-metrics/${pageId}?token=${accessToken}`);
       const d = await r.json();
-      if (d.error) {
-        if (d.error.code === 10 || d.error.message?.includes("pages_read_engagement")) {
-          permissionError = true;
-          // Fallback: store post as verified-published with 0 metrics
-          const metrics = { likes: 0, comments: 0, shares: 0, date: today, needsPermission: true };
-          if (!metricsHistory[post.fbPostId]) metricsHistory[post.fbPostId] = [];
-          const todayIdx = metricsHistory[post.fbPostId].findIndex(m=>m.date===today);
-          if (todayIdx >= 0) metricsHistory[post.fbPostId][todayIdx] = metrics;
-          else metricsHistory[post.fbPostId].push(metrics);
-          results.push({ postId: post.fbPostId, business: post.business, ...metrics });
-        }
-        continue;
+      if (d.page) {
+        pageMetrics[biz.name] = {
+          fans: d.page.fans,
+          followers: d.page.followers,
+          totalPosts: d.totalPosts,
+          engagementAvailable: d.engagementAvailable,
+          posts: d.posts || [],
+        };
       }
-
-      const metrics = {
-        likes: d.likes?.summary?.total_count || 0,
-        comments: d.comments?.summary?.total_count || 0,
-        shares: d.shares?.count || 0,
-        date: today,
-        needsPermission: false
-      };
-
-      if (!metricsHistory[post.fbPostId]) metricsHistory[post.fbPostId] = [];
-      const todayIdx = metricsHistory[post.fbPostId].findIndex(m=>m.date===today);
-      if (todayIdx >= 0) metricsHistory[post.fbPostId][todayIdx] = metrics;
-      else metricsHistory[post.fbPostId].push(metrics);
-
-      results.push({ postId: post.fbPostId, business: post.business, ...metrics });
+      if (!d.engagementAvailable) permissionError = true;
     } catch {}
   }
 
+  // Step 2: Show ALL published posts from Facebook per business (not just matched)
+  const matchedFbIds = new Set();
+  for (const post of posts) {
+    if (!post.fbPostId || !post.published) continue;
+    matchedFbIds.add(post.fbPostId);
+    const bizMetrics = pageMetrics[post.business];
+    const fbPost = bizMetrics?.posts?.find(p => p.id === post.fbPostId);
+
+    const metrics = fbPost && bizMetrics?.engagementAvailable
+      ? { likes: fbPost.likes || 0, comments: fbPost.comments || 0, shares: fbPost.shares || 0, date: today, needsPermission: false,
+          created_time: fbPost.created_time, permalink_url: fbPost.permalink_url, full_picture: fbPost.full_picture, status_type: fbPost.status_type }
+      : { likes: null, comments: null, shares: null, date: today, needsPermission: true,
+          created_time: fbPost?.created_time, permalink_url: fbPost?.permalink_url, full_picture: fbPost?.full_picture, status_type: fbPost?.status_type,
+          pageFans: bizMetrics?.fans, pageFollowers: bizMetrics?.followers, totalPosts: bizMetrics?.totalPosts };
+
+    if (!metricsHistory[post.fbPostId]) metricsHistory[post.fbPostId] = [];
+    const todayIdx = metricsHistory[post.fbPostId].findIndex(m => m.date === today);
+    if (todayIdx >= 0) metricsHistory[post.fbPostId][todayIdx] = metrics;
+    else metricsHistory[post.fbPostId].push(metrics);
+
+    results.push({ postId: post.fbPostId, business: post.business, ...metrics, source: "platform" });
+  }
+  // Also add FB posts not in our system
+  for (const [bizName, pm] of Object.entries(pageMetrics)) {
+    for (const fp of (pm.posts || [])) {
+      if (matchedFbIds.has(fp.id)) continue;
+      results.push({
+        postId: fp.id, business: bizName, date: today, source: "facebook",
+        likes: fp.likes ?? null, comments: fp.comments ?? null, shares: fp.shares ?? null,
+        needsPermission: !pm.engagementAvailable,
+        created_time: fp.created_time, permalink_url: fp.permalink_url, full_picture: fp.full_picture,
+        status_type: fp.status_type, message: fp.message,
+      });
+    }
+  }
+
   localStorage.setItem("post_metrics", JSON.stringify(metricsHistory));
-  return { results, permissionError };
+  return { results, permissionError, pageMetrics };
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -614,7 +633,12 @@ async function runRealPipeline(post, businesses, onUpdate) {
     imagePrompt = await claudeCall(
       `אתה מומחה ליצירת תמונות AI. קרא את הפוסט הבא וצור prompt באנגלית ליצירת תמונה שתתאים לו בפייסבוק/אינסטגרם.
 הפוסט: "${post.content}"
-כתוב רק את ה-prompt באנגלית, שורה אחת, ללא הסברים. התמונה צריכה להיות מקצועית, מושכת, ומתאימה לשיווק ברשתות חברתיות. אל תכלול טקסט בתמונה.`, 200
+כתוב רק את ה-prompt באנגלית, שורה אחת, ללא הסברים. התמונה צריכה להיות מקצועית, מושכת, ומתאימה לשיווק ברשתות חברתיות.
+כללים חשובים:
+- אל תכלול טקסט בתמונה
+- אל תכלול אנשים, ידיים, אצבעות, פנים או חלקי גוף — AI יוצר אותם מעוותים
+- התמקד בנוף, חפצים, מוצרים, אייקונים או אילוסטרציות מופשטות
+- הוסף בסוף: "no people, no hands, no fingers, no faces, no text"`, 250
     );
   } catch(e) {
     imagePrompt = "Professional marketing image, vibrant colors, eye-catching social media post, travel theme, 4k quality";
@@ -960,6 +984,25 @@ function PostCard({ post, onUpdate, compact, businesses }) {
       {(post.hashtags||[]).map(h=><span key={h} style={{color:pl.color,fontSize:11}}>#{h}</span>)}
     </div>
 
+    {/* Media preview — image_url / video_url */}
+    {(post.video_url || post.image_url || post.pipeline?.imageUrl || post.pipeline?.videoUrl) && (
+      <div style={{marginBottom:12,display:"flex",gap:10,flexWrap:"wrap"}}>
+        {(post.video_url || post.pipeline?.videoUrl) && (
+          <video src={post.video_url || post.pipeline?.videoUrl} controls
+            style={{width:"100%",maxWidth:360,maxHeight:220,borderRadius:10,background:"#000"}}/>
+        )}
+        {(post.image_url || post.pipeline?.imageUrl) && !(post.video_url || post.pipeline?.videoUrl) && (
+          <img src={post.image_url || post.pipeline?.imageUrl} alt="AI"
+            style={{maxWidth:360,maxHeight:220,borderRadius:10,objectFit:"cover",border:`1px solid ${T.border}`}}/>
+        )}
+        {(post.image_url || post.pipeline?.imageUrl) && (post.video_url || post.pipeline?.videoUrl) && (
+          <img src={post.image_url || post.pipeline?.imageUrl} alt="AI"
+            style={{width:80,height:80,borderRadius:8,objectFit:"cover",border:`1px solid ${T.border}`,cursor:"pointer"}}
+            title="תמונת מקור"/>
+        )}
+      </div>
+    )}
+
     <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
       {!post.approved
         ? <Btn sm bg="#10B98115" color="#10B981" onClick={()=>onUpdate({...post,approved:true})}>אשר</Btn>
@@ -1010,14 +1053,17 @@ function Dashboard({ posts, sources, businesses }) {
 
   const [permWarning, setPermWarning] = useState(false);
 
+  const [pageStats, setPageStats] = useState({});
+
   async function refreshMetrics() {
     setMetricsLoading(true);
     try {
-      const { results, permissionError } = await fetchPostMetrics(posts, businesses);
+      const { results, permissionError, pageMetrics } = await fetchPostMetrics(posts, businesses);
       setPermWarning(permissionError);
+      setPageStats(pageMetrics || {});
       setLatestMetrics(results.map(m=>{
         const post = posts.find(p=>p.fbPostId===m.postId);
-        return { ...m, content: post?.content?.slice(0,60) };
+        return { ...m, content: m.message || post?.content?.slice(0,80) || "" };
       }));
     } catch {}
     setMetricsLoading(false);
@@ -1051,42 +1097,70 @@ function Dashboard({ posts, sources, businesses }) {
       {permWarning && <div style={{background:"#FEF3C7",border:"1px solid #F59E0B",borderRadius:8,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
         <span style={{fontSize:16}}>⚠️</span>
         <div style={{flex:1}}>
-          <div style={{color:"#92400E",fontSize:11,fontWeight:600}}>חסרה הרשאת Advanced Access ל-pages_read_engagement</div>
-          <div style={{color:"#A16207",fontSize:10}}>נדרש App Review ב-Meta Developer Console כדי לקרוא לייקים ותגובות. ההרשאה הוספה לאפליקציה אך ממתינה לאישור.</div>
+          <div style={{color:"#92400E",fontSize:11,fontWeight:600}}>לייקים ותגובות — ממתין ל-Business Verification</div>
+          <div style={{color:"#A16207",fontSize:10}}>היכנס ל-Meta Developer Console → Go Live → Start verification. אחרי אישור, הנתונים יופיעו אוטומטית.</div>
         </div>
+      </div>}
+      {/* Page-level stats from what IS available */}
+      {Object.keys(pageStats).length > 0 && <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
+        {Object.entries(pageStats).map(([bizName, ps])=><div key={bizName} style={{background:T.inputBg,borderRadius:10,padding:"10px 16px",flex:"1 1 200px",minWidth:160}}>
+          <div style={{color:T.textSec,fontSize:11,fontWeight:600,marginBottom:6}}>{bizName}</div>
+          <div style={{display:"flex",gap:14}}>
+            <div style={{textAlign:"center"}}>
+              <div style={{color:"#1877F2",fontWeight:700,fontSize:18}}>{ps.fans||0}</div>
+              <div style={{color:T.textDim,fontSize:9}}>מעריצים</div>
+            </div>
+            <div style={{textAlign:"center"}}>
+              <div style={{color:"#8B5CF6",fontWeight:700,fontSize:18}}>{ps.followers||0}</div>
+              <div style={{color:T.textDim,fontSize:9}}>עוקבים</div>
+            </div>
+            <div style={{textAlign:"center"}}>
+              <div style={{color:"#10B981",fontWeight:700,fontSize:18}}>{ps.totalPosts||0}</div>
+              <div style={{color:T.textDim,fontSize:9}}>פוסטים</div>
+            </div>
+          </div>
+        </div>)}
       </div>}
       {latestMetrics.length > 0
         ? <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {latestMetrics.map((m,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
-              padding:"10px 14px",background:T.inputBg,borderRadius:10,gap:12}}>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{color:T.textSec,fontSize:11,fontWeight:600}}>{m.business}</div>
-                <div style={{color:T.textMuted,fontSize:10,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",direction:"rtl"}}>{m.content}...</div>
-              </div>
-              {m.needsPermission
-                ? <div style={{color:"#F59E0B",fontSize:10,fontWeight:600,flexShrink:0}}>⚠️ ממתין להרשאה</div>
-                : <div style={{display:"flex",gap:16,flexShrink:0}}>
-                    <div style={{textAlign:"center"}}>
-                      <div style={{color:"#1877F2",fontWeight:700,fontSize:16}}>{m.likes||0}</div>
-                      <div style={{color:T.textDim,fontSize:9}}>לייקים</div>
+            {latestMetrics.map((m,i)=>{
+              const pubDate = m.created_time ? new Date(m.created_time) : null;
+              const dateStr = pubDate ? pubDate.toLocaleDateString("he-IL",{day:"numeric",month:"short",year:"numeric"}) : "";
+              const timeStr = pubDate ? pubDate.toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"}) : "";
+              const typeIcon = m.status_type==="added_video" ? "🎬" : m.status_type==="added_photos" ? "🖼️" : m.full_picture ? "🖼️" : "📝";
+              const link = m.permalink_url || `https://facebook.com/${m.postId}`;
+              return <div key={i} style={{padding:"12px 14px",background:T.inputBg,borderRadius:10,gap:10,display:"flex",alignItems:"flex-start"}}>
+                {m.full_picture && <img src={m.full_picture} alt="" style={{width:56,height:56,objectFit:"cover",borderRadius:8,flexShrink:0}} />}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontSize:12}}>{typeIcon}</span>
+                      <span style={{color:T.textSec,fontSize:11,fontWeight:600}}>{m.business}</span>
+                      {m.source==="platform" && <span style={{background:"#8B5CF620",color:"#8B5CF6",fontSize:8,padding:"1px 5px",borderRadius:4,fontWeight:600}}>מהמערכת</span>}
                     </div>
-                    <div style={{textAlign:"center"}}>
-                      <div style={{color:"#10B981",fontWeight:700,fontSize:16}}>{m.comments||0}</div>
-                      <div style={{color:T.textDim,fontSize:9}}>תגובות</div>
-                    </div>
-                    <div style={{textAlign:"center"}}>
-                      <div style={{color:"#F59E0B",fontWeight:700,fontSize:16}}>{m.shares||0}</div>
-                      <div style={{color:T.textDim,fontSize:9}}>שיתופים</div>
-                    </div>
+                    {dateStr && <div style={{color:T.textDim,fontSize:9,flexShrink:0}}>{dateStr} {timeStr}</div>}
                   </div>
-              }
-            </div>)}
-            {latestMetrics[0]?.date && <div style={{color:T.textDim,fontSize:9,textAlign:"center",marginTop:4}}>
-              עודכן: {latestMetrics[0].date}
+                  <div style={{color:T.textMuted,fontSize:10,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",direction:"rtl",marginBottom:6}}>{m.content}</div>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    {m.needsPermission
+                      ? <div style={{color:"#F59E0B",fontSize:9,fontWeight:600}}>⚠️ לייקים/תגובות — ממתין ל-Verification</div>
+                      : <div style={{display:"flex",gap:14}}>
+                          <span style={{color:"#1877F2",fontSize:11,fontWeight:600}}>👍 {m.likes||0}</span>
+                          <span style={{color:"#10B981",fontSize:11,fontWeight:600}}>💬 {m.comments||0}</span>
+                          <span style={{color:"#F59E0B",fontSize:11,fontWeight:600}}>🔄 {m.shares||0}</span>
+                        </div>
+                    }
+                    <a href={link} target="_blank" rel="noreferrer" style={{color:"#1877F2",fontSize:9,fontWeight:600,textDecoration:"none"}}>צפה בפייסבוק ↗</a>
+                  </div>
+                </div>
+              </div>;
+            })}
+            {latestMetrics[0]?.date && <div style={{color:T.textDim,fontSize:9,textAlign:"center",marginTop:6}}>
+              עודכן: {latestMetrics[0].date} | {latestMetrics.length} פוסטים
             </div>}
           </div>
         : <div style={{color:T.textDim,fontSize:12,textAlign:"center",padding:20}}>
-            לחץ "עדכן נתונים" לראות לייקים ותגובות
+            לחץ "עדכן נתונים" לראות מעקב פוסטים
           </div>
       }
     </Card>}
@@ -2129,19 +2203,26 @@ function Publish({ posts, setPosts, businesses }) {
       const biz = businesses.find(b=>b.name===post.business);
       const tokens = biz?.social?.[platformId]?.tokens || {};
       const hashtags = (post.hashtags||[]).map(h=>h.startsWith("#")?h:`#${h}`).join(" ");
-      const message = post.content + (hashtags ? "\n\n" + hashtags : "");
+      const contentHasHashtags = (post.hashtags||[]).some(h=>post.content.includes(h));
+      const message = contentHasHashtags ? post.content : post.content + (hashtags ? "\n\n" + hashtags : "");
 
       if (platformId === "facebook") {
         const pageId = tokens.META_PAGE_ID;
         const accessToken = tokens.META_ACCESS_TOKEN;
         if (!pageId || !accessToken) throw new Error("חסר Page ID או Access Token");
-        const imageUrl = post.pipeline?.imageUrl;
-        const endpoint = imageUrl
-          ? `https://graph.facebook.com/v25.0/${pageId}/photos`
-          : `https://graph.facebook.com/v25.0/${pageId}/feed`;
-        const body = imageUrl
-          ? { url: imageUrl, message, access_token: accessToken }
-          : { message, access_token: accessToken };
+        const videoUrl = post.video_url || post.pipeline?.videoUrl || post.ugc?.videoUrl;
+        const imageUrl = post.image_url || post.pipeline?.imageUrl;
+        let endpoint, body;
+        if (videoUrl) {
+          endpoint = `https://graph.facebook.com/v25.0/${pageId}/videos`;
+          body = { file_url: videoUrl, description: message, access_token: accessToken };
+        } else if (imageUrl) {
+          endpoint = `https://graph.facebook.com/v25.0/${pageId}/photos`;
+          body = { url: imageUrl, message, access_token: accessToken };
+        } else {
+          endpoint = `https://graph.facebook.com/v25.0/${pageId}/feed`;
+          body = { message, access_token: accessToken };
+        }
         const r = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2151,7 +2232,6 @@ function Publish({ posts, setPosts, businesses }) {
         if (d.id || d.post_id) {
           const fbPostId = d.post_id||d.id;
           setResults(p=>({...p,[key]:{status:"ok",postId:fbPostId}}));
-          // Save FB post ID on the post for tracking metrics
           setPosts?.(prev=>prev.map(p=>p.id===post.id?{...p, fbPostId, publishedAt:new Date().toISOString(), published:true}:p));
         } else {
           setResults(p=>({...p,[key]:{status:"error",msg: d.error?.message || "שגיאה בפרסום"}}));
@@ -2160,14 +2240,18 @@ function Publish({ posts, setPosts, businesses }) {
         const igUserId = tokens.META_IG_USER_ID;
         const accessToken = tokens.META_ACCESS_TOKEN;
         if (!igUserId || !accessToken) throw new Error("חסר IG User ID או Access Token");
-        const imageUrl = post.pipeline?.imageUrl;
-        if (!imageUrl) throw new Error("אינסטגרם דורש תמונה — צור מדיה AI קודם");
+        const videoUrl = post.video_url || post.pipeline?.videoUrl || post.ugc?.videoUrl;
+        const imageUrl = post.image_url || post.pipeline?.imageUrl;
+        if (!imageUrl && !videoUrl) throw new Error("אינסטגרם דורש תמונה או וידאו — צור מדיה AI קודם");
 
         // Step 1: Create media container
+        const containerBody = videoUrl
+          ? { video_url: videoUrl, caption: message, media_type: "REELS", access_token: accessToken }
+          : { image_url: imageUrl, caption: message, access_token: accessToken };
         const containerR = await fetch(`https://graph.facebook.com/v25.0/${igUserId}/media`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image_url: imageUrl, caption: message, access_token: accessToken })
+          body: JSON.stringify(containerBody)
         });
         const container = await containerR.json();
         if (container.error) throw new Error(container.error.message);
@@ -2434,14 +2518,21 @@ function Schedule({ posts, setPosts, businesses }) {
       const pageId = fbTokens.META_PAGE_ID;
       const accessToken = fbTokens.META_ACCESS_TOKEN;
       const hashtags = (post.hashtags||[]).map(h=>h.startsWith("#")?h:`#${h}`).join(" ");
-      const message = post.content + (hashtags ? "\n\n" + hashtags : "");
-      const imageUrl = post.pipeline?.imageUrl;
-      const endpoint = imageUrl
-        ? `https://graph.facebook.com/v25.0/${pageId}/photos`
-        : `https://graph.facebook.com/v25.0/${pageId}/feed`;
-      const body = imageUrl
-        ? { url: imageUrl, message, access_token: accessToken }
-        : { message, access_token: accessToken };
+      const contentHasHashtags = (post.hashtags||[]).some(h=>post.content.includes(h));
+      const message = contentHasHashtags ? post.content : post.content + (hashtags ? "\n\n" + hashtags : "");
+      const videoUrl = post.video_url || post.pipeline?.videoUrl || post.ugc?.videoUrl;
+      const imageUrl = post.image_url || post.pipeline?.imageUrl;
+      let endpoint, body;
+      if (videoUrl) {
+        endpoint = `https://graph.facebook.com/v25.0/${pageId}/videos`;
+        body = { file_url: videoUrl, description: message, access_token: accessToken };
+      } else if (imageUrl) {
+        endpoint = `https://graph.facebook.com/v25.0/${pageId}/photos`;
+        body = { url: imageUrl, message, access_token: accessToken };
+      } else {
+        endpoint = `https://graph.facebook.com/v25.0/${pageId}/feed`;
+        body = { message, access_token: accessToken };
+      }
       const r = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
