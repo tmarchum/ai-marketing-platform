@@ -3042,9 +3042,121 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem("analytics_data")||"{}"); } catch { return {}; }
   });
   const [mobileNav, setMobileNav] = useState(false);
+  const [dbReady, setDbReady] = useState(false);
 
+  // ── Load from Supabase on startup, localStorage as fallback ──
+  useEffect(()=>{
+    let cancelled = false;
+    async function loadFromServer() {
+      try {
+        // Load businesses from API
+        const bizRes = await fetch("/api/businesses");
+        if (bizRes.ok) {
+          const bizData = await bizRes.json();
+          if (!cancelled && Array.isArray(bizData) && bizData.length > 0) {
+            // Convert DB format to frontend format
+            const mapped = bizData.map(b => ({
+              id: b.id,
+              name: b.name,
+              icon: b.icon || "🏢",
+              color: b.color || "#6B7280",
+              url: b.url || "",
+              description: b.description || "",
+              social: b.social || {},
+              scanResult: b.scan_result || null,
+              fullScanData: b.full_scan_data || null,
+              competitorAnalysis: b.competitor_analysis || null,
+              competitors: b.competitors || [],
+              schedule: b.schedule || {},
+            }));
+            setBusinesses(mapped);
+            console.log("[db] Loaded", mapped.length, "businesses from Supabase");
+          }
+        }
+
+        // Load posts from API
+        const postsRes = await fetch("/api/content");
+        if (postsRes.ok) {
+          const postsData = await postsRes.json();
+          if (!cancelled && Array.isArray(postsData) && postsData.length > 0) {
+            const mapped = postsData.map(p => ({
+              id: p.id,
+              business: p.business_name || "",
+              platform: p.platform || "פייסבוק",
+              type: p.type || "פוסט קצר",
+              content: p.content || "",
+              hashtags: p.hashtags || [],
+              date: p.date_label || "",
+              approved: p.status === "approved" || p.status === "published",
+              published: p.status === "published",
+              fbPostId: p.fb_post_id || null,
+              publishedAt: p.published_at || null,
+              media: p.media || null,
+              ugc: p.ugc || null,
+              pipeline: p.pipeline_status || null,
+              image_url: p.image_url || null,
+              video_url: p.video_url || null,
+            }));
+            setPosts(mapped);
+            console.log("[db] Loaded", mapped.length, "posts from Supabase");
+          }
+        }
+
+        if (!cancelled) setDbReady(true);
+      } catch(e) {
+        console.warn("[db] Server unavailable, using localStorage:", e.message);
+        if (!cancelled) setDbReady(true);
+      }
+    }
+    loadFromServer();
+    return () => { cancelled = true; };
+  }, []);
+
+  // ── Save to localStorage (cache) and sync to server ──
   useEffect(()=>{ localStorage.setItem("posts",JSON.stringify(posts)); },[posts]);
   useEffect(()=>{ localStorage.setItem("businesses",JSON.stringify(businesses)); },[businesses]);
+
+  // ── Sync businesses to Supabase when they change ──
+  const bizSyncRef = useRef(false);
+  useEffect(()=>{
+    if (!dbReady) return; // skip initial sync before DB load
+    if (!bizSyncRef.current) { bizSyncRef.current = true; return; } // skip first render after dbReady
+    const timer = setTimeout(()=>{
+      fetch("/api/businesses/sync", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ businesses: businesses.map(b=>({
+          name: b.name, url: b.url, icon: b.icon, color: b.color,
+          description: b.description, social: b.social,
+          scanResult: b.scanResult, fullScanData: b.fullScanData,
+          competitorAnalysis: b.competitorAnalysis,
+        }))})
+      }).catch(()=>{});
+    }, 2000); // debounce 2s
+    return ()=>clearTimeout(timer);
+  },[businesses, dbReady]);
+
+  // ── Sync posts to Supabase when they change ──
+  const postsSyncRef = useRef(false);
+  useEffect(()=>{
+    if (!dbReady) return;
+    if (!postsSyncRef.current) { postsSyncRef.current = true; return; }
+    const timer = setTimeout(()=>{
+      // Only sync new posts that don't have a UUID id (meaning they were created locally)
+      const localPosts = posts.filter(p => typeof p.id === 'number');
+      if (localPosts.length === 0) return;
+      fetch("/api/content/sync", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ posts: localPosts })
+      }).then(r=>r.json()).then(saved=>{
+        if (Array.isArray(saved) && saved.length > 0) {
+          console.log("[db] Synced", saved.length, "posts to Supabase");
+        }
+      }).catch(()=>{});
+    }, 2000);
+    return ()=>clearTimeout(timer);
+  },[posts, dbReady]);
 
   // One-time token update via URL hash (e.g. #token-update:base64data)
   useEffect(()=>{
