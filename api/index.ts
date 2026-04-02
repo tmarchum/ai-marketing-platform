@@ -167,6 +167,76 @@ app.post('/api/content/claude', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// REPLICATE PROXY — image generation with Flux
+// ══════════════════════════════════════════════════════════════
+
+app.post('/api/replicate/predictions', async (req, res) => {
+  const token = process.env.REPLICATE_API_TOKEN;
+  if (!token) return res.status(503).json({ error: 'REPLICATE_API_TOKEN not set' });
+  try {
+    const { model, input } = req.body;
+    const modelPath = model || 'black-forest-labs/flux-1.1-pro';
+    const r = await fetch(`https://api.replicate.com/v1/models/${modelPath}/predictions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ input: input || {} }),
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/replicate/predictions/:id', async (req, res) => {
+  const token = process.env.REPLICATE_API_TOKEN;
+  if (!token) return res.status(503).json({ error: 'REPLICATE_API_TOKEN not set' });
+  try {
+    const r = await fetch(`https://api.replicate.com/v1/predictions/${req.params.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// RUNWAY ML PROXY — video generation
+// ══════════════════════════════════════════════════════════════
+
+app.post('/api/runway/image-to-video', async (req, res) => {
+  const token = process.env.RUNWAYML_API_SECRET;
+  if (!token) return res.status(503).json({ error: 'RUNWAYML_API_SECRET not set' });
+  try {
+    const r = await fetch('https://api.dev.runwayml.com/v1/image_to_video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'X-Runway-Version': '2024-11-06' },
+      body: JSON.stringify(req.body),
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/runway/tasks/:id', async (req, res) => {
+  const token = process.env.RUNWAYML_API_SECRET;
+  if (!token) return res.status(503).json({ error: 'RUNWAYML_API_SECRET not set' });
+  try {
+    const r = await fetch(`https://api.dev.runwayml.com/v1/tasks/${req.params.id}`, {
+      headers: { Authorization: `Bearer ${token}`, 'X-Runway-Version': '2024-11-06' },
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 // ADMIN — key testing
 // ══════════════════════════════════════════════════════════════
 

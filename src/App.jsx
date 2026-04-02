@@ -580,29 +580,21 @@ const UGC_STAGES = [
 ];
 
 async function generateImageWithFlux(prompt) {
-  const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
-  const token = keys.REPLICATE_API_TOKEN;
-  if (!token) throw new Error("הגדר REPLICATE_API_TOKEN בדף ניהול");
-
-  const baseUrl = "/replicate-api"; // Vite proxy to avoid CORS
-
-  // Start prediction
-  const resp = await fetch(`${baseUrl}/v1/models/black-forest-labs/flux-1.1-pro/predictions`, {
+  // Use server-side proxy (works on both localhost and Vercel)
+  const resp = await fetch("/api/replicate/predictions", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-    body: JSON.stringify({ input: { prompt, aspect_ratio: "1:1", output_format: "jpg", safety_tolerance: 5 } })
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "black-forest-labs/flux-1.1-pro", input: { prompt, aspect_ratio: "1:1", output_format: "jpg", safety_tolerance: 5 } })
   });
   const prediction = await resp.json();
   if (prediction.error) throw new Error(prediction.error);
 
-  // Poll for result via proxy
+  // Poll for result via server proxy
   const predictionId = prediction.id;
   if (!predictionId) throw new Error("Replicate: missing prediction ID");
   for (let i = 0; i < 60; i++) {
     await sleep(2000);
-    const poll = await fetch(`${baseUrl}/v1/predictions/${predictionId}`, {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
+    const poll = await fetch(`/api/replicate/predictions/${predictionId}`);
     const result = await poll.json();
     if (result.status === "succeeded") return result.output;
     if (result.status === "failed" || result.status === "canceled") throw new Error(result.error || "Image generation failed");
@@ -776,17 +768,10 @@ async function didCreateTalk(imageUrl, audioUrl) {
 // RUNWAY ML — Image to Video
 // ═══════════════════════════════════════════════════════════════════
 async function runwayImageToVideo(imageUrl) {
-  const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
-  const apiKey = keys.RUNWAYML_API_SECRET;
-  if (!apiKey) throw new Error("הגדר RUNWAYML_API_SECRET בדף ניהול");
-
-  const r = await fetch("https://api.dev.runwayml.com/v1/image_to_video", {
+  // Use server-side proxy (works on both localhost and Vercel)
+  const r = await fetch("/api/runway/image-to-video", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-      "X-Runway-Version": "2024-11-06"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "gen3a_turbo",
       promptImage: imageUrl,
@@ -801,9 +786,7 @@ async function runwayImageToVideo(imageUrl) {
 
   for (let i = 0; i < 60; i++) {
     await sleep(5000);
-    const poll = await fetch(`https://api.dev.runwayml.com/v1/tasks/${taskId}`, {
-      headers: { "Authorization": `Bearer ${apiKey}`, "X-Runway-Version": "2024-11-06" }
-    });
+    const poll = await fetch(`/api/runway/tasks/${taskId}`);
     const result = await poll.json();
     if (result.status === "SUCCEEDED") return result.output?.[0] || result.output;
     if (result.status === "FAILED") throw new Error(result.failure || "Runway video generation failed");
