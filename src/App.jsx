@@ -1933,6 +1933,41 @@ function Businesses({ businesses, setBusinesses, posts }) {
 
           {/* Expanded */}
           {expanded&&<div style={{marginTop:16,borderTop:`1px solid ${T.borderLight}`,paddingTop:16}}>
+            {/* Name edit */}
+            <div style={{marginBottom:14}}>
+              <div style={{color:T.textMuted,fontSize:11,marginBottom:4}}>שם העסק</div>
+              <input value={biz.name||""} onChange={e=>{
+                const oldName = biz.name;
+                const newName = e.target.value;
+                updateBiz(biz.id, {name: newName});
+                // Also update posts that reference this business by name
+                if (oldName && newName && oldName !== newName) {
+                  // Posts will be updated via the parent setPosts if needed
+                }
+              }}
+                style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,padding:"9px 12px",color:T.text,fontSize:14,fontWeight:700,fontFamily:"inherit",boxSizing:"border-box"}}/>
+            </div>
+
+            {/* Icon & Color edit */}
+            <div style={{display:"flex",gap:16,marginBottom:14,flexWrap:"wrap"}}>
+              <div>
+                <div style={{color:T.textMuted,fontSize:11,marginBottom:6}}>אייקון</div>
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  {BIZ_ICONS.map(ic=><button key={ic} onClick={()=>updateBiz(biz.id,{icon:ic})}
+                    style={{width:32,height:32,background:biz.icon===ic?"#8B5CF612":T.inputBg,
+                      border:`1px solid ${biz.icon===ic?"#8B5CF6":T.inputBorder}`,borderRadius:8,cursor:"pointer",fontSize:14}}>{ic}</button>)}
+                </div>
+              </div>
+              <div>
+                <div style={{color:T.textMuted,fontSize:11,marginBottom:6}}>צבע</div>
+                <div style={{display:"flex",gap:4}}>
+                  {BIZ_COLORS.map(c=><button key={c} onClick={()=>updateBiz(biz.id,{color:c})}
+                    style={{width:28,height:28,background:c,borderRadius:8,cursor:"pointer",
+                      border:`2px solid ${biz.color===c?"#fff":"transparent"}`,boxShadow:biz.color===c?`0 0 0 2px ${c}`:""}}/>)}
+                </div>
+              </div>
+            </div>
+
             {/* Description edit */}
             <div style={{marginBottom:14}}>
               <div style={{color:T.textMuted,fontSize:11,marginBottom:4}}>תיאור העסק</div>
