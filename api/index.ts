@@ -338,24 +338,33 @@ app.get('/api/fb-metrics/:pageId', async (req, res) => {
     // 2) Published posts — basic fields work with pages_manage_posts
     let postsData: any = { data: [] };
     try {
-      postsData = await gf(`${pageId}/published_posts?fields=id,message,created_time,full_picture,status_type,permalink_url&limit=50`);
+      postsData = await gf(`${pageId}/published_posts?fields=id,message,created_time&limit=50`);
       if (postsData.error) postsData = { data: [] };
+    } catch (_) {}
+
+    // 2b) Try to get extra fields (full_picture etc) — may fail, that's ok
+    let extraFields: Record<string,any> = {};
+    try {
+      const extraData = await gf(`${pageId}/published_posts?fields=id,full_picture,status_type&limit=50`);
+      if (!extraData.error && extraData.data) {
+        for (const p of extraData.data) extraFields[p.id] = { full_picture: p.full_picture, status_type: p.status_type };
+      }
     } catch (_) {}
 
     // 3) Try engagement (might fail — graceful fallback)
     let engagementAvailable = false;
     let postsWithEngagement: any[] = [];
     try {
-      const engData = await gf(`${pageId}/published_posts?fields=id,message,created_time,full_picture,status_type,permalink_url,likes.summary(true),comments.summary(true),shares&limit=50`);
+      const engData = await gf(`${pageId}/published_posts?fields=id,message,created_time,likes.summary(true),comments.summary(true),shares&limit=50`);
       if (!engData.error && engData.data) {
         engagementAvailable = true;
         postsWithEngagement = engData.data.map((p: any) => ({
           id: p.id,
           message: (p.message || '').substring(0, 120),
           created_time: p.created_time,
-          full_picture: p.full_picture || null,
-          status_type: p.status_type || null,
-          permalink_url: p.permalink_url || `https://facebook.com/${p.id}`,
+          full_picture: extraFields[p.id]?.full_picture || null,
+          status_type: extraFields[p.id]?.status_type || null,
+          permalink_url: `https://facebook.com/${p.id}`,
           likes: p.likes?.summary?.total_count || 0,
           comments: p.comments?.summary?.total_count || 0,
           shares: p.shares?.count || 0,
@@ -368,9 +377,9 @@ app.get('/api/fb-metrics/:pageId', async (req, res) => {
       id: p.id,
       message: (p.message || '').substring(0, 120),
       created_time: p.created_time,
-      full_picture: p.full_picture || null,
-      status_type: p.status_type || null,
-      permalink_url: p.permalink_url || `https://facebook.com/${p.id}`,
+      full_picture: extraFields[p.id]?.full_picture || null,
+      status_type: extraFields[p.id]?.status_type || null,
+      permalink_url: `https://facebook.com/${p.id}`,
       likes: null,
       comments: null,
       shares: null,
