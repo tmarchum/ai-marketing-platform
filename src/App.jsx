@@ -3125,6 +3125,9 @@ export default function App({ session }) {
     let cancelled = false;
     async function loadFromServer() {
       try {
+        // Claim orphan data on first login (assigns null user_id rows to current user)
+        try { await authFetch("/api/claim-data", { method: "POST" }); } catch {}
+
         // Load businesses from API
         const bizRes = await authFetch("/api/businesses");
         if (bizRes.ok) {

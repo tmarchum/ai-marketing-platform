@@ -127,6 +127,18 @@ app.post('/api/businesses/sync', async (req, res) => {
   res.json(results);
 });
 
+// ── Backfill: assign orphan rows to the logged-in user ──
+app.post('/api/claim-data', async (req: any, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Not authenticated' });
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  // Assign all businesses with null user_id to this user
+  const { data: biz, error: bizErr } = await sb.from('businesses').update({ user_id: req.userId }).is('user_id', null).select('id, name');
+  // Assign all content_posts with null user_id to this user
+  const { data: posts, error: postErr } = await sb.from('content_posts').update({ user_id: req.userId }).is('user_id', null).select('id');
+  res.json({ claimed: { businesses: biz?.length || 0, posts: posts?.length || 0 }, errors: { biz: bizErr?.message, posts: postErr?.message } });
+});
+
 // ══════════════════════════════════════════════════════════════
 // CONTENT / POSTS
 // ══════════════════════════════════════════════════════════════
