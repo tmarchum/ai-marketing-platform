@@ -31,3 +31,5 @@ api/node_modules
 *.sw?
 
 .vercel
+
+.vercel

@@ -17,6 +17,29 @@ function getSupabase() {
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 
+// ── Auth middleware — extract user from JWT ──
+async function authMiddleware(req: any, res: any, next: any) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    // Allow unauthenticated for now (backwards compat) — will enforce later
+    req.userId = null;
+    return next();
+  }
+  try {
+    const token = authHeader.split(' ')[1];
+    const sb = getSupabase();
+    if (!sb) { req.userId = null; return next(); }
+    const { data: { user }, error } = await sb.auth.getUser(token);
+    if (error || !user) { req.userId = null; return next(); }
+    req.userId = user.id;
+    req.userEmail = user.email;
+  } catch {
+    req.userId = null;
+  }
+  next();
+}
+app.use(authMiddleware);
+
 // ── Health ──
 app.get('/api/health', (_req, res) => {
   const sb = getSupabase();
@@ -27,40 +50,47 @@ app.get('/api/health', (_req, res) => {
 // BUSINESSES
 // ══════════════════════════════════════════════════════════════
 
-app.get('/api/businesses', async (_req, res) => {
+app.get('/api/businesses', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.json([]);
-  const { data, error } = await sb.from('businesses').select('*').order('created_at', { ascending: false });
+  let query = sb.from('businesses').select('*').order('created_at', { ascending: false });
+  if (req.userId) query = query.eq('user_id', req.userId);
+  const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data ?? []);
 });
 
-app.post('/api/businesses', async (req, res) => {
+app.post('/api/businesses', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   const row: Record<string, any> = {};
   const fields = ['name','url','industry','target_audience','tone','goals','icon','color','description','social','scan_result','full_scan_data','competitor_analysis','competitors','schedule','business_profile'];
   for (const f of fields) if (req.body[f] !== undefined) row[f] = req.body[f];
+  if (req.userId) row.user_id = req.userId;
   const { data, error } = await sb.from('businesses').insert(row).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
-app.put('/api/businesses/:id', async (req, res) => {
+app.put('/api/businesses/:id', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   const updates = { ...req.body };
-  delete updates.id; delete updates.created_at;
-  const { data, error } = await sb.from('businesses').update(updates).eq('id', req.params.id).select().single();
+  delete updates.id; delete updates.created_at; delete updates.user_id;
+  let query = sb.from('businesses').update(updates).eq('id', req.params.id);
+  if (req.userId) query = query.eq('user_id', req.userId);
+  const { data, error } = await query.select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
-app.delete('/api/businesses/:id', async (req, res) => {
+app.delete('/api/businesses/:id', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   // Get the business name first (posts reference by name)
-  const { data: biz } = await sb.from('businesses').select('name').eq('id', req.params.id).maybeSingle();
+  let bizQuery = sb.from('businesses').select('name').eq('id', req.params.id);
+  if (req.userId) bizQuery = bizQuery.eq('user_id', req.userId);
+  const { data: biz } = await bizQuery.maybeSingle();
   const { error } = await sb.from('businesses').delete().eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   // Also delete related posts by business name
@@ -99,17 +129,18 @@ app.post('/api/businesses/sync', async (req, res) => {
 // CONTENT / POSTS
 // ══════════════════════════════════════════════════════════════
 
-app.get('/api/content', async (req, res) => {
+app.get('/api/content', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.json([]);
   let query = sb.from('content_posts').select('*').order('created_at', { ascending: false });
+  if (req.userId) query = query.eq('user_id', req.userId);
   if (req.query.business_id) query = query.eq('business_id', req.query.business_id as string);
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data ?? []);
 });
 
-app.post('/api/content', async (req, res) => {
+app.post('/api/content', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   const row: Record<string, any> = {
@@ -119,6 +150,7 @@ app.post('/api/content', async (req, res) => {
   };
   const optFields = ['business_id','business_name','hashtags','status','fb_post_id','published_at','date_label','media','ugc','image_url','video_url','ugc_video_url','image_prompt','motion_prompt','ugc_script','scheduled_at','ab_variant'];
   for (const f of optFields) if (req.body[f]) row[f] = req.body[f];
+  if (req.userId) row.user_id = req.userId;
   const { data, error } = await sb.from('content_posts').insert(row).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { supabase, authFetch } from "./lib/supabase";
 
 // ═══════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -137,7 +138,7 @@ function SectionTitle({ children, sub }) {
 // ═══════════════════════════════════════════════════════════════════
 async function claudeCall(prompt, maxTokens=800) {
   try {
-    const r = await fetch("/api/content/claude", {
+    const r = await authFetch("/api/content/claude", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({ prompt, maxTokens })
@@ -176,7 +177,7 @@ async function fetchPostMetrics(posts, businesses) {
     if (!pageId || !accessToken || seenPages.has(pageId)) continue;
     seenPages.add(pageId);
     try {
-      const r = await fetch(`/api/fb-metrics/${pageId}?token=${accessToken}`);
+      const r = await authFetch(`/api/fb-metrics/${pageId}?token=${accessToken}`);
       const d = await r.json();
       if (d.page) {
         pageMetrics[biz.name] = {
@@ -600,7 +601,7 @@ const UGC_STAGES = [
 
 async function generateImageWithFlux(prompt) {
   // Use server-side proxy (works on both localhost and Vercel)
-  const resp = await fetch("/api/replicate/predictions", {
+  const resp = await authFetch("/api/replicate/predictions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: "black-forest-labs/flux-1.1-pro", input: { prompt, aspect_ratio: "1:1", output_format: "jpg", safety_tolerance: 5 } })
@@ -613,7 +614,7 @@ async function generateImageWithFlux(prompt) {
   if (!predictionId) throw new Error("Replicate: missing prediction ID");
   for (let i = 0; i < 60; i++) {
     await sleep(2000);
-    const poll = await fetch(`/api/replicate/predictions/${predictionId}`);
+    const poll = await authFetch(`/api/replicate/predictions/${predictionId}`);
     const result = await poll.json();
     if (result.status === "succeeded") return result.output;
     if (result.status === "failed" || result.status === "canceled") throw new Error(result.error || "Image generation failed");
@@ -700,7 +701,7 @@ async function runRealPipeline(post, businesses, onUpdate) {
 // ═══════════════════════════════════════════════════════════════════
 async function elevenLabsTTS(text, voiceId) {
   // Use server-side proxy (works on both localhost and Vercel)
-  const r = await fetch("/api/elevenlabs/tts", {
+  const r = await authFetch("/api/elevenlabs/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, voiceId: voiceId || "EXAVITQu4vr4xnSDxMaL" })
@@ -721,7 +722,7 @@ async function didCreateTalk(imageUrl, audioUrl) {
     config: { stitch: true }
   };
 
-  const r = await fetch("/api/did/talks", {
+  const r = await authFetch("/api/did/talks", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
@@ -736,7 +737,7 @@ async function didCreateTalk(imageUrl, audioUrl) {
   // Poll for result via server proxy
   for (let i = 0; i < 60; i++) {
     await sleep(3000);
-    const poll = await fetch(`/api/did/talks/${talkId}`);
+    const poll = await authFetch(`/api/did/talks/${talkId}`);
     const result = await poll.json();
     if (result.status === "done") return result.result_url;
     if (result.status === "error" || result.status === "rejected") {
@@ -751,7 +752,7 @@ async function didCreateTalk(imageUrl, audioUrl) {
 // ═══════════════════════════════════════════════════════════════════
 async function runwayImageToVideo(imageUrl) {
   // Use server-side proxy (works on both localhost and Vercel)
-  const r = await fetch("/api/runway/image-to-video", {
+  const r = await authFetch("/api/runway/image-to-video", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -768,7 +769,7 @@ async function runwayImageToVideo(imageUrl) {
 
   for (let i = 0; i < 60; i++) {
     await sleep(5000);
-    const poll = await fetch(`/api/runway/tasks/${taskId}`);
+    const poll = await authFetch(`/api/runway/tasks/${taskId}`);
     const result = await poll.json();
     if (result.status === "SUCCEEDED") return result.output?.[0] || result.output;
     if (result.status === "FAILED") throw new Error(result.failure || "Runway video generation failed");
@@ -1793,7 +1794,7 @@ function Businesses({ businesses, setBusinesses, posts }) {
       const biz = businesses.find(b=>b.id===id);
       return !biz || post.business !== biz.name;
     }));
-    try { await fetch(`/api/businesses/${id}`, { method: "DELETE" }); } catch {}
+    try { await authFetch(`/api/businesses/${id}`, { method: "DELETE" }); } catch {}
   }
 
   async function scanBiz(biz) {
@@ -2875,7 +2876,7 @@ function Admin() {
     const val = keys[keyId];
     try {
       // Try backend first
-      const r = await fetch("/api/admin/test-key", {
+      const r = await authFetch("/api/admin/test-key", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({ keyId, value: val })
@@ -2930,7 +2931,7 @@ function Admin() {
   async function loadUsers() {
     setLoadingUsers(true);
     try {
-      const r = await fetch("/api/admin/users");
+      const r = await authFetch("/api/admin/users");
       if (!r.ok) throw new Error("backend unavailable");
       const d = await r.json();
       if (Array.isArray(d)) { setUsers(d); }
@@ -2950,7 +2951,7 @@ function Admin() {
   async function inviteUser() {
     if (!newUser.email.trim()) return;
     try {
-      const r = await fetch("/api/admin/users/invite", {
+      const r = await authFetch("/api/admin/users/invite", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify(newUser)
@@ -2969,7 +2970,7 @@ function Admin() {
 
   async function removeUser(id) {
     try {
-      const r = await fetch(`/api/admin/users/${id}`, { method:"DELETE" });
+      const r = await authFetch(`/api/admin/users/${id}`, { method:"DELETE" });
       if (!r.ok) throw new Error("backend");
     } catch {
       // Remove locally
@@ -3104,7 +3105,7 @@ function Admin() {
 // ═══════════════════════════════════════════════════════════════════
 // APP
 // ═══════════════════════════════════════════════════════════════════
-export default function App() {
+export default function App({ session }) {
   const [page, setPage] = useState("dashboard");
   const [posts, setPosts] = useState(()=>{
     try { const s=localStorage.getItem("posts"); return s?JSON.parse(s):SAMPLE_POSTS; } catch { return SAMPLE_POSTS; }
@@ -3125,7 +3126,7 @@ export default function App() {
     async function loadFromServer() {
       try {
         // Load businesses from API
-        const bizRes = await fetch("/api/businesses");
+        const bizRes = await authFetch("/api/businesses");
         if (bizRes.ok) {
           const bizData = await bizRes.json();
           if (!cancelled && Array.isArray(bizData) && bizData.length > 0) {
@@ -3150,7 +3151,7 @@ export default function App() {
         }
 
         // Load posts from API
-        const postsRes = await fetch("/api/content");
+        const postsRes = await authFetch("/api/content");
         if (postsRes.ok) {
           const postsData = await postsRes.json();
           if (!cancelled && Array.isArray(postsData) && postsData.length > 0) {
@@ -3197,7 +3198,7 @@ export default function App() {
     if (!dbReady) return; // skip initial sync before DB load
     if (!bizSyncRef.current) { bizSyncRef.current = true; return; } // skip first render after dbReady
     const timer = setTimeout(()=>{
-      fetch("/api/businesses/sync", {
+      authFetch("/api/businesses/sync", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body: JSON.stringify({ businesses: businesses.map(b=>({
@@ -3220,7 +3221,7 @@ export default function App() {
       // Only sync new posts that don't have a UUID id (meaning they were created locally)
       const localPosts = posts.filter(p => typeof p.id === 'number');
       if (localPosts.length === 0) return;
-      fetch("/api/content/sync", {
+      authFetch("/api/content/sync", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body: JSON.stringify({ posts: localPosts })
@@ -3359,6 +3360,15 @@ export default function App() {
             <span style={{color:"#10B981",fontSize:11}}>{published} פורסם</span>
           </div>}
           {!running&&!published&&<div style={{color:T.textDim,fontSize:11}}>מוכן</div>}
+        </div>
+        {/* User + Logout */}
+        <div style={{padding:"10px 12px",borderTop:`1px solid ${T.borderLight}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{color:T.textDim,fontSize:10,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:120}}>
+            {session?.user?.email}
+          </div>
+          <button onClick={()=>supabase.auth.signOut()} style={{
+            background:"none",border:"none",color:"#EF4444",fontSize:11,cursor:"pointer",fontWeight:600,fontFamily:"inherit",padding:"4px 8px",borderRadius:6,
+          }}>יציאה</button>
         </div>
       </div>
 
