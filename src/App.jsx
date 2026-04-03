@@ -3107,13 +3107,9 @@ function Admin() {
 // ═══════════════════════════════════════════════════════════════════
 export default function App({ session }) {
   const [page, setPage] = useState("dashboard");
-  const [posts, setPosts] = useState(()=>{
-    try { const s=localStorage.getItem("posts"); return s?JSON.parse(s):SAMPLE_POSTS; } catch { return SAMPLE_POSTS; }
-  });
+  const [posts, setPosts] = useState([]);
   const [sources, setSources] = useState(SOURCES_INIT);
-  const [businesses, setBusinesses] = useState(()=>{
-    try { const s=localStorage.getItem("businesses"); return s?JSON.parse(s):DEFAULT_BUSINESSES; } catch { return DEFAULT_BUSINESSES; }
-  });
+  const [businesses, setBusinesses] = useState([]);
   const [analyticsData, setAnalyticsData] = useState(()=>{
     try { return JSON.parse(localStorage.getItem("analytics_data")||"{}"); } catch { return {}; }
   });
@@ -3191,9 +3187,9 @@ export default function App({ session }) {
     return () => { cancelled = true; };
   }, []);
 
-  // ── Save to localStorage (cache) and sync to server ──
-  useEffect(()=>{ localStorage.setItem("posts",JSON.stringify(posts)); },[posts]);
-  useEffect(()=>{ localStorage.setItem("businesses",JSON.stringify(businesses)); },[businesses]);
+  // ── Save to localStorage (cache only after DB loaded) ──
+  useEffect(()=>{ if (dbReady) localStorage.setItem("posts",JSON.stringify(posts)); },[posts, dbReady]);
+  useEffect(()=>{ if (dbReady) localStorage.setItem("businesses",JSON.stringify(businesses)); },[businesses, dbReady]);
 
   // ── Sync businesses to Supabase when they change ──
   const bizSyncRef = useRef(false);
