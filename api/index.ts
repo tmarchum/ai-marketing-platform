@@ -56,6 +56,18 @@ app.put('/api/businesses/:id', async (req, res) => {
   res.json(data);
 });
 
+app.delete('/api/businesses/:id', async (req, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  // Get the business name first (posts reference by name)
+  const { data: biz } = await sb.from('businesses').select('name').eq('id', req.params.id).maybeSingle();
+  const { error } = await sb.from('businesses').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  // Also delete related posts by business name
+  if (biz?.name) await sb.from('posts').delete().eq('business', biz.name);
+  res.json({ ok: true });
+});
+
 app.post('/api/businesses/sync', async (req, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });

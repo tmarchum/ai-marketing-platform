@@ -1786,7 +1786,15 @@ function Businesses({ businesses, setBusinesses, posts }) {
     setForm({ name:"", icon:BIZ_ICONS[0], color:BIZ_COLORS[0], url:"", description:"" });
     setAdding(false);
   }
-  function removeBiz(id) { setBusinesses(p=>p.filter(b=>b.id!==id)); }
+  async function removeBiz(id) {
+    if (!confirm("למחוק את העסק? כל הפוסטים שלו יימחקו גם")) return;
+    setBusinesses(p=>p.filter(b=>b.id!==id));
+    setPosts(p=>p.filter(post=>{
+      const biz = businesses.find(b=>b.id===id);
+      return !biz || post.business !== biz.name;
+    }));
+    try { await fetch(`/api/businesses/${id}`, { method: "DELETE" }); } catch {}
+  }
 
   async function scanBiz(biz) {
     setScanning(p=>({...p,[biz.id]:true}));
