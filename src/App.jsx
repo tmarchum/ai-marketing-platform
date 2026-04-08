@@ -957,7 +957,7 @@ function PipelineBar({ stages, pipeline, compact }) {
 // ═══════════════════════════════════════════════════════════════════
 // POST CARD
 // ═══════════════════════════════════════════════════════════════════
-function PostCard({ post, onUpdate, compact, businesses }) {
+function PostCard({ post, onUpdate, onDelete, compact, businesses }) {
   const [exp, setExp] = useState(false);
   const [editing, setEditing] = useState(false);
   const [txt, setTxt] = useState(post.content);
@@ -1059,6 +1059,7 @@ function PostCard({ post, onUpdate, compact, businesses }) {
         ? <Btn sm bg="#EC489915" color="#EC4899" onClick={startUGC}>UGC</Btn>
         : <Btn sm bg={T.inputBg} color={T.textSec} onClick={()=>setExp(p=>!p)}>{exp?"▲":"▼"} UGC</Btn>
       }
+      {onDelete && <Btn sm bg="#EF444410" color="#EF4444" onClick={()=>{if(confirm("למחוק את הפוסט?"))onDelete(post.id)}}>🗑️</Btn>}
     </div>
 
     {exp && post.pipeline && <PipelineBar stages={MEDIA_STAGES} pipeline={post.pipeline}/>}
@@ -1593,7 +1594,8 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
       {existingBizPosts.length===0
         ? <Card><div style={{textAlign:"center",color:T.textDim,padding:30}}>אין פוסטים ל-{selBiz?.name} — לחץ "צור פוסטים"</div></Card>
         : existingBizPosts.map(post=><PostCard key={post.id} post={post} businesses={BUSINESSES}
-          onUpdate={upd=>setPosts(prev=>prev.map(p=>p.id===post.id?(typeof upd==="function"?upd(p):upd):p))}/>)}
+          onUpdate={upd=>setPosts(prev=>prev.map(p=>p.id===post.id?(typeof upd==="function"?upd(p):upd):p))}
+          onDelete={id=>{setPosts(prev=>prev.filter(p=>p.id!==id));authFetch(`/api/content/${id}`,{method:"DELETE"}).catch(()=>{})}}/>)}
     </div>
   </div>;
 }

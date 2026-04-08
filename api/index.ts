@@ -181,6 +181,16 @@ app.put('/api/content/:id', async (req, res) => {
   res.json(data);
 });
 
+app.delete('/api/content/:id', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  let query = sb.from('content_posts').delete().eq('id', req.params.id);
+  if (req.userId) query = query.eq('user_id', req.userId);
+  const { error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
 app.post('/api/content/sync', async (req, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
