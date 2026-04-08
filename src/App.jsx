@@ -588,7 +588,7 @@ async function boostPost(postId, accessToken, adAccountId, budget, duration, tar
 // ═══════════════════════════════════════════════════════════════════
 const MEDIA_STAGES = [
   { id:"prompt",  label:"פרומפט",  icon:"🧠", color:"#8B5CF6" },
-  { id:"image",   label:"Flux",    icon:"🖼️", color:"#F59E0B" },
+  { id:"image",   label:"תמונה/סרטון", icon:"🖼️", color:"#F59E0B" },
   { id:"publish", label:"Meta",    icon:"📡", color:"#1877F2" },
 ];
 const UGC_STAGES = [
@@ -624,77 +624,98 @@ async function generateImageWithFlux(prompt) {
   throw new Error("Timeout: image generation took too long");
 }
 
-async function runRealPipeline(post, businesses, onUpdate) {
+async function runRealPipeline(post, businesses, onUpdate, mediaType="image") {
   const stages = MEDIA_STAGES;
   const s = Object.fromEntries(stages.map(st=>[st.id,"pending"]));
 
-  // STAGE 1: Generate image prompt with Claude
+  // STAGE 1: Generate prompt with Claude
   s.prompt = "running";
   onUpdate({ stages:{...s}, current:"prompt", done:false });
-  let imagePrompt;
+  let mediaPrompt;
+  const isVideo = mediaType === "video";
   try {
-    imagePrompt = await claudeCall(
-      `אתה מומחה ליצירת תמונות AI. קרא את הפוסט הבא וצור prompt באנגלית ליצירת תמונה שתתאים לו בפייסבוק/אינסטגרם.
+    mediaPrompt = await claudeCall(
+      `אתה מומחה ליצירת ${isVideo?"סרטונים":"תמונות"} AI. קרא את הפוסט הבא וצור prompt באנגלית ליצירת ${isVideo?"סרטון קצר":"תמונה"} שתתאים לו בפייסבוק/אינסטגרם.
 הפוסט: "${post.content}"
-כתוב רק את ה-prompt באנגלית, שורה אחת, ללא הסברים. התמונה צריכה להיות מקצועית, מושכת, ומתאימה לשיווק ברשתות חברתיות.
+כתוב רק את ה-prompt באנגלית, שורה אחת, ללא הסברים. ${isVideo?"הסרטון":"התמונה"} צריכ${isVideo?"":"ה"} להיות מקצועי${isVideo?"":"ת"}, מושכ${isVideo?"":"ת"}, ומתאימ${isVideo?"":"ה"} לשיווק ברשתות חברתיות.
 כללים חשובים:
-- אל תכלול טקסט בתמונה
+- אל תכלול טקסט ${isVideo?"בסרטון":"בתמונה"}
 - אל תכלול אנשים, ידיים, אצבעות, פנים או חלקי גוף — AI יוצר אותם מעוותים
 - התמקד בנוף, חפצים, מוצרים, אייקונים או אילוסטרציות מופשטות
 - הוסף בסוף: "no people, no hands, no fingers, no faces, no text"`, 250
     );
   } catch(e) {
-    imagePrompt = "Professional marketing image, vibrant colors, eye-catching social media post, travel theme, 4k quality";
+    mediaPrompt = "Professional marketing visual, vibrant colors, eye-catching social media content, 4k quality, no people, no text";
   }
   s.prompt = "done";
   onUpdate({ stages:{...s}, current:"prompt", done:false });
 
-  // STAGE 2: Generate image with Flux
+  // STAGE 2: Generate media (image or video)
   s.image = "running";
   onUpdate({ stages:{...s}, current:"image", done:false });
-  let imageUrl;
+  let imageUrl, videoUrl;
   try {
-    imageUrl = await generateImageWithFlux(imagePrompt);
+    if (isVideo) {
+      // Generate image first as thumbnail, then video
+      imageUrl = await generateImageWithFlux(mediaPrompt);
+      onUpdate({ stages:{...s}, current:"image", done:false, imageUrl });
+      const videoResp = await authFetch("/api/runway/generate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: mediaPrompt, image_url: imageUrl })
+      });
+      const videoData = await videoResp.json();
+      if (videoData.error) throw new Error(videoData.error);
+      videoUrl = videoData.url || videoData.output;
+      if (!videoUrl) throw new Error("Runway: no video URL returned");
+    } else {
+      imageUrl = await generateImageWithFlux(mediaPrompt);
+    }
   } catch(e) {
     s.image = "error";
-    onUpdate({ stages:{...s}, current:null, done:false, error: `שגיאה ביצירת תמונה: ${e.message}` });
+    onUpdate({ stages:{...s}, current:null, done:false, imageUrl, error: `שגיאה ביצירת ${isVideo?"סרטון":"תמונה"}: ${e.message}` });
     return { error: e.message };
   }
   s.image = "done";
-  onUpdate({ stages:{...s}, current:"image", done:false, imageUrl });
+  // STOP HERE — wait for user approval before publishing
+  s.publish = "waiting";
+  onUpdate({ stages:{...s}, current:null, done:false, imageUrl, videoUrl, readyToPublish:true });
+  return { imageUrl, videoUrl };
+}
 
-  // STAGE 3: Publish to Facebook/Instagram with image
-  s.publish = "running";
-  onUpdate({ stages:{...s}, current:"publish", done:false, imageUrl });
+// Publish media to Facebook — called only after user approves
+async function publishMediaToFB(post, businesses, pipeline, onUpdate) {
+  const s = { ...(pipeline.stages || {}), publish: "running" };
+  onUpdate({ ...pipeline, stages:{...s}, current:"publish" });
   try {
     const biz = businesses.find(b=>b.name===post.business);
     const fbTokens = biz?.social?.facebook?.tokens;
-    if (fbTokens?.META_PAGE_ID && fbTokens?.META_ACCESS_TOKEN) {
-      const pageId = fbTokens.META_PAGE_ID;
-      const accessToken = fbTokens.META_ACCESS_TOKEN;
-      const hashtags = (post.hashtags||[]).map(h=>h.startsWith("#")?h:`#${h}`).join(" ");
-      const message = post.content + (hashtags ? "\n\n" + hashtags : "");
-
-      const r = await fetch(`https://graph.facebook.com/v25.0/${pageId}/photos`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: imageUrl, message, access_token: accessToken })
-      });
-      const d = await r.json();
-      if (d.error) throw new Error(d.error.message);
+    if (!fbTokens?.META_PAGE_ID || !fbTokens?.META_ACCESS_TOKEN) {
       s.publish = "done";
-      onUpdate({ stages:{...s}, current:null, done:true, imageUrl, postId: d.post_id || d.id });
-      return { imageUrl, postId: d.post_id || d.id };
-    } else {
-      // No FB tokens — just mark image as done, skip publish
-      s.publish = "done";
-      onUpdate({ stages:{...s}, current:null, done:true, imageUrl, postId: null });
-      return { imageUrl, postId: null };
+      onUpdate({ ...pipeline, stages:{...s}, current:null, done:true, readyToPublish:false });
+      return { ok: true, postId: null };
     }
+    const pageId = fbTokens.META_PAGE_ID;
+    const accessToken = fbTokens.META_ACCESS_TOKEN;
+    const hashtags = (post.hashtags||[]).map(h=>h.startsWith("#")?h:`#${h}`).join(" ");
+    const message = post.content + (hashtags ? "\n\n" + hashtags : "");
+    const mediaUrl = pipeline.videoUrl || pipeline.imageUrl;
+    const endpoint = pipeline.videoUrl
+      ? `https://graph.facebook.com/v25.0/${pageId}/videos`
+      : `https://graph.facebook.com/v25.0/${pageId}/photos`;
+
+    const r = await fetch(endpoint, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: mediaUrl, message, access_token: accessToken })
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message);
+    s.publish = "done";
+    onUpdate({ ...pipeline, stages:{...s}, current:null, done:true, postId: d.post_id || d.id, readyToPublish:false });
+    return { ok: true, postId: d.post_id || d.id };
   } catch(e) {
     s.publish = "error";
-    onUpdate({ stages:{...s}, current:null, done:false, imageUrl, error: `שגיאה בפרסום: ${e.message}` });
-    return { imageUrl, error: e.message };
+    onUpdate({ ...pipeline, stages:{...s}, current:null, done:false, error: `שגיאה בפרסום: ${e.message}`, readyToPublish:false });
+    return { error: e.message };
   }
 }
 
@@ -942,11 +963,16 @@ function PostCard({ post, onUpdate, compact, businesses }) {
   const [txt, setTxt] = useState(post.content);
   const pl = PLATFORMS.find(p=>post.platform.includes(p.label.split(" ")[0]))||PLATFORMS[0];
 
-  async function startMedia() {
-    const init = { stages:Object.fromEntries(MEDIA_STAGES.map(s=>[s.id,"pending"])), current:null, done:false };
+  const [mediaChoice, setMediaChoice] = useState(null); // "image" | "video" | null
+  async function startMedia(type) {
+    setMediaChoice(null);
+    const init = { stages:Object.fromEntries(MEDIA_STAGES.map(s=>[s.id,"pending"])), current:null, done:false, mediaType:type };
     onUpdate({...post, pipeline:init});
     setExp(true);
-    await runRealPipeline(post, businesses||[], upd => onUpdate(p=>({...p, pipeline:upd})));
+    await runRealPipeline(post, businesses||[], upd => onUpdate(p=>({...p, pipeline:upd})), type);
+  }
+  async function doPublish() {
+    await publishMediaToFB(post, businesses||[], post.pipeline, upd => onUpdate(p=>({...p, pipeline:upd})));
   }
   async function startUGC() {
     const missing = checkUGCKeys();
@@ -1016,9 +1042,18 @@ function PostCard({ post, onUpdate, compact, businesses }) {
             <Btn sm bg={T.inputBg} color={T.textMuted} onClick={()=>setEditing(false)}>ביטול</Btn></>
         : <Btn sm bg={T.inputBg} color={T.textSec} onClick={()=>setEditing(true)}>ערוך</Btn>
       }
-      {!post.pipeline || (!post.pipeline.done && !post.pipeline.current && (!post.pipeline.stages || Object.keys(post.pipeline.stages).length===0))
-        ? <Btn sm bg="#F59E0B15" color="#F59E0B" onClick={startMedia}>מדיה AI</Btn>
-        : <Btn sm bg={T.inputBg} color={T.textSec} onClick={()=>setExp(p=>!p)}>{exp?"▲":"▼"} מדיה</Btn>
+      {!post.pipeline || (!post.pipeline.done && !post.pipeline.current && !post.pipeline.readyToPublish && (!post.pipeline.stages || Object.keys(post.pipeline.stages).length===0))
+        ? <>
+          <Btn sm bg="#F59E0B15" color="#F59E0B" onClick={()=>setMediaChoice(v=>v?"":true)}>מדיה AI ▼</Btn>
+          {mediaChoice && <span style={{display:"inline-flex",gap:4}}>
+            <Btn sm bg="#8B5CF615" color="#8B5CF6" onClick={()=>startMedia("image")}>🖼️ תמונה</Btn>
+            <Btn sm bg="#EC489915" color="#EC4899" onClick={()=>startMedia("video")}>🎬 סרטון</Btn>
+          </span>}
+        </>
+        : <>
+          <Btn sm bg={T.inputBg} color={T.textSec} onClick={()=>setExp(p=>!p)}>{exp?"▲":"▼"} מדיה</Btn>
+          {post.pipeline?.readyToPublish && <Btn sm bg="#1877F215" color="#1877F2" onClick={doPublish}>📡 פרסם עכשיו</Btn>}
+        </>
       }
       {!post.ugc
         ? <Btn sm bg="#EC489915" color="#EC4899" onClick={startUGC}>UGC</Btn>
@@ -1538,9 +1573,16 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
         <Btn grad="linear-gradient(135deg,#EC4899,#F59E0B)"
           onClick={()=>existingBizPosts.filter(p=>(!p.pipeline||!p.pipeline.done&&!p.pipeline.current)&&!p.ugc).forEach(post=>{
             updatePost(post.id,{...post,pipeline:{stages:Object.fromEntries(MEDIA_STAGES.map(s=>[s.id,"pending"])),current:null,done:false}});
-            runRealPipeline(post, BUSINESSES, upd=>setPosts(prev=>prev.map(p=>p.id===post.id?{...p,pipeline:upd}:p)));
+            runRealPipeline(post, BUSINESSES, upd=>setPosts(prev=>prev.map(p=>p.id===post.id?{...p,pipeline:upd}:p)), "image");
           })}>
-          הפעל מדיה AI
+          🖼️ הפעל תמונות AI
+        </Btn>
+        <Btn grad="linear-gradient(135deg,#EC4899,#8B5CF6)"
+          onClick={()=>existingBizPosts.filter(p=>(!p.pipeline||!p.pipeline.done&&!p.pipeline.current)&&!p.ugc).forEach(post=>{
+            updatePost(post.id,{...post,pipeline:{stages:Object.fromEntries(MEDIA_STAGES.map(s=>[s.id,"pending"])),current:null,done:false}});
+            runRealPipeline(post, BUSINESSES, upd=>setPosts(prev=>prev.map(p=>p.id===post.id?{...p,pipeline:upd}:p)), "video");
+          })}>
+          🎬 הפעל סרטונים AI
         </Btn>
         {msg&&<span style={{color:msg.includes("שגיאה")?"#EF4444":"#10B981",fontSize:12,fontWeight:600}}>{msg}</span>}
       </div>
