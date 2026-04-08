@@ -1646,9 +1646,10 @@ function MediaAI() {
 }
 
 // UGC STUDIO
-function UGCStudio() {
+function UGCStudio({ businesses: bizList }) {
+  const BIZS = bizList && bizList.length > 0 ? bizList : DEFAULT_BUSINESSES;
   const [step, setStep] = useState(0);
-  const [biz, setBiz] = useState(DEFAULT_BUSINESSES[0]);
+  const [biz, setBiz] = useState(BIZS[0]);
   const [avatar, setAvatar] = useState(null);
   const [script, setScript] = useState("");
   const [pipeline, setPipeline] = useState(null);
@@ -1709,11 +1710,11 @@ function UGCStudio() {
 
     {step===0&&<div style={{animation:"fadeUp 0.3s ease"}}>
       <div className="two-col-grid" style={{display:"grid",gap:14,marginBottom:20}}>
-        {DEFAULT_BUSINESSES.map(b=><Card key={b.id} accent={biz.id===b.id?b.color:undefined}
+        {BIZS.map(b=><Card key={b.id} accent={biz.id===b.id?b.color:undefined}
           style={{cursor:"pointer",transition:"all 0.2s"}} onClick={()=>setBiz(b)}>
           <div style={{fontSize:32,marginBottom:8}}>{b.icon}</div>
           <div style={{fontWeight:700,color:T.text}}>{b.name}</div>
-          <div style={{color:T.textMuted,fontSize:12,marginTop:4}}>{b.type}</div>
+          <div style={{color:T.textMuted,fontSize:12,marginTop:4}}>{b.description||""}</div>
         </Card>)}
       </div>
       <Btn grad="linear-gradient(135deg,#EC4899,#8B5CF6)" onClick={()=>setStep(1)}>המשך ←</Btn>
@@ -3470,7 +3471,7 @@ export default function App({ session }) {
           {page==="sources"&&<Sources sources={sources} setSources={setSources}/>}
           {page==="content"&&<Content posts={posts} setPosts={setPosts} sources={sources} businesses={businesses} setBusinesses={setBusinesses} analyticsData={analyticsData}/>}
           {page==="media"&&<MediaAI/>}
-          {page==="ugc"&&<UGCStudio/>}
+          {page==="ugc"&&<UGCStudio businesses={businesses}/>}
           {page==="publish"&&<Publish posts={posts} setPosts={setPosts} businesses={businesses}/>}
           {page==="schedule"&&<Schedule posts={posts} setPosts={setPosts} businesses={businesses}/>}
           {page==="analytics"&&<Analytics posts={posts} businesses={businesses} analyticsData={analyticsData} setAnalyticsData={setAnalyticsData}/>}
