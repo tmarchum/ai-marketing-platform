@@ -608,6 +608,8 @@ async function generateImageWithFlux(prompt) {
   });
   const prediction = await resp.json();
   if (prediction.error) throw new Error(prediction.error);
+  if (prediction.detail) throw new Error(prediction.title || prediction.detail);
+  if (!resp.ok) throw new Error(`Replicate: ${resp.status} ${resp.statusText}`);
 
   // Poll for result via server proxy
   const predictionId = prediction.id;
