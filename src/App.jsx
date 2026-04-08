@@ -1834,12 +1834,13 @@ function Businesses({ businesses, setBusinesses, posts }) {
   }
   async function removeBiz(id) {
     if (!confirm("למחוק את העסק? כל הפוסטים שלו יימחקו גם")) return;
+    // Delete from server FIRST, then update state
+    try { await authFetch(`/api/businesses/${id}`, { method: "DELETE" }); } catch {}
     setBusinesses(p=>p.filter(b=>b.id!==id));
     setPosts(p=>p.filter(post=>{
       const biz = businesses.find(b=>b.id===id);
       return !biz || post.business !== biz.name;
     }));
-    try { await authFetch(`/api/businesses/${id}`, { method: "DELETE" }); } catch {}
   }
 
   async function scanBiz(biz) {
@@ -3236,23 +3237,34 @@ export default function App({ session }) {
   useEffect(()=>{ if (dbReady) localStorage.setItem("posts",JSON.stringify(posts)); },[posts, dbReady]);
   useEffect(()=>{ if (dbReady) localStorage.setItem("businesses",JSON.stringify(businesses)); },[businesses, dbReady]);
 
-  // ── Sync businesses to Supabase when they change ──
+  // ── Sync individual business updates to Supabase (not bulk sync to avoid re-creating deleted items) ──
   const bizSyncRef = useRef(false);
+  const prevBizRef = useRef(businesses);
   useEffect(()=>{
-    if (!dbReady) return; // skip initial sync before DB load
-    if (!bizSyncRef.current) { bizSyncRef.current = true; return; } // skip first render after dbReady
+    if (!dbReady) return;
+    if (!bizSyncRef.current) { bizSyncRef.current = true; prevBizRef.current = businesses; return; }
+    const prev = prevBizRef.current;
+    prevBizRef.current = businesses;
+    // Only sync businesses that changed (not deleted ones)
+    const changed = businesses.filter(b => {
+      const old = prev.find(p => p.id === b.id);
+      return !old || JSON.stringify(old) !== JSON.stringify(b);
+    });
+    if (changed.length === 0) return;
     const timer = setTimeout(()=>{
-      authFetch("/api/businesses/sync", {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ businesses: businesses.map(b=>({
-          name: b.name, url: b.url, icon: b.icon, color: b.color,
-          description: b.description, social: b.social,
-          scanResult: b.scanResult, fullScanData: b.fullScanData,
-          competitorAnalysis: b.competitorAnalysis,
-        }))})
-      }).catch(()=>{});
-    }, 2000); // debounce 2s
+      changed.forEach(b => {
+        authFetch(`/api/businesses/${b.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: b.name, url: b.url, icon: b.icon, color: b.color,
+            description: b.description, social: b.social,
+            scan_result: b.scanResult, full_scan_data: b.fullScanData,
+            competitor_analysis: b.competitorAnalysis,
+          })
+        }).catch(()=>{});
+      });
+    }, 2000);
     return ()=>clearTimeout(timer);
   },[businesses, dbReady]);
 

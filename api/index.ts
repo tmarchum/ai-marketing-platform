@@ -93,7 +93,9 @@ app.delete('/api/businesses/:id', async (req: any, res) => {
   let bizQuery = sb.from('businesses').select('name').eq('id', req.params.id);
   if (req.userId) bizQuery = bizQuery.eq('user_id', req.userId);
   const { data: biz } = await bizQuery.maybeSingle();
-  const { error } = await sb.from('businesses').delete().eq('id', req.params.id);
+  let delQuery = sb.from('businesses').delete().eq('id', req.params.id);
+  if (req.userId) delQuery = delQuery.eq('user_id', req.userId);
+  const { error } = await delQuery;
   if (error) return res.status(500).json({ error: error.message });
   // Also delete related posts by business name
   if (biz?.name) await sb.from('posts').delete().eq('business', biz.name);
