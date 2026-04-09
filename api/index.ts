@@ -352,9 +352,10 @@ app.post('/api/did/talks', async (req: any, res) => {
   const apiKey = await getUserKey(sb, req.userId, 'DID_API_KEY');
   if (!apiKey) return res.status(503).json({ error: 'DID_API_KEY not set' });
   try {
+    const authHeader = `Basic ${Buffer.from(apiKey + ':').toString('base64')}`;
     const r = await fetch('https://api.d-id.com/talks', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Basic ${apiKey}` },
+      headers: { 'Content-Type': 'application/json', Authorization: authHeader },
       body: JSON.stringify(req.body),
     });
     const data = await r.json();
@@ -369,8 +370,9 @@ app.get('/api/did/talks/:id', async (req: any, res) => {
   const apiKey = await getUserKey(sb, req.userId, 'DID_API_KEY');
   if (!apiKey) return res.status(503).json({ error: 'DID_API_KEY not set' });
   try {
+    const authHeader = `Basic ${Buffer.from(apiKey + ':').toString('base64')}`;
     const r = await fetch(`https://api.d-id.com/talks/${req.params.id}`, {
-      headers: { Authorization: `Basic ${apiKey}` },
+      headers: { Authorization: authHeader },
     });
     const data = await r.json();
     res.json(data);
