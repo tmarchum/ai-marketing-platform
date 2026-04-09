@@ -14,31 +14,31 @@ const DEFAULT_BUSINESSES = [
   { id: "cinema",  name: "הקולנוע הנודד", icon: "🎬", color: "#F59E0B", url:"", description:"", social:{}, scanResult:null },
   { id: "flights", name: "צייד טיסות",    icon: "✈️", color: "#3B82F6", url:"", description:"", social:{}, scanResult:null },
 ];
-// Background images by topic for D-ID clips
-const BG_LIBRARY = {
-  travel:  "https://images.unsplash.com/photo-1436491865332-7a61a109db05?w=1280&q=80",
-  food:    "https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=1280&q=80",
-  fitness: "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=1280&q=80",
-  tech:    "https://images.unsplash.com/photo-1518770660439-4636190af475?w=1280&q=80",
-  edu:     "https://images.unsplash.com/photo-1503676260728-1c00da094a0b?w=1280&q=80",
-  beauty:  "https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?w=1280&q=80",
-  home:    "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=1280&q=80",
-  film:    "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=1280&q=80",
-  gaming:  "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1280&q=80",
-  default: "https://images.unsplash.com/photo-1497366216548-37526070297c?w=1280&q=80",
+// Background colors by topic for D-ID greenscreen clips
+const BG_COLORS = {
+  travel:  "#0EA5E9", // sky blue
+  food:    "#EA580C", // warm orange
+  fitness: "#16A34A", // green
+  tech:    "#2563EB", // blue
+  edu:     "#7C3AED", // purple
+  beauty:  "#EC4899", // pink
+  home:    "#D97706", // amber
+  film:    "#DC2626", // red
+  gaming:  "#7C3AED", // purple
+  default: "#1E293B", // dark slate
 };
 function pickBackground(biz) {
   const txt = `${biz.name} ${biz.description || ""}`.toLowerCase();
-  if (txt.match(/טיס|flight|travel|חופש|נסיע|מלון|hotel/)) return BG_LIBRARY.travel;
-  if (txt.match(/אוכל|food|מסעד|שף|בישול|cook/)) return BG_LIBRARY.food;
-  if (txt.match(/כושר|ספורט|fitness|gym|אימון/)) return BG_LIBRARY.fitness;
-  if (txt.match(/טכנו|tech|הייטק|סטארט|תוכנ/)) return BG_LIBRARY.tech;
-  if (txt.match(/לימוד|חינוך|edu|קורס|הרצא/)) return BG_LIBRARY.edu;
-  if (txt.match(/יופי|beauty|קוסמ|איפור|טיפוח/)) return BG_LIBRARY.beauty;
-  if (txt.match(/בית|home|עיצוב|דירה|נדל/)) return BG_LIBRARY.home;
-  if (txt.match(/קולנוע|סרט|film|cinema|אירוע/)) return BG_LIBRARY.film;
-  if (txt.match(/גיימ|game|חידון|משחק/)) return BG_LIBRARY.gaming;
-  return BG_LIBRARY.default;
+  if (txt.match(/טיס|flight|travel|חופש|נסיע|מלון|hotel/)) return BG_COLORS.travel;
+  if (txt.match(/אוכל|food|מסעד|שף|בישול|cook/)) return BG_COLORS.food;
+  if (txt.match(/כושר|ספורט|fitness|gym|אימון/)) return BG_COLORS.fitness;
+  if (txt.match(/טכנו|tech|הייטק|סטארט|תוכנ/)) return BG_COLORS.tech;
+  if (txt.match(/לימוד|חינוך|edu|קורס|הרצא/)) return BG_COLORS.edu;
+  if (txt.match(/יופי|beauty|קוסמ|איפור|טיפוח/)) return BG_COLORS.beauty;
+  if (txt.match(/בית|home|עיצוב|דירה|נדל/)) return BG_COLORS.home;
+  if (txt.match(/קולנוע|סרט|film|cinema|אירוע/)) return BG_COLORS.film;
+  if (txt.match(/גיימ|game|חידון|משחק/)) return BG_COLORS.gaming;
+  return BG_COLORS.default;
 }
 
 const AVATAR_LIBRARY = [
@@ -777,7 +777,7 @@ async function elevenLabsTTS(text, voiceId) {
 // ═══════════════════════════════════════════════════════════════════
 // D-ID — Avatar Video Generation
 // ═══════════════════════════════════════════════════════════════════
-async function didCreateTalk(imageUrl, audioUrl, presenterId, backgroundUrl) {
+async function didCreateTalk(imageUrl, audioUrl, presenterId, bgColor) {
   // Use clips API with presenter for movement + backgrounds, fallback to talks
   const useClips = !!presenterId;
   const endpoint = useClips ? "/api/did/clips" : "/api/did/talks";
@@ -786,7 +786,7 @@ async function didCreateTalk(imageUrl, audioUrl, presenterId, backgroundUrl) {
         presenter_id: presenterId,
         script: { type: "audio", audio_url: audioUrl },
         config: { result_format: "mp4" },
-        ...(backgroundUrl ? { background: { source_url: backgroundUrl } } : {}),
+        ...(bgColor ? { background: { color: bgColor } } : {}),
       }
     : { source_url: imageUrl, script: { type: "audio", audio_url: audioUrl }, config: { stitch: true } };
 
