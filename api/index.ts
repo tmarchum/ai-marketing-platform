@@ -327,7 +327,7 @@ app.post('/api/elevenlabs/tts', async (req: any, res) => {
       headers: { 'Content-Type': 'application/json', 'xi-api-key': apiKey },
       body: JSON.stringify({
         text: text || '',
-        model_id: 'eleven_multilingual_v2',
+        model_id: 'eleven_turbo_v2_5',
         language_code: languageCode || 'he',
         voice_settings: { stability: 0.5, similarity_boost: 0.75 },
       }),
