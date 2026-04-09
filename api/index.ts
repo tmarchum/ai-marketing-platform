@@ -238,6 +238,57 @@ app.post('/api/content/claude', async (req: any, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// GEMINI PROXY — text generation + image generation
+// ══════════════════════════════════════════════════════════════
+
+app.post('/api/gemini/generate', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'GEMINI_API_KEY');
+  if (!apiKey) return res.status(503).json({ error: 'GEMINI_API_KEY not set' });
+  const { prompt, maxTokens = 800 } = req.body;
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: maxTokens },
+      }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message);
+    const text = d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    res.json({ text });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/gemini/image', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'GEMINI_API_KEY');
+  if (!apiKey) return res.status(503).json({ error: 'GEMINI_API_KEY not set' });
+  const { prompt, aspectRatio = '1:1' } = req.body;
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instances: [{ prompt }],
+        parameters: { sampleCount: 1, aspectRatio, personGeneration: 'dont_allow' },
+      }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message);
+    const imageBytes = d.predictions?.[0]?.bytesBase64Encoded;
+    if (!imageBytes) throw new Error('No image generated');
+    res.json({ imageBase64: imageBytes, contentType: 'image/png' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 // REPLICATE PROXY — image generation with Flux
 // ══════════════════════════════════════════════════════════════
 
@@ -540,6 +591,7 @@ app.post('/api/admin/test-key', async (req: any, res) => {
     ELEVENLABS_API_KEY: async (v) => { const r = await fetch('https://api.elevenlabs.io/v1/user', { headers: { 'xi-api-key': v } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
     DID_API_KEY: async (v) => { const r = await fetch('https://api.d-id.com/credits', { headers: { Authorization: `Basic ${v}` } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
     META_ACCESS_TOKEN: async (v) => { const r = await fetch(`https://graph.facebook.com/v25.0/me?access_token=${v}`); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
+    GEMINI_API_KEY: async (v) => { const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${v}`); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
   };
   const tester = testers[keyId];
   if (!tester) return res.json({ ok: true });

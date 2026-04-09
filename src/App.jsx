@@ -652,6 +652,93 @@ async function generateImageWithFlux(prompt) {
   throw new Error("Timeout: image generation took too long");
 }
 
+const GEMINI_STAGES = [
+  { id:"text",   label:"טקסט",  icon:"✍️", color:"#4285F4" },
+  { id:"image",  label:"תמונה", icon:"🖼️", color:"#EA4335" },
+  { id:"publish",label:"Meta",  icon:"📡", color:"#1877F2" },
+];
+
+async function runGeminiPipeline(biz, platform, onUpdate) {
+  const s = Object.fromEntries(GEMINI_STAGES.map(st=>[st.id,"pending"]));
+
+  // STAGE 1: Generate post text with Gemini
+  s.text = "running";
+  onUpdate({ stages:{...s}, current:"text", done:false });
+  let postText, hashtags;
+  try {
+    const r = await authFetch("/api/gemini/generate", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        prompt: `אתה קופירייטר מקצועי. כתוב פוסט שיווקי קצר ומושך בעברית עבור העסק "${biz.name}"${biz.description ? ` - ${biz.description}` : ""}.
+הפוסט יהיה לפלטפורמה: ${platform}.
+כללים:
+- 2-4 משפטים, עם אימוג'ים
+- שורה אחרונה: 3-5 האשטגים רלוונטיים (עם #)
+- סגנון: ידידותי, מקצועי, קריאה לפעולה
+- אל תכתוב שום דבר מלבד הפוסט עצמו`, maxTokens: 300
+      })
+    });
+    if (!r.ok) throw new Error(`Gemini HTTP ${r.status}`);
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    const fullText = d.text || "";
+    // Extract hashtags from text
+    const hashtagMatch = fullText.match(/#[\u0590-\u05FFa-zA-Z_]+/g) || [];
+    hashtags = hashtagMatch.map(h=>h.replace("#",""));
+    postText = fullText;
+  } catch(e) {
+    s.text = "error";
+    onUpdate({ stages:{...s}, current:null, done:false, error:`שגיאה ב-Gemini: ${e.message}` });
+    return { error: e.message };
+  }
+  s.text = "done";
+  onUpdate({ stages:{...s}, current:"text", done:false, postText, hashtags });
+
+  // STAGE 2: Generate image with Gemini Imagen
+  s.image = "running";
+  onUpdate({ stages:{...s}, current:"image", done:false, postText, hashtags });
+  let imageBase64;
+  try {
+    const promptR = await authFetch("/api/gemini/generate", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        prompt: `Based on this marketing post for "${biz.name}", write a single-line image prompt in English for AI image generation.
+Post: "${postText}"
+Rules:
+- Describe a professional marketing visual that fits the post
+- NO people, NO hands, NO faces, NO text in image
+- Focus on landscapes, objects, products, icons, abstract illustrations
+- End with: "no people, no hands, no text, professional marketing photo"
+- Write ONLY the prompt, nothing else`, maxTokens: 150
+      })
+    });
+    const promptD = await promptR.json();
+    const imagePrompt = promptD.text || "Professional marketing visual, vibrant, no people, no text";
+
+    const imgR = await authFetch("/api/gemini/image", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ prompt: imagePrompt, aspectRatio: "1:1" })
+    });
+    if (!imgR.ok) {
+      const errText = await imgR.text().catch(()=>"");
+      throw new Error(`Imagen HTTP ${imgR.status}: ${errText.substring(0,100)}`);
+    }
+    const imgD = await imgR.json();
+    if (imgD.error) throw new Error(imgD.error);
+    imageBase64 = `data:${imgD.contentType};base64,${imgD.imageBase64}`;
+  } catch(e) {
+    s.image = "error";
+    onUpdate({ stages:{...s}, current:null, done:false, postText, hashtags, error:`שגיאה ב-Imagen: ${e.message}` });
+    return { postText, hashtags, error: e.message };
+  }
+  s.image = "done";
+
+  // STOP — wait for user approval
+  s.publish = "waiting";
+  onUpdate({ stages:{...s}, current:null, done:true, postText, hashtags, imageUrl: imageBase64, readyToPublish:true });
+  return { postText, hashtags, imageUrl: imageBase64 };
+}
+
 async function runRealPipeline(post, businesses, onUpdate, mediaType="image") {
   const stages = MEDIA_STAGES;
   const s = Object.fromEntries(stages.map(st=>[st.id,"pending"]));
@@ -1010,7 +1097,7 @@ function PostCard({ post, onUpdate, onDelete, compact, businesses }) {
       <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
         <Tag label={post.platform} color={pl.color}/>
         <Tag label={post.business} color={T.textMuted}/>
-        {post.pipeline&&<PipelineBar stages={MEDIA_STAGES} pipeline={post.pipeline} compact/>}
+        {post.pipeline&&<PipelineBar stages={post.pipeline.gemini?GEMINI_STAGES:MEDIA_STAGES} pipeline={post.pipeline} compact/>}
         {post.ugc&&<PipelineBar stages={UGC_STAGES} pipeline={post.ugc} compact/>}
       </div>
       <span style={{color:T.textDim,fontSize:11}}>{post.date}</span>
@@ -1078,7 +1165,7 @@ function PostCard({ post, onUpdate, onDelete, compact, businesses }) {
       {onDelete && <Btn sm bg="#EF444410" color="#EF4444" onClick={()=>{if(confirm("למחוק את הפוסט?"))onDelete(post.id)}}>🗑️</Btn>}
     </div>
 
-    {exp && post.pipeline && <PipelineBar stages={MEDIA_STAGES} pipeline={post.pipeline}/>}
+    {exp && post.pipeline && <PipelineBar stages={post.pipeline.gemini ? GEMINI_STAGES : MEDIA_STAGES} pipeline={post.pipeline}/>}
     {exp && post.ugc && <PipelineBar stages={UGC_STAGES} pipeline={post.ugc}/>}
   </Card>;
 }
@@ -1600,6 +1687,30 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
             runRealPipeline(post, BUSINESSES, upd=>setPosts(prev=>prev.map(p=>p.id===post.id?{...p,pipeline:upd}:p)), "video");
           })}>
           🎬 הפעל סרטונים AI
+        </Btn>
+        <Btn grad="linear-gradient(135deg,#4285F4,#EA4335)"
+          disabled={!selBiz}
+          onClick={async()=>{
+            if (!selBiz) return;
+            const platform = selPlatforms[0]||"פייסבוק";
+            const newId = Date.now();
+            const newPost = {
+              id:newId, business:selBiz.name, platform, type:"פוסט קצר",
+              content:"⏳ Gemini מייצר פוסט + תמונה...", hashtags:[], date: new Date().toLocaleString("he-IL",{weekday:"short",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}),
+              approved:false, media:null, ugc:null,
+              pipeline:{stages:Object.fromEntries(GEMINI_STAGES.map(s=>[s.id,"pending"])),current:null,done:false,gemini:true}
+            };
+            setPosts(prev=>[newPost,...prev]);
+            const result = await runGeminiPipeline(selBiz, platform, upd=>{
+              setPosts(prev=>prev.map(p=>p.id===newId?{...p,
+                content:upd.postText||p.content,
+                hashtags:upd.hashtags||p.hashtags,
+                image_url:upd.imageUrl||p.image_url,
+                pipeline:{...upd,gemini:true}
+              }:p));
+            });
+          }}>
+          ✨ Gemini פוסט+תמונה
         </Btn>
         {msg&&<span style={{color:msg.includes("שגיאה")?"#EF4444":"#10B981",fontSize:12,fontWeight:600}}>{msg}</span>}
       </div>
