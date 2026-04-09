@@ -769,6 +769,10 @@ async function elevenLabsTTS(text, voiceId) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text: cleanText, voiceId: voiceId || "EXAVITQu4vr4xnSDxMaL", languageCode: "he" })
   });
+  if (!r.ok) {
+    const errText = await r.text().catch(() => "");
+    throw new Error(`ElevenLabs HTTP ${r.status}: ${errText.substring(0, 100)}`);
+  }
   const data = await r.json();
   if (data.error) throw new Error(data.error);
   return `data:${data.contentType};base64,${data.audioBase64}`;
@@ -795,6 +799,10 @@ async function didCreateTalk(imageUrl, audioUrl, presenterId, bgColor) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
+  if (!r.ok) {
+    const errText = await r.text().catch(() => "");
+    throw new Error(`D-ID HTTP ${r.status}: ${errText.substring(0, 100)}`);
+  }
   const data = await r.json();
   if (data.error || data.kind || data.status === "error") {
     throw new Error(data.error || data.description || data.message || "D-ID error");
