@@ -684,17 +684,10 @@ async function runRealPipeline(post, businesses, onUpdate, mediaType="image") {
   let imageUrl, videoUrl;
   try {
     if (isVideo) {
-      // Generate image first as thumbnail, then video
+      // Generate image first as thumbnail, then animate with Runway
       imageUrl = await generateImageWithFlux(mediaPrompt);
       onUpdate({ stages:{...s}, current:"image", done:false, imageUrl });
-      const videoResp = await authFetch("/api/runway/generate", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: mediaPrompt, image_url: imageUrl })
-      });
-      const videoData = await videoResp.json();
-      if (videoData.error) throw new Error(videoData.error);
-      videoUrl = videoData.url || videoData.output;
-      if (!videoUrl) throw new Error("Runway: no video URL returned");
+      videoUrl = await runwayImageToVideo(imageUrl);
     } else {
       imageUrl = await generateImageWithFlux(mediaPrompt);
     }
