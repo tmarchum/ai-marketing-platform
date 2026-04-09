@@ -918,42 +918,10 @@ async function runRealUGCPipeline(script, avatar, biz, onUpdate) {
   }
   onUpdate({ stages: {...s}, current: "bg", done: false, videoUrl });
 
-  // STAGE 5: Publish to Meta (optional)
-  s.publish = "running";
-  onUpdate({ stages: {...s}, current: "publish", done: false, videoUrl });
-  try {
-    const fbTokens = biz?.social?.facebook?.tokens;
-    if (fbTokens?.META_PAGE_ID && fbTokens?.META_ACCESS_TOKEN && videoUrl) {
-      // Post the video to Facebook
-      const pageId = fbTokens.META_PAGE_ID;
-      const accessToken = fbTokens.META_ACCESS_TOKEN;
-      const message = `${script.slice(0, 200)}...\n\n#UGC #${biz.name.replace(/\s/g, "")}`;
-
-      const r = await fetch(`https://graph.facebook.com/v25.0/${pageId}/videos`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          file_url: videoUrl,
-          description: message,
-          access_token: accessToken
-        })
-      });
-      const d = await r.json();
-      if (d.id) {
-        s.publish = "done";
-        onUpdate({ stages: {...s}, current: null, done: true, videoUrl, postId: d.id });
-        return { videoUrl, postId: d.id };
-      }
-    }
-    // No tokens or no video — still mark as done
-    s.publish = "done";
-    onUpdate({ stages: {...s}, current: null, done: true, videoUrl });
-    return { videoUrl };
-  } catch (e) {
-    s.publish = "error";
-    onUpdate({ stages: {...s}, current: null, done: false, videoUrl, error: `שגיאה בפרסום: ${e.message}` });
-    return { videoUrl, error: e.message };
-  }
+  // STAGE 5: STOP — wait for user approval before publishing
+  s.publish = "waiting";
+  onUpdate({ stages: {...s}, current: null, done: true, videoUrl, readyToPublish: true });
+  return { videoUrl };
 }
 
 // Check which UGC API keys are missing and return error
