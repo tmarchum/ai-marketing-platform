@@ -122,8 +122,8 @@ function Tag({ label, color="#6c757d" }) {
   return <span style={{ background:color+"12", color, border:`1px solid ${color}22`,
     borderRadius:8, padding:"3px 10px", fontSize:11, fontWeight:600 }}>{label}</span>;
 }
-function Card({ children, accent, style={} }) {
-  return <div style={{ background:T.card,
+function Card({ children, accent, style={}, onClick }) {
+  return <div onClick={onClick} style={{ background:T.card,
     border:`1px solid ${accent||T.border}`,
     borderRadius:14, padding:20, boxShadow:T.shadow, ...style }}>{children}</div>;
 }
