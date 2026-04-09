@@ -352,7 +352,7 @@ app.post('/api/did/talks', async (req: any, res) => {
   const apiKey = await getUserKey(sb, req.userId, 'DID_API_KEY');
   if (!apiKey) return res.status(503).json({ error: 'DID_API_KEY not set' });
   try {
-    const authHeader = `Basic ${Buffer.from(apiKey + ':').toString('base64')}`;
+    const authHeader = `Basic ${apiKey}`;
     const r = await fetch('https://api.d-id.com/talks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: authHeader },
@@ -370,7 +370,7 @@ app.get('/api/did/talks/:id', async (req: any, res) => {
   const apiKey = await getUserKey(sb, req.userId, 'DID_API_KEY');
   if (!apiKey) return res.status(503).json({ error: 'DID_API_KEY not set' });
   try {
-    const authHeader = `Basic ${Buffer.from(apiKey + ':').toString('base64')}`;
+    const authHeader = `Basic ${apiKey}`;
     const r = await fetch(`https://api.d-id.com/talks/${req.params.id}`, {
       headers: { Authorization: authHeader },
     });
@@ -445,7 +445,7 @@ app.post('/api/admin/test-key', async (req: any, res) => {
     ANTHROPIC_API_KEY: async (v) => { const r = await fetch('https://api.anthropic.com/v1/models', { headers: { 'x-api-key': v, 'anthropic-version': '2023-06-01' } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
     REPLICATE_API_TOKEN: async (v) => { const r = await fetch('https://api.replicate.com/v1/account', { headers: { Authorization: `Bearer ${v}` } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
     ELEVENLABS_API_KEY: async (v) => { const r = await fetch('https://api.elevenlabs.io/v1/user', { headers: { 'xi-api-key': v } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
-    DID_API_KEY: async (v) => { const r = await fetch('https://api.d-id.com/credits', { headers: { Authorization: `Basic ${Buffer.from(v + ':').toString('base64')}` } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
+    DID_API_KEY: async (v) => { const r = await fetch('https://api.d-id.com/credits', { headers: { Authorization: `Basic ${v}` } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
     META_ACCESS_TOKEN: async (v) => { const r = await fetch(`https://graph.facebook.com/v25.0/me?access_token=${v}`); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
   };
   const tester = testers[keyId];
