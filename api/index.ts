@@ -247,7 +247,7 @@ app.post('/api/gemini/generate', async (req: any, res) => {
   if (!apiKey) return res.status(503).json({ error: 'GEMINI_API_KEY not set' });
   const { prompt, maxTokens = 800 } = req.body;
   try {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
