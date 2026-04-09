@@ -15,12 +15,12 @@ const DEFAULT_BUSINESSES = [
   { id: "flights", name: "צייד טיסות",    icon: "✈️", color: "#3B82F6", url:"", description:"", social:{}, scanResult:null },
 ];
 const AVATAR_LIBRARY = [
-  { id:"a1", name:"מיכל", age:"28", desc:"אמא צעירה, חמה", color:"#EC4899", img:"https://clips-presenters.d-id.com/v2/Amber/0zSz8kflCN/OUM7xZOuD5/image.png" },
-  { id:"a2", name:"שירה", age:"34", desc:"לייפסטייל, ספורטיבית", color:"#8B5CF6", img:"https://clips-presenters.d-id.com/v2/Kayla_NoHands_BlackShirt_CoffeeShop/u1un3hTUDJ/Oijd6UyS_5/image.png" },
-  { id:"a3", name:"נועה", age:"26", desc:"טרנדי, עירונית", color:"#06B6D4", img:"https://clips-presenters.d-id.com/v2/lily/addf3c9auh/wvbwmxlwcq/image.png" },
-  { id:"a4", name:"דנה", age:"41", desc:"מקצועית, אמינה", color:"#10B981", img:"https://clips-presenters.d-id.com/v2/Fiona_NoHands_BlackJacket_ClassRoom/1BOeggEufb/dbRUIwY6KY/image.png" },
-  { id:"a5", name:"ליאור", age:"31", desc:"אבא, מעשי", color:"#F59E0B", img:"https://clips-presenters.d-id.com/v2/Dylan_NoHands_GreyShirt_Home/n3_canoTl3/ihTKL1EUBT/image.png" },
-  { id:"a6", name:"עמית", age:"38", desc:"מנהל, אמין", color:"#EF4444", img:"https://clips-presenters.d-id.com/v2/Matt_NoHands_GreyTshirt_Outdoor/rwE9avfhZE/Kx_xEIPaws/image.png" },
+  { id:"a1", name:"מיכל", age:"28", desc:"אמא צעירה, חמה", color:"#EC4899", img:"https://clips-presenters.d-id.com/v2/Amber/0zSz8kflCN/OUM7xZOuD5/image.png", presenterId:"v2_public_Amber@0zSz8kflCN" },
+  { id:"a2", name:"שירה", age:"34", desc:"לייפסטייל, ספורטיבית", color:"#8B5CF6", img:"https://clips-presenters.d-id.com/v2/Kayla_NoHands_BlackShirt_CoffeeShop/u1un3hTUDJ/Oijd6UyS_5/image.png", presenterId:"v2_public_Kayla_NoHands_BlackShirt_CoffeeShop@u1un3hTUDJ" },
+  { id:"a3", name:"נועה", age:"26", desc:"טרנדי, עירונית", color:"#06B6D4", img:"https://clips-presenters.d-id.com/v2/lily/addf3c9auh/wvbwmxlwcq/image.png", presenterId:"v2_public_lily@addf3c9auh" },
+  { id:"a4", name:"דנה", age:"41", desc:"מקצועית, אמינה", color:"#10B981", img:"https://clips-presenters.d-id.com/v2/Fiona_NoHands_BlackJacket_ClassRoom/1BOeggEufb/dbRUIwY6KY/image.png", presenterId:"v2_public_Fiona_NoHands_BlackJacket_ClassRoom@1BOeggEufb" },
+  { id:"a5", name:"ליאור", age:"31", desc:"אבא, מעשי", color:"#F59E0B", img:"https://clips-presenters.d-id.com/v2/Dylan_NoHands_GreyShirt_Home/n3_canoTl3/ihTKL1EUBT/image.png", presenterId:"v2_public_Dylan_NoHands_GreyShirt_Home@n3_canoTl3" },
+  { id:"a6", name:"עמית", age:"38", desc:"מנהל, אמין", color:"#EF4444", img:"https://clips-presenters.d-id.com/v2/Matt_NoHands_GreyTshirt_Outdoor/rwE9avfhZE/Kx_xEIPaws/image.png", presenterId:"v2_public_Matt_NoHands_GreyTshirt_Outdoor@rwE9avfhZE" },
 ];
 const SOURCES_INIT = [
   { id:1, name:"הקולנוע הנודד", url:"wanderingcinema.co.il", type:"url", role:"עסק" },
@@ -723,12 +723,24 @@ async function publishMediaToFB(post, businesses, pipeline, onUpdate) {
 // ═══════════════════════════════════════════════════════════════════
 // ELEVENLABS TTS — Real Hebrew Text-to-Speech
 // ═══════════════════════════════════════════════════════════════════
+function cleanScriptForTTS(text) {
+  // Remove stage directions: **text**, [text], (text)
+  let clean = text.replace(/\*\*[^*]+\*\*/g, "");
+  clean = clean.replace(/\[[^\]]+\]/g, "");
+  clean = clean.replace(/\([^)]*הוראה[^)]*\)/g, "");
+  clean = clean.replace(/\([^)]*מדבר[^)]*\)/g, "");
+  clean = clean.replace(/\([^)]*צוחק[^)]*\)/g, "");
+  // Remove excessive whitespace/newlines
+  clean = clean.replace(/\n{2,}/g, "\n").replace(/^\s+|\s+$/gm, "").trim();
+  return clean;
+}
+
 async function elevenLabsTTS(text, voiceId) {
-  // Use server-side proxy (works on both localhost and Vercel)
+  const cleanText = cleanScriptForTTS(text);
   const r = await authFetch("/api/elevenlabs/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, voiceId: voiceId || "EXAVITQu4vr4xnSDxMaL" })
+    body: JSON.stringify({ text: cleanText, voiceId: voiceId || "cgSgspJ2msm6clMCkdW9" })
   });
   const data = await r.json();
   if (data.error) throw new Error(data.error);
@@ -738,15 +750,15 @@ async function elevenLabsTTS(text, voiceId) {
 // ═══════════════════════════════════════════════════════════════════
 // D-ID — Avatar Video Generation
 // ═══════════════════════════════════════════════════════════════════
-async function didCreateTalk(imageUrl, audioUrl) {
-  // Use server-side proxy (works on both localhost and Vercel)
-  const body = {
-    source_url: imageUrl,
-    script: { type: "audio", audio_url: audioUrl },
-    config: { stitch: true }
-  };
+async function didCreateTalk(imageUrl, audioUrl, presenterId) {
+  // Use clips API with presenter for movement + backgrounds, fallback to talks
+  const useClips = !!presenterId;
+  const endpoint = useClips ? "/api/did/clips" : "/api/did/talks";
+  const body = useClips
+    ? { presenter_id: presenterId, script: { type: "audio", audio_url: audioUrl }, config: { result_format: "mp4" } }
+    : { source_url: imageUrl, script: { type: "audio", audio_url: audioUrl }, config: { stitch: true } };
 
-  const r = await authFetch("/api/did/talks", {
+  const r = await authFetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
@@ -755,13 +767,14 @@ async function didCreateTalk(imageUrl, audioUrl) {
   if (data.error || data.kind || data.status === "error") {
     throw new Error(data.error || data.description || data.message || "D-ID error");
   }
-  const talkId = data.id;
-  if (!talkId) throw new Error("D-ID: missing talk ID");
+  const jobId = data.id;
+  if (!jobId) throw new Error("D-ID: missing job ID");
 
-  // Poll for result via server proxy
+  // Poll for result
+  const pollEndpoint = useClips ? `/api/did/clips/${jobId}` : `/api/did/talks/${jobId}`;
   for (let i = 0; i < 60; i++) {
     await sleep(3000);
-    const poll = await authFetch(`/api/did/talks/${talkId}`);
+    const poll = await authFetch(pollEndpoint);
     const result = await poll.json();
     if (result.status === "done") return result.result_url;
     if (result.status === "error" || result.status === "rejected") {
@@ -834,7 +847,7 @@ async function runRealUGCPipeline(script, avatar, biz, onUpdate) {
   onUpdate({ stages: {...s}, current: "avatar", done: false, audioUrl });
   let videoUrl;
   try {
-    videoUrl = await didCreateTalk(avatar.img, audioUrl);
+    videoUrl = await didCreateTalk(avatar.img, audioUrl, avatar.presenterId);
   } catch (e) {
     s.avatar = "error";
     onUpdate({ stages: {...s}, current: null, done: false, audioUrl, error: `שגיאה ב-D-ID: ${e.message}` });
@@ -1665,10 +1678,10 @@ function UGCStudio({ businesses: bizList }) {
     setGenLoading(true);
     try {
       const txt = await claudeCall(`כתוב סקריפט UGC לסרטון 30-40 שניות בעברית מדוברת.
-דמות: ${avatar.name}, ${avatar.age}, ${avatar.desc}. עסק: ${biz.name}.
+דמות: ${avatar.name}, ${avatar.age}, ${avatar.desc}. עסק: ${biz.name} — ${biz.description || ""}.
 סגנון: אותנטי, שיחתי, לא פרסומי. 90-110 מילים.
 התחל עם hook שמושך תשומת לב. סיים עם: "קישור בביו".
-החזר רק את הסקריפט.`, 400);
+חשוב מאוד: החזר רק את הטקסט המדובר — ללא הוראות במה, ללא כוכביות, ללא סוגריים, ללא תיאורי פעולה. רק מה שהדמות אומרת.`, 400);
       setScript(txt);
     } catch { setScript(`היי חברות... חייבת לספר לכן על ${biz.name}. פשוט שינה לי את הכל. אם רוצות לדעת עוד — קישור בביו 🙂`); }
     setGenLoading(false);

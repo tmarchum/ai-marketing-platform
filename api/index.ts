@@ -405,6 +405,65 @@ app.get('/api/did/talks/:id', async (req: any, res) => {
   }
 });
 
+// D-ID Clips API — presenters with movement and backgrounds
+app.post('/api/did/clips', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'DID_API_KEY');
+  if (!apiKey) return res.status(503).json({ error: 'DID_API_KEY not set' });
+  try {
+    const authHeader = `Basic ${apiKey}`;
+    let body = req.body;
+
+    // If audio_url is a base64 data URL, upload to D-ID first
+    if (body.script?.audio_url?.startsWith('data:')) {
+      const matches = body.script.audio_url.match(/^data:([^;]+);base64,(.+)$/);
+      if (matches) {
+        const [, contentType, b64] = matches;
+        const audioBuffer = Buffer.from(b64, 'base64');
+        const formData = new FormData();
+        formData.append('audio', new Blob([audioBuffer], { type: contentType }), 'audio.mp3');
+        const uploadRes = await fetch('https://api.d-id.com/audios', {
+          method: 'POST',
+          headers: { Authorization: authHeader },
+          body: formData,
+        });
+        const uploadData = await uploadRes.json();
+        if (uploadData.url) {
+          body = { ...body, script: { ...body.script, audio_url: uploadData.url } };
+        } else if (uploadData.error || uploadData.kind) {
+          return res.json(uploadData);
+        }
+      }
+    }
+
+    const r = await fetch('https://api.d-id.com/clips', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/did/clips/:id', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'DID_API_KEY');
+  if (!apiKey) return res.status(503).json({ error: 'DID_API_KEY not set' });
+  try {
+    const authHeader = `Basic ${apiKey}`;
+    const r = await fetch(`https://api.d-id.com/clips/${req.params.id}`, {
+      headers: { Authorization: authHeader },
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════
 // BYOK — per-user API key management
 // ══════════════════════════════════════════════════════════════
