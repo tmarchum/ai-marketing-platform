@@ -438,14 +438,12 @@ app.post('/api/did/clips', async (req: any, res) => {
       }
     }
 
-    console.log('[D-ID clips] Sending body:', JSON.stringify(body).substring(0, 500));
     const r = await fetch('https://api.d-id.com/clips', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: authHeader },
       body: JSON.stringify(body),
     });
     const data = await r.json();
-    if (data.kind || data.error) console.log('[D-ID clips] Error:', JSON.stringify(data));
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
