@@ -42,12 +42,12 @@ function pickBackground(biz) {
 }
 
 const AVATAR_LIBRARY = [
-  { id:"a1", name:"מיכל", age:"28", desc:"אמא צעירה, חמה", color:"#EC4899", img:"https://clips-presenters.d-id.com/v2/Amber/0zSz8kflCN/OUM7xZOuD5/image.png", presenterId:"v2_public_Amber@0zSz8kflCN" },
-  { id:"a2", name:"שירה", age:"34", desc:"לייפסטייל, ספורטיבית", color:"#8B5CF6", img:"https://clips-presenters.d-id.com/v2/Kayla_NoHands_BlackShirt_CoffeeShop/u1un3hTUDJ/Oijd6UyS_5/image.png", presenterId:"v2_public_Kayla_NoHands_BlackShirt_CoffeeShop@u1un3hTUDJ" },
-  { id:"a3", name:"נועה", age:"26", desc:"טרנדי, עירונית", color:"#06B6D4", img:"https://clips-presenters.d-id.com/v2/lily/addf3c9auh/wvbwmxlwcq/image.png", presenterId:"v2_public_lily@addf3c9auh" },
-  { id:"a4", name:"דנה", age:"41", desc:"מקצועית, אמינה", color:"#10B981", img:"https://clips-presenters.d-id.com/v2/Fiona_NoHands_BlackJacket_ClassRoom/1BOeggEufb/dbRUIwY6KY/image.png", presenterId:"v2_public_Fiona_NoHands_BlackJacket_ClassRoom@1BOeggEufb" },
-  { id:"a5", name:"ליאור", age:"31", desc:"אבא, מעשי", color:"#F59E0B", img:"https://clips-presenters.d-id.com/v2/Dylan_NoHands_GreyShirt_Home/n3_canoTl3/ihTKL1EUBT/image.png", presenterId:"v2_public_Dylan_NoHands_GreyShirt_Home@n3_canoTl3" },
-  { id:"a6", name:"עמית", age:"38", desc:"מנהל, אמין", color:"#EF4444", img:"https://clips-presenters.d-id.com/v2/Matt_NoHands_GreyTshirt_Outdoor/rwE9avfhZE/Kx_xEIPaws/image.png", presenterId:"v2_public_Matt_NoHands_GreyTshirt_Outdoor@rwE9avfhZE" },
+  { id:"a1", name:"מיכל", age:"28", desc:"אמא צעירה, חמה", color:"#EC4899", img:"https://clips-presenters.d-id.com/v2/Amber_WhiteBlueShirt_GreenScreen/Q7fF0ERkU2/cgEgRannum/image.png", presenterId:"v2_public_Amber_WhiteBlueShirt_GreenScreen@Q7fF0ERkU2" },
+  { id:"a2", name:"שירה", age:"34", desc:"לייפסטייל, ספורטיבית", color:"#8B5CF6", img:"https://clips-presenters.d-id.com/v2/diana_purple_shirt_1_green_screen/HiT0penpLE/T4mnIx2ISP/image.png", presenterId:"v2_public_diana_purple_shirt_1_green_screen@HiT0penpLE" },
+  { id:"a3", name:"נועה", age:"26", desc:"טרנדי, עירונית", color:"#06B6D4", img:"https://clips-presenters.d-id.com/v2/lily_black_jakcet_green_screen/MsCeSpEt6l/image.png", presenterId:"v2_public_lily_black_jakcet_green_screen@MsCeSpEt6l" },
+  { id:"a4", name:"דנה", age:"41", desc:"מקצועית, אמינה", color:"#10B981", img:"https://clips-presenters.d-id.com/v2/fiona_black_jacket_green_screen/477B7MX1Vf/image.png", presenterId:"v2_public_fiona_black_jacket_green_screen@477B7MX1Vf" },
+  { id:"a5", name:"ליאור", age:"31", desc:"אבא, מעשי", color:"#F59E0B", img:"https://clips-presenters.d-id.com/v2/dylan_grey_suite_green_screen_1/KHlzCjIFiH/CssfNY1Jh4/image.png", presenterId:"v2_public_dylan_grey_suite_green_screen_1@KHlzCjIFiH" },
+  { id:"a6", name:"עמית", age:"38", desc:"מנהל, אמין", color:"#EF4444", img:"https://clips-presenters.d-id.com/v2/alex_black_suite_green_screen/u8RGmlrjpD/Q8ImoYHLlV/image.png", presenterId:"v2_public_alex_black_suite_green_screen@u8RGmlrjpD" },
 ];
 const SOURCES_INIT = [
   { id:1, name:"הקולנוע הנודד", url:"wanderingcinema.co.il", type:"url", role:"עסק" },
