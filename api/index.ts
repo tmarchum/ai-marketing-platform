@@ -333,11 +333,22 @@ app.post('/api/elevenlabs/tts', async (req: any, res) => {
       headers: { 'Content-Type': 'application/json', 'xi-api-key': apiKey },
       body: JSON.stringify(bodyPayload),
     });
+    console.log(`[TTS] ElevenLabs status=${r.status}, content-type=${r.headers.get('content-type')}, key=${apiKey?.substring(0,6)}...`);
     if (!r.ok) {
-      const err = await r.json().catch(() => ({ message: `HTTP ${r.status}` }));
-      return res.status(r.status).json({ error: err.detail?.message || err.message || `HTTP ${r.status}` });
+      const errText = await r.text().catch(() => '');
+      console.log(`[TTS] Error response: ${errText.substring(0, 300)}`);
+      try {
+        const errJson = JSON.parse(errText);
+        return res.status(r.status).json({ error: errJson.detail?.message || errJson.message || `HTTP ${r.status}` });
+      } catch {
+        return res.status(r.status).json({ error: `HTTP ${r.status}: ${errText.substring(0, 100)}` });
+      }
     }
     const arrayBuf = await r.arrayBuffer();
+    console.log(`[TTS] Audio size: ${arrayBuf.byteLength} bytes`);
+    if (arrayBuf.byteLength === 0) {
+      return res.status(500).json({ error: 'ElevenLabs returned empty audio' });
+    }
     const base64 = Buffer.from(arrayBuf).toString('base64');
     res.json({ audioBase64: base64, contentType: r.headers.get('content-type') || 'audio/mpeg' });
   } catch (err: any) {
