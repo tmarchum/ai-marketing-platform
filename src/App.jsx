@@ -1000,7 +1000,7 @@ function PostCard({ post, onUpdate, onDelete, compact, businesses }) {
     onUpdate({...post, ugc:init});
     setExp(true);
     const biz = (businesses||[]).find(b=>b.name===post.business) || {};
-    const avatar = { img:"https://picsum.photos/seed/w1/200/200", name:"דמות AI" };
+    const avatar = AVATAR_LIBRARY[Math.floor(Math.random() * AVATAR_LIBRARY.length)];
     await runRealUGCPipeline(post.content, avatar, biz, upd => onUpdate(p=>({...p, ugc:upd})));
   }
 
