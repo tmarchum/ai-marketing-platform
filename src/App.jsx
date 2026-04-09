@@ -740,7 +740,7 @@ async function elevenLabsTTS(text, voiceId) {
   const r = await authFetch("/api/elevenlabs/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: cleanText, voiceId: voiceId || "EXAVITQu4vr4xnSDxMaL" })
+    body: JSON.stringify({ text: cleanText, voiceId: voiceId || "EXAVITQu4vr4xnSDxMaL", languageCode: "he" })
   });
   const data = await r.json();
   if (data.error) throw new Error(data.error);
