@@ -320,14 +320,15 @@ app.post('/api/elevenlabs/tts', async (req: any, res) => {
   const apiKey = await getUserKey(sb, req.userId, 'ELEVENLABS_API_KEY');
   if (!apiKey) return res.status(503).json({ error: 'ELEVENLABS_API_KEY not set' });
   try {
-    const { text, voiceId } = req.body;
-    const voice = voiceId || 'EXAVITQu4vr4xnSDxMaL'; // Sarah - default Hebrew voice
+    const { text, voiceId, languageCode } = req.body;
+    const voice = voiceId || 'EXAVITQu4vr4xnSDxMaL'; // Sarah - default voice
     const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'xi-api-key': apiKey },
       body: JSON.stringify({
         text: text || '',
         model_id: 'eleven_multilingual_v2',
+        language_code: languageCode || 'he',
         voice_settings: { stability: 0.5, similarity_boost: 0.75 },
       }),
     });
