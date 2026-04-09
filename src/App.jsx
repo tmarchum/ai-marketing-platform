@@ -1733,7 +1733,7 @@ function UGCStudio({ businesses: bizList }) {
           <div style={{color:T.textMuted,fontSize:12,marginTop:4}}>{b.description||""}</div>
         </Card>)}
       </div>
-      <Btn grad="linear-gradient(135deg,#EC4899,#8B5CF6)" onClick={()=>setStep(1)}>המשך ←</Btn>
+      <Btn grad="linear-gradient(135deg,#EC4899,#8B5CF6)" onClick={()=>{setScript("");setPipeline(null);setStep(1);}}>המשך ←</Btn>
     </div>}
 
     {step===1&&<div style={{animation:"fadeUp 0.3s ease"}}>
