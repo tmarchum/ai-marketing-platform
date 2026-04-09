@@ -68,6 +68,7 @@ const NAV_ITEMS = [
   { id:"schedule",  icon:"📅", label:"תזמון" },
   { id:"analytics", icon:"📈", label:"ניתוח" },
   { id:"admin",     icon:"⚙️", label:"ניהול" },
+  { id:"superadmin",icon:"👑", label:"ניהול פלטפורמה", adminOnly:true },
 ];
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -3167,6 +3168,196 @@ function Admin() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// SUPER ADMIN — Platform Management
+// ═══════════════════════════════════════════════════════════════════
+function SuperAdmin() {
+  const [users, setUsers] = useState([]);
+  const [config, setConfig] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [configSaved, setConfigSaved] = useState(false);
+  const [editConfig, setEditConfig] = useState(null);
+
+  useEffect(()=>{
+    (async()=>{
+      try {
+        const [usersRes, configRes] = await Promise.all([
+          authFetch("/api/superadmin/users"),
+          authFetch("/api/superadmin/config")
+        ]);
+        const usersData = await usersRes.json();
+        const configData = await configRes.json();
+        if (Array.isArray(usersData)) setUsers(usersData);
+        if (configData?.id) { setConfig(configData); setEditConfig(configData); }
+      } catch {}
+      setLoading(false);
+    })();
+  }, []);
+
+  async function saveConfig() {
+    if (!editConfig) return;
+    setSavingConfig(true);
+    try {
+      const r = await authFetch("/api/superadmin/config", {
+        method:"PUT",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(editConfig)
+      });
+      const d = await r.json();
+      if (d.id) { setConfig(d); setEditConfig(d); setConfigSaved(true); setTimeout(()=>setConfigSaved(false),2000); }
+    } catch {}
+    setSavingConfig(false);
+  }
+
+  async function togglePlan(userId, currentPlan) {
+    const newPlan = currentPlan === 'pro' ? 'free' : 'pro';
+    try {
+      await authFetch(`/api/superadmin/users/${userId}/plan`, {
+        method:"PUT",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ plan: newPlan })
+      });
+      setUsers(prev=>prev.map(u=>u.id===userId?{...u,plan:newPlan}:u));
+    } catch {}
+  }
+
+  if (loading) return <div style={{textAlign:"center",padding:40}}><Spinner size={20}/></div>;
+
+  const totalUsers = users.length;
+  const proUsers = users.filter(u=>u.plan==='pro').length;
+  const totalBiz = users.reduce((s,u)=>s+u.businesses,0);
+  const totalPosts = users.reduce((s,u)=>s+u.posts,0);
+
+  return <div style={{animation:"fadeUp 0.3s ease"}}>
+    <SectionTitle sub="ניהול משתמשים, תוכניות ותמחור">👑 ניהול פלטפורמה</SectionTitle>
+
+    {/* Stats Overview */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12,marginBottom:20}}>
+      {[
+        {label:"משתמשים",value:totalUsers,icon:"👥",color:"#8B5CF6"},
+        {label:"Pro",value:proUsers,icon:"⭐",color:"#F59E0B"},
+        {label:"עסקים",value:totalBiz,icon:"🏪",color:"#3B82F6"},
+        {label:"פוסטים",value:totalPosts,icon:"📝",color:"#10B981"},
+      ].map(s=><Card key={s.label} style={{textAlign:"center",padding:"16px 12px"}}>
+        <div style={{fontSize:24,marginBottom:4}}>{s.icon}</div>
+        <div style={{fontSize:22,fontWeight:700,color:s.color}}>{s.value}</div>
+        <div style={{fontSize:11,color:T.textMuted}}>{s.label}</div>
+      </Card>)}
+    </div>
+
+    {/* Plan Config */}
+    <Card style={{marginBottom:20}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1}}>הגדרות תוכניות</div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          {configSaved&&<span style={{color:"#10B981",fontSize:11}}>נשמר ✓</span>}
+          <Btn sm grad="linear-gradient(135deg,#8B5CF6,#EC4899)" disabled={savingConfig} onClick={saveConfig}>
+            {savingConfig?<Spinner size={10}/>:"שמור שינויים"}
+          </Btn>
+        </div>
+      </div>
+
+      {editConfig && <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+        {/* Free Plan */}
+        <div style={{background:T.inputBg,borderRadius:12,padding:16,border:`1px solid ${T.borderLight}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+            <div style={{width:28,height:28,borderRadius:8,background:"#10B98115",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>🆓</div>
+            <div style={{fontWeight:700,fontSize:14,color:T.text}}>תוכנית חינם</div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <label style={{fontSize:11,color:T.textMuted,fontWeight:600}}>
+              מקסימום עסקים
+              <input type="number" value={editConfig.free_max_businesses} onChange={e=>setEditConfig(p=>({...p,free_max_businesses:parseInt(e.target.value)||0}))}
+                style={{display:"block",width:"100%",marginTop:4,padding:"8px 10px",borderRadius:8,border:`1px solid ${T.inputBorder}`,background:T.card,color:T.text,fontSize:13,fontFamily:"inherit",boxSizing:"border-box"}}/>
+            </label>
+            <label style={{fontSize:11,color:T.textMuted,fontWeight:600}}>
+              מקסימום פוסטים בחודש
+              <input type="number" value={editConfig.free_max_posts_month} onChange={e=>setEditConfig(p=>({...p,free_max_posts_month:parseInt(e.target.value)||0}))}
+                style={{display:"block",width:"100%",marginTop:4,padding:"8px 10px",borderRadius:8,border:`1px solid ${T.inputBorder}`,background:T.card,color:T.text,fontSize:13,fontFamily:"inherit",boxSizing:"border-box"}}/>
+            </label>
+          </div>
+        </div>
+
+        {/* Pro Plan */}
+        <div style={{background:T.inputBg,borderRadius:12,padding:16,border:`1px solid #F59E0B33`}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+            <div style={{width:28,height:28,borderRadius:8,background:"#F59E0B15",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>⭐</div>
+            <div style={{fontWeight:700,fontSize:14,color:T.text}}>תוכנית Pro</div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <label style={{fontSize:11,color:T.textMuted,fontWeight:600}}>
+              מחיר (₪ לחודש)
+              <input type="number" value={editConfig.pro_price_ils} onChange={e=>setEditConfig(p=>({...p,pro_price_ils:parseInt(e.target.value)||0}))}
+                style={{display:"block",width:"100%",marginTop:4,padding:"8px 10px",borderRadius:8,border:`1px solid ${T.inputBorder}`,background:T.card,color:T.text,fontSize:13,fontFamily:"inherit",boxSizing:"border-box"}}/>
+            </label>
+            <label style={{fontSize:11,color:T.textMuted,fontWeight:600}}>
+              מקסימום עסקים
+              <input type="number" value={editConfig.pro_max_businesses} onChange={e=>setEditConfig(p=>({...p,pro_max_businesses:parseInt(e.target.value)||0}))}
+                style={{display:"block",width:"100%",marginTop:4,padding:"8px 10px",borderRadius:8,border:`1px solid ${T.inputBorder}`,background:T.card,color:T.text,fontSize:13,fontFamily:"inherit",boxSizing:"border-box"}}/>
+            </label>
+            <label style={{fontSize:11,color:T.textMuted,fontWeight:600}}>
+              מקסימום פוסטים בחודש
+              <input type="number" value={editConfig.pro_max_posts_month} onChange={e=>setEditConfig(p=>({...p,pro_max_posts_month:parseInt(e.target.value)||0}))}
+                style={{display:"block",width:"100%",marginTop:4,padding:"8px 10px",borderRadius:8,border:`1px solid ${T.inputBorder}`,background:T.card,color:T.text,fontSize:13,fontFamily:"inherit",boxSizing:"border-box"}}/>
+            </label>
+          </div>
+        </div>
+      </div>}
+    </Card>
+
+    {/* Users Table */}
+    <Card>
+      <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:16,letterSpacing:1}}>
+        משתמשים ({totalUsers})
+      </div>
+      {users.length===0
+        ? <div style={{color:T.textDim,fontSize:12,textAlign:"center",padding:20}}>אין משתמשים רשומים</div>
+        : <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {users.map(u=>{
+              const planColor = u.plan==='pro'?'#F59E0B':'#10B981';
+              const isMe = u.isAdmin;
+              return <div key={u.id} style={{display:"flex",alignItems:"center",gap:12,
+                padding:"12px 14px",background:T.inputBg,borderRadius:12,
+                border:`1px solid ${isMe?'#8B5CF622':T.borderLight}`}}>
+                {/* Avatar */}
+                <div style={{width:36,height:36,borderRadius:"50%",
+                  background:isMe?"linear-gradient(135deg,#8B5CF6,#EC4899)":"#3B82F615",
+                  border:`1px solid ${isMe?"#8B5CF633":"#3B82F633"}`,
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                  color:isMe?"#fff":"#3B82F6",fontSize:14,fontWeight:700,flexShrink:0}}>
+                  {(u.email||"?")[0].toUpperCase()}
+                </div>
+                {/* Info */}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{color:T.text,fontSize:13,fontWeight:600}}>{u.email}</span>
+                    {isMe&&<span style={{fontSize:9,color:"#8B5CF6",background:"#8B5CF610",padding:"1px 6px",borderRadius:4,fontWeight:600}}>אתה</span>}
+                  </div>
+                  <div style={{display:"flex",gap:12,marginTop:3}}>
+                    <span style={{color:T.textDim,fontSize:10}}>🏪 {u.businesses} עסקים</span>
+                    <span style={{color:T.textDim,fontSize:10}}>📝 {u.posts} פוסטים</span>
+                    <span style={{color:T.textDim,fontSize:10}}>📅 {u.lastLogin ? new Date(u.lastLogin).toLocaleDateString("he-IL") : "—"}</span>
+                  </div>
+                </div>
+                {/* Plan badge + toggle */}
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <Tag label={u.plan==='pro'?'Pro':'חינם'} color={planColor}/>
+                  {!u.isAdmin && <Btn sm
+                    bg={u.plan==='pro'?"#EF444410":"#F59E0B10"}
+                    color={u.plan==='pro'?"#EF4444":"#F59E0B"}
+                    onClick={()=>togglePlan(u.id, u.plan)}>
+                    {u.plan==='pro'?'הורד ל-Free':'שדרג ל-Pro'}
+                  </Btn>}
+                </div>
+              </div>;
+            })}
+          </div>
+      }
+    </Card>
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // APP
 // ═══════════════════════════════════════════════════════════════════
 export default function App({ session }) {
@@ -3179,6 +3370,7 @@ export default function App({ session }) {
   });
   const [mobileNav, setMobileNav] = useState(false);
   const [dbReady, setDbReady] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   // ── Load from Supabase on startup, localStorage as fallback ──
   useEffect(()=>{
@@ -3187,6 +3379,8 @@ export default function App({ session }) {
       try {
         // Claim orphan data on first login (assigns null user_id rows to current user)
         try { await authFetch("/api/claim-data", { method: "POST" }); } catch {}
+        // Check if user is platform admin
+        try { const ar = await authFetch("/api/superadmin/me"); const ad = await ar.json(); if (!cancelled) setIsAdmin(!!ad.isAdmin); } catch {}
 
         // Load businesses from API
         const bizRes = await authFetch("/api/businesses");
@@ -3455,7 +3649,7 @@ export default function App({ session }) {
 
         {/* Nav */}
         <nav style={{flex:1,padding:"12px 8px",overflowY:"auto"}}>
-          {NAV_ITEMS.map(item=><button key={item.id} onClick={()=>setPage(item.id)} style={{
+          {NAV_ITEMS.filter(item=>!item.adminOnly||isAdmin).map(item=><button key={item.id} onClick={()=>setPage(item.id)} style={{
             width:"100%",display:"flex",alignItems:"center",gap:10,
             background:page===item.id?T.accent+"10":"transparent",
             border:`1px solid ${page===item.id?T.accent+"22":"transparent"}`,
@@ -3588,6 +3782,7 @@ export default function App({ session }) {
           {page==="schedule"&&<Schedule posts={posts} setPosts={setPosts} businesses={businesses}/>}
           {page==="analytics"&&<Analytics posts={posts} businesses={businesses} analyticsData={analyticsData} setAnalyticsData={setAnalyticsData}/>}
           {page==="admin"&&<Admin/>}
+          {page==="superadmin"&&isAdmin&&<SuperAdmin/>}
         </div>
       </div>
 

@@ -691,6 +691,103 @@ app.get('/api/auth/facebook/pages', async (req: any, res) => {
   res.json({ connected });
 });
 
+// ══════════════════════════════════════════════════════════════
+// SUPER ADMIN — platform management (admin only)
+// ══════════════════════════════════════════════════════════════
+
+async function requireAdmin(req: any, res: any, next: any) {
+  if (!req.userId) return res.status(401).json({ error: 'Not authenticated' });
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const { data } = await sb.from('user_profiles').select('is_admin').eq('id', req.userId).maybeSingle();
+  if (!data?.is_admin) return res.status(403).json({ error: 'Admin only' });
+  next();
+}
+
+// Check if current user is admin
+app.get('/api/superadmin/me', async (req: any, res) => {
+  if (!req.userId) return res.json({ isAdmin: false });
+  const sb = getSupabase();
+  if (!sb) return res.json({ isAdmin: false });
+  const { data } = await sb.from('user_profiles').select('is_admin').eq('id', req.userId).maybeSingle();
+  res.json({ isAdmin: !!data?.is_admin });
+});
+
+// Get all users with stats
+app.get('/api/superadmin/users', requireAdmin, async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+
+  // Get all user profiles
+  const { data: profiles } = await sb.from('user_profiles').select('*').order('created_at', { ascending: false });
+
+  // Get business counts per user
+  const { data: bizCounts } = await sb.from('businesses').select('user_id');
+  const bizMap: Record<string, number> = {};
+  for (const b of (bizCounts || [])) {
+    if (b.user_id) bizMap[b.user_id] = (bizMap[b.user_id] || 0) + 1;
+  }
+
+  // Get post counts per user
+  const { data: postCounts } = await sb.from('content_posts').select('user_id');
+  const postMap: Record<string, number> = {};
+  for (const p of (postCounts || [])) {
+    if (p.user_id) postMap[p.user_id] = (postMap[p.user_id] || 0) + 1;
+  }
+
+  // Get last login from auth.users
+  const { data: authUsers } = await sb.auth.admin.listUsers();
+  const loginMap: Record<string, string> = {};
+  for (const u of (authUsers?.users || [])) {
+    loginMap[u.id] = u.last_sign_in_at || '';
+  }
+
+  const users = (profiles || []).map((p: any) => ({
+    id: p.id,
+    email: p.email,
+    plan: p.plan,
+    isAdmin: p.is_admin,
+    createdAt: p.created_at,
+    businesses: bizMap[p.id] || 0,
+    posts: postMap[p.id] || 0,
+    lastLogin: loginMap[p.id] || null,
+  }));
+
+  res.json(users);
+});
+
+// Update user plan
+app.put('/api/superadmin/users/:id/plan', requireAdmin, async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const { plan } = req.body;
+  if (!['free', 'pro'].includes(plan)) return res.status(400).json({ error: 'Invalid plan' });
+  const { error } = await sb.from('user_profiles').update({ plan, updated_at: new Date().toISOString() }).eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// Get platform config
+app.get('/api/superadmin/config', requireAdmin, async (_req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const { data, error } = await sb.from('platform_config').select('*').eq('id', 'default').maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// Update platform config
+app.put('/api/superadmin/config', requireAdmin, async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const allowed = ['free_max_businesses', 'free_max_posts_month', 'free_features', 'pro_price_ils', 'pro_features', 'pro_max_businesses', 'pro_max_posts_month'];
+  const updates: Record<string, any> = { updated_at: new Date().toISOString() };
+  for (const k of allowed) if (req.body[k] !== undefined) updates[k] = req.body[k];
+  const { data, error } = await sb.from('platform_config').update(updates).eq('id', 'default').select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
 // ── Catch-all for unknown API routes ──
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'Not found' });
