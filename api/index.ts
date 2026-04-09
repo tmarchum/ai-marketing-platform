@@ -218,8 +218,9 @@ app.post('/api/content/sync', async (req, res) => {
 // CLAUDE PROXY
 // ══════════════════════════════════════════════════════════════
 
-app.post('/api/content/claude', async (req, res) => {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+app.post('/api/content/claude', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
   if (!apiKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
   const { prompt, maxTokens = 800 } = req.body;
   try {
@@ -240,8 +241,9 @@ app.post('/api/content/claude', async (req, res) => {
 // REPLICATE PROXY — image generation with Flux
 // ══════════════════════════════════════════════════════════════
 
-app.post('/api/replicate/predictions', async (req, res) => {
-  const token = process.env.REPLICATE_API_TOKEN;
+app.post('/api/replicate/predictions', async (req: any, res) => {
+  const sb = getSupabase();
+  const token = await getUserKey(sb, req.userId, 'REPLICATE_API_TOKEN');
   if (!token) return res.status(503).json({ error: 'REPLICATE_API_TOKEN not set' });
   try {
     const { model, input } = req.body;
@@ -258,8 +260,9 @@ app.post('/api/replicate/predictions', async (req, res) => {
   }
 });
 
-app.get('/api/replicate/predictions/:id', async (req, res) => {
-  const token = process.env.REPLICATE_API_TOKEN;
+app.get('/api/replicate/predictions/:id', async (req: any, res) => {
+  const sb = getSupabase();
+  const token = await getUserKey(sb, req.userId, 'REPLICATE_API_TOKEN');
   if (!token) return res.status(503).json({ error: 'REPLICATE_API_TOKEN not set' });
   try {
     const r = await fetch(`https://api.replicate.com/v1/predictions/${req.params.id}`, {
@@ -276,8 +279,9 @@ app.get('/api/replicate/predictions/:id', async (req, res) => {
 // RUNWAY ML PROXY — video generation
 // ══════════════════════════════════════════════════════════════
 
-app.post('/api/runway/image-to-video', async (req, res) => {
-  const token = process.env.RUNWAYML_API_SECRET;
+app.post('/api/runway/image-to-video', async (req: any, res) => {
+  const sb = getSupabase();
+  const token = await getUserKey(sb, req.userId, 'RUNWAYML_API_SECRET');
   if (!token) return res.status(503).json({ error: 'RUNWAYML_API_SECRET not set' });
   try {
     const r = await fetch('https://api.dev.runwayml.com/v1/image_to_video', {
@@ -292,8 +296,9 @@ app.post('/api/runway/image-to-video', async (req, res) => {
   }
 });
 
-app.get('/api/runway/tasks/:id', async (req, res) => {
-  const token = process.env.RUNWAYML_API_SECRET;
+app.get('/api/runway/tasks/:id', async (req: any, res) => {
+  const sb = getSupabase();
+  const token = await getUserKey(sb, req.userId, 'RUNWAYML_API_SECRET');
   if (!token) return res.status(503).json({ error: 'RUNWAYML_API_SECRET not set' });
   try {
     const r = await fetch(`https://api.dev.runwayml.com/v1/tasks/${req.params.id}`, {
@@ -310,8 +315,9 @@ app.get('/api/runway/tasks/:id', async (req, res) => {
 // ELEVENLABS PROXY — Hebrew text-to-speech
 // ══════════════════════════════════════════════════════════════
 
-app.post('/api/elevenlabs/tts', async (req, res) => {
-  const apiKey = process.env.ELEVENLABS_API_KEY;
+app.post('/api/elevenlabs/tts', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'ELEVENLABS_API_KEY');
   if (!apiKey) return res.status(503).json({ error: 'ELEVENLABS_API_KEY not set' });
   try {
     const { text, voiceId } = req.body;
@@ -341,8 +347,9 @@ app.post('/api/elevenlabs/tts', async (req, res) => {
 // D-ID PROXY — talking avatar video
 // ══════════════════════════════════════════════════════════════
 
-app.post('/api/did/talks', async (req, res) => {
-  const apiKey = process.env.DID_API_KEY;
+app.post('/api/did/talks', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'DID_API_KEY');
   if (!apiKey) return res.status(503).json({ error: 'DID_API_KEY not set' });
   try {
     const r = await fetch('https://api.d-id.com/talks', {
@@ -357,8 +364,9 @@ app.post('/api/did/talks', async (req, res) => {
   }
 });
 
-app.get('/api/did/talks/:id', async (req, res) => {
-  const apiKey = process.env.DID_API_KEY;
+app.get('/api/did/talks/:id', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'DID_API_KEY');
   if (!apiKey) return res.status(503).json({ error: 'DID_API_KEY not set' });
   try {
     const r = await fetch(`https://api.d-id.com/talks/${req.params.id}`, {
@@ -372,20 +380,75 @@ app.get('/api/did/talks/:id', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
-// ADMIN — key testing
+// BYOK — per-user API key management
 // ══════════════════════════════════════════════════════════════
 
-app.post('/api/admin/test-key', async (req, res) => {
+// Helper: get a user's API key (falls back to env var)
+async function getUserKey(sb: any, userId: string | null, keyName: string): Promise<string | null> {
+  if (userId && sb) {
+    const { data } = await sb.from('user_api_keys').select('key_value').eq('user_id', userId).eq('key_name', keyName).maybeSingle();
+    if (data?.key_value) return data.key_value;
+  }
+  // Fallback to env vars
+  return process.env[keyName] || null;
+}
+
+// Get all keys for current user (names + masked values)
+app.get('/api/admin/keys', async (req: any, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Not authenticated' });
+  const sb = getSupabase();
+  if (!sb) return res.json({ keys: {} });
+  const { data } = await sb.from('user_api_keys').select('key_name, key_value, updated_at').eq('user_id', req.userId);
+  const keys: Record<string, { masked: string; updatedAt: string }> = {};
+  for (const row of (data || [])) {
+    const v = row.key_value;
+    keys[row.key_name] = {
+      masked: v.length > 8 ? v.slice(0, 4) + '•'.repeat(Math.min(v.length - 8, 20)) + v.slice(-4) : '••••••••',
+      updatedAt: row.updated_at,
+    };
+  }
+  res.json({ keys });
+});
+
+// Save/update a key
+app.put('/api/admin/keys/:keyName', async (req: any, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Not authenticated' });
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const { value } = req.body;
+  if (!value) {
+    // Delete key
+    await sb.from('user_api_keys').delete().eq('user_id', req.userId).eq('key_name', req.params.keyName);
+    return res.json({ ok: true, deleted: true });
+  }
+  const { error } = await sb.from('user_api_keys').upsert({
+    user_id: req.userId,
+    key_name: req.params.keyName,
+    key_value: value,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'user_id,key_name' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// Test a key
+app.post('/api/admin/test-key', async (req: any, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Not authenticated' });
+  const sb = getSupabase();
   const { keyId, value } = req.body;
-  if (!value) return res.json({ ok: false, error: 'ריק' });
+  // Use provided value, or fetch from DB
+  const keyValue = value || (sb ? (await getUserKey(sb, req.userId, keyId)) : null);
+  if (!keyValue) return res.json({ ok: false, error: 'ריק' });
   const testers: Record<string, (v: string) => Promise<void>> = {
     ANTHROPIC_API_KEY: async (v) => { const r = await fetch('https://api.anthropic.com/v1/models', { headers: { 'x-api-key': v, 'anthropic-version': '2023-06-01' } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
     REPLICATE_API_TOKEN: async (v) => { const r = await fetch('https://api.replicate.com/v1/account', { headers: { Authorization: `Bearer ${v}` } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
     ELEVENLABS_API_KEY: async (v) => { const r = await fetch('https://api.elevenlabs.io/v1/user', { headers: { 'xi-api-key': v } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
+    DID_API_KEY: async (v) => { const r = await fetch('https://api.d-id.com/credits', { headers: { Authorization: `Basic ${Buffer.from(v + ':').toString('base64')}` } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
+    META_ACCESS_TOKEN: async (v) => { const r = await fetch(`https://graph.facebook.com/v25.0/me?access_token=${v}`); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
   };
   const tester = testers[keyId];
   if (!tester) return res.json({ ok: true });
-  try { await tester(value); res.json({ ok: true }); }
+  try { await tester(keyValue); res.json({ ok: true }); }
   catch (err: any) { res.json({ ok: false, error: err.message }); }
 });
 
@@ -470,6 +533,162 @@ app.get('/api/fb-metrics/:pageId', async (req, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ══════════════════════════════════════════════════════════════
+// FACEBOOK OAUTH — connect pages via official flow
+// ══════════════════════════════════════════════════════════════
+
+const FB_APP_ID = process.env.FB_APP_ID || '';
+const FB_APP_SECRET = process.env.FB_APP_SECRET || '';
+const PROD_URL = 'https://dashboard-steel-delta-52.vercel.app';
+
+// Step 1: Redirect user to Facebook login dialog
+app.get('/api/auth/facebook', (req: any, res) => {
+  if (!FB_APP_ID) return res.status(503).json({ error: 'FB_APP_ID not configured' });
+  const redirectUri = `${PROD_URL}/api/auth/facebook/callback`;
+  const scopes = 'pages_manage_posts,pages_read_engagement,pages_show_list,pages_read_user_content';
+  // Pass user_id in state so we know who to assign tokens to
+  const state = req.userId || 'anon';
+  const fbUrl = `https://www.facebook.com/v25.0/dialog/oauth?client_id=${FB_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scopes}&state=${state}&response_type=code`;
+  res.redirect(fbUrl);
+});
+
+// Step 2: Handle callback from Facebook
+app.get('/api/auth/facebook/callback', async (req, res) => {
+  const { code, error: fbError, state } = req.query;
+  if (fbError || !code) {
+    return res.redirect(`${PROD_URL}/#fb-error=${encodeURIComponent(fbError as string || 'no_code')}`);
+  }
+  if (!FB_APP_ID || !FB_APP_SECRET) {
+    return res.redirect(`${PROD_URL}/#fb-error=app_not_configured`);
+  }
+
+  try {
+    const redirectUri = `${PROD_URL}/api/auth/facebook/callback`;
+
+    // Exchange code for user access token
+    const tokenResp = await fetch(
+      `https://graph.facebook.com/v25.0/oauth/access_token?client_id=${FB_APP_ID}&client_secret=${FB_APP_SECRET}&redirect_uri=${encodeURIComponent(redirectUri)}&code=${code}`
+    );
+    const tokenData: any = await tokenResp.json();
+    if (tokenData.error) throw new Error(tokenData.error.message);
+    const userToken = tokenData.access_token;
+
+    // Exchange for long-lived token (60 days)
+    const longResp = await fetch(
+      `https://graph.facebook.com/v25.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${FB_APP_ID}&client_secret=${FB_APP_SECRET}&fb_exchange_token=${userToken}`
+    );
+    const longData: any = await longResp.json();
+    const longToken = longData.access_token || userToken;
+
+    // Get user's pages with page access tokens
+    const pagesResp = await fetch(
+      `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,access_token,category&access_token=${longToken}`
+    );
+    const pagesData: any = await pagesResp.json();
+    if (pagesData.error) throw new Error(pagesData.error.message);
+    const pages = (pagesData.data || []).map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      token: p.access_token,
+      category: p.category,
+    }));
+
+    // Store pages in Supabase for this user
+    const userId = state as string;
+    const sb = getSupabase();
+    if (sb && userId && userId !== 'anon') {
+      // Save FB pages to a new table or update businesses
+      // For now, store in a fb_pages helper table or directly match to businesses
+      for (const page of pages) {
+        // Check if there's a business matching this page name
+        const { data: biz } = await sb.from('businesses')
+          .select('id, social')
+          .eq('user_id', userId)
+          .ilike('name', `%${page.name}%`)
+          .maybeSingle();
+
+        if (biz) {
+          // Auto-match: update business with FB page token
+          const social = biz.social || {};
+          social.facebook = {
+            ...(social.facebook || {}),
+            connected: true,
+            pageId: page.id,
+            pageName: page.name,
+            tokens: {
+              ...(social.facebook?.tokens || {}),
+              META_ACCESS_TOKEN: page.token,
+              META_PAGE_ID: page.id,
+            }
+          };
+          await sb.from('businesses').update({ social }).eq('id', biz.id);
+        }
+      }
+    }
+
+    // Redirect back to app with pages data in hash
+    const pagesB64 = btoa(JSON.stringify({ type: 'fb-oauth', pages }));
+    res.redirect(`${PROD_URL}/#fb-pages=${pagesB64}`);
+  } catch (err: any) {
+    res.redirect(`${PROD_URL}/#fb-error=${encodeURIComponent(err.message)}`);
+  }
+});
+
+// Step 3: Manual page-to-business assignment
+app.post('/api/auth/facebook/assign', async (req: any, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Not authenticated' });
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const { businessId, pageId, pageName, pageToken } = req.body;
+  if (!businessId || !pageToken) return res.status(400).json({ error: 'Missing businessId or pageToken' });
+
+  // Verify business belongs to user
+  const { data: biz } = await sb.from('businesses')
+    .select('id, social')
+    .eq('id', businessId)
+    .eq('user_id', req.userId)
+    .maybeSingle();
+  if (!biz) return res.status(404).json({ error: 'Business not found' });
+
+  const social = biz.social || {};
+  social.facebook = {
+    ...(social.facebook || {}),
+    connected: true,
+    pageId,
+    pageName,
+    tokens: {
+      ...(social.facebook?.tokens || {}),
+      META_ACCESS_TOKEN: pageToken,
+      META_PAGE_ID: pageId,
+    }
+  };
+  const { error } = await sb.from('businesses').update({ social }).eq('id', biz.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, social });
+});
+
+// Get connected FB pages for current user (from last OAuth)
+app.get('/api/auth/facebook/pages', async (req: any, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Not authenticated' });
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+
+  // Return businesses that have FB connected
+  const { data } = await sb.from('businesses')
+    .select('id, name, social')
+    .eq('user_id', req.userId);
+
+  const connected = (data || [])
+    .filter((b: any) => b.social?.facebook?.connected)
+    .map((b: any) => ({
+      businessId: b.id,
+      businessName: b.name,
+      pageId: b.social.facebook.pageId,
+      pageName: b.social.facebook.pageName,
+    }));
+  res.json({ connected });
 });
 
 // ── Catch-all for unknown API routes ──

@@ -3,10 +3,12 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 import AuthPage from './components/AuthPage.jsx'
+import LandingPage from './components/LandingPage.jsx'
 import { supabase } from './lib/supabase'
 
 function Root() {
   const [session, setSession] = useState(undefined); // undefined = loading, null = no session
+  const [showAuth, setShowAuth] = useState(false);
 
   useEffect(() => {
     // Get initial session
@@ -16,6 +18,7 @@ function Root() {
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      if (session) setShowAuth(false);
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -32,13 +35,17 @@ function Root() {
     );
   }
 
-  // Not logged in
-  if (!session) {
-    return <AuthPage />;
+  // Logged in — render dashboard
+  if (session) {
+    return <App session={session} />;
   }
 
-  // Logged in — render dashboard
-  return <App session={session} />;
+  // Not logged in — show landing or auth
+  if (showAuth) {
+    return <AuthPage onBack={() => setShowAuth(false)} />;
+  }
+
+  return <LandingPage onGetStarted={() => setShowAuth(true)} />;
 }
 
 createRoot(document.getElementById('root')).render(

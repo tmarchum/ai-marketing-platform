@@ -2075,7 +2075,21 @@ function Businesses({ businesses, setBusinesses, posts }) {
 
             {/* Social connections per business */}
             <div style={{marginBottom:14}}>
-              <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:10,letterSpacing:1}}>רשתות חברתיות — {biz.name}</div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
+                <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1}}>רשתות חברתיות — {biz.name}</div>
+                {/* Facebook OAuth connect button */}
+                {biz.social?.facebook?.connected && biz.social?.facebook?.tokens?.META_ACCESS_TOKEN
+                  ? <div style={{display:"flex",alignItems:"center",gap:6,background:"#10B98110",border:"1px solid #10B98122",borderRadius:8,padding:"4px 10px"}}>
+                      <span style={{color:"#10B981",fontSize:10}}>●</span>
+                      <span style={{color:"#10B981",fontSize:11,fontWeight:600}}>FB מחובר: {biz.social.facebook.pageName || biz.social.facebook.tokens.META_PAGE_ID}</span>
+                    </div>
+                  : <button onClick={()=>window.location.href='/api/auth/facebook'}
+                      style={{background:"linear-gradient(135deg,#1877F2,#42A5F5)",color:"#fff",border:"none",borderRadius:8,
+                        padding:"6px 14px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
+                      <span>📘</span> חבר עמוד פייסבוק
+                    </button>
+                }
+              </div>
               <div className="two-col-grid" style={{display:"grid",gap:10}}>
                 {SOCIAL_PLATFORMS.map(plat=>{
                   const conn = biz.social?.[plat.id] || {connected:false,tokens:{}};
@@ -2901,77 +2915,69 @@ const API_KEYS_CONFIG = [
 ];
 
 function Admin() {
-  const [keys, setKeys] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("admin_keys")||"{}"); } catch { return {}; }
-  });
+  const [keys, setKeys] = useState({});
+  const [serverKeys, setServerKeys] = useState({}); // masked values from server
   const [visible, setVisible] = useState({});
   const [testing, setTesting] = useState({});
   const [testResults, setTestResults] = useState({});
   const [users, setUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [newUser, setNewUser] = useState({ email:"", role:"viewer" });
+  const [saving, setSaving] = useState({});
   const [saved, setSaved] = useState(false);
+  const [loadingKeys, setLoadingKeys] = useState(true);
 
-  function saveKeys(updated) {
-    setKeys(updated);
-    localStorage.setItem("admin_keys", JSON.stringify(updated));
-    setSaved(true);
-    setTimeout(()=>setSaved(false), 2000);
+  // Load keys from server on mount
+  useEffect(()=>{
+    (async()=>{
+      try {
+        const r = await authFetch("/api/admin/keys");
+        const d = await r.json();
+        setServerKeys(d.keys || {});
+      } catch {}
+      setLoadingKeys(false);
+    })();
+  }, []);
+
+  async function saveKey(keyId, value) {
+    setSaving(p=>({...p,[keyId]:true}));
+    try {
+      const r = await authFetch(`/api/admin/keys/${keyId}`, {
+        method:"PUT",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ value })
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setSaved(true);
+        setTimeout(()=>setSaved(false), 2000);
+        // Update server keys display
+        if (value) {
+          setServerKeys(p=>({...p,[keyId]:{ masked: value.slice(0,4)+'••••'+value.slice(-4), updatedAt: new Date().toISOString() }}));
+        } else {
+          setServerKeys(p=>{const n={...p}; delete n[keyId]; return n;});
+        }
+        // Clear local input after save
+        setKeys(p=>({...p,[keyId]:""}));
+        setTestResults(p=>({...p,[keyId]:"ok"}));
+      }
+    } catch(e) { setTestResults(p=>({...p,[keyId]:e.message})); }
+    setSaving(p=>({...p,[keyId]:false}));
   }
 
   async function testKey(keyId) {
     setTesting(p=>({...p,[keyId]:true}));
     const val = keys[keyId];
     try {
-      // Try backend first
       const r = await authFetch("/api/admin/test-key", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ keyId, value: val })
+        body:JSON.stringify({ keyId, value: val || undefined })
       });
       const d = await r.json();
       setTestResults(p=>({...p,[keyId]: d.ok ? "ok" : d.error||"failed"}));
-    } catch {
-      // Backend unavailable — test directly from browser
-      try {
-        let ok = false;
-        if (keyId === "ANTHROPIC_API_KEY") {
-          const r = await fetch("https://api.anthropic.com/v1/models", {
-            headers: {"x-api-key":val,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"}
-          });
-          ok = r.ok;
-        } else if (keyId === "REPLICATE_API_TOKEN") {
-          const r = await fetch("/replicate-api/v1/account", { headers: {"Authorization":`Bearer ${val}`} });
-          ok = r.ok;
-        } else if (keyId === "ELEVENLABS_API_KEY") {
-          const r = await fetch("https://api.elevenlabs.io/v1/user", { headers: {"xi-api-key":val} });
-          ok = r.ok;
-        } else if (keyId === "META_ACCESS_TOKEN") {
-          const r = await fetch(`https://graph.facebook.com/v25.0/me?access_token=${val}`);
-          ok = r.ok;
-        } else if (keyId === "DID_API_KEY") {
-          const r = await fetch("https://api.d-id.com/credits", { headers: {"Authorization":`Basic ${btoa(val+':')}`} });
-          ok = r.ok;
-        } else if (keyId === "SUPABASE_URL") {
-          ok = val.startsWith("https://") && val.includes(".supabase.");
-        } else if (keyId === "SUPABASE_SERVICE_KEY") {
-          ok = val.startsWith("eyJ");
-        } else if (keyId === "APIFY_API_TOKEN") {
-          const r = await fetch(`https://api.apify.com/v2/users/me?token=${val}`);
-          ok = r.ok;
-        } else if (keyId === "META_PAGE_ID" || keyId === "META_IG_USER_ID") {
-          ok = /^\d{5,}$/.test(val);
-        } else if (keyId === "WORDPRESS_URL") {
-          ok = val.startsWith("http");
-        } else if (keyId === "REDIS_URL") {
-          ok = val.startsWith("redis://") || val.startsWith("rediss://");
-        } else {
-          ok = val.length > 5; // generic check
-        }
-        setTestResults(p=>({...p,[keyId]: ok ? "ok" : "invalid"}));
-      } catch(e) {
-        setTestResults(p=>({...p,[keyId]: e.message || "שגיאה"}));
-      }
+    } catch(e) {
+      setTestResults(p=>({...p,[keyId]: e.message || "שגיאה"}));
     }
     setTesting(p=>({...p,[keyId]:false}));
   }
@@ -3051,42 +3057,52 @@ function Admin() {
             }}>ייצא .env</Btn>
         </div>
       </div>
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {loadingKeys ? <div style={{textAlign:"center",padding:20}}><Spinner size={16}/> <span style={{color:T.textMuted,fontSize:12}}>טוען מפתחות...</span></div> :
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
         {API_KEYS_CONFIG.map(k=>{
           const val = keys[k.id]||"";
+          const srv = serverKeys[k.id];
           const result = testResults[k.id];
-          return <div key={k.id} className="admin-key-row" style={{display:"grid",gap:8,alignItems:"center"}}>
-            <div>
-              <div style={{color:T.text,fontSize:12,fontWeight:600}}>{k.label}</div>
-              <div style={{color:k.color,fontSize:10}}>{k.service}</div>
+          const hasSaved = !!srv;
+          return <div key={k.id} style={{background:T.inputBg,border:`1px solid ${hasSaved?"#10B98122":T.borderLight}`,borderRadius:12,padding:"10px 14px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+              <div style={{width:8,height:8,borderRadius:"50%",background:hasSaved?"#10B981":T.border,flexShrink:0}}/>
+              <div style={{color:T.text,fontSize:12,fontWeight:600,flex:1}}>{k.label}</div>
+              <span style={{color:k.color,fontSize:10,background:k.color+"10",padding:"2px 8px",borderRadius:6}}>{k.service}</span>
             </div>
-            <div style={{position:"relative"}}>
-              <input
-                type={visible[k.id]?"text":"password"}
-                value={val}
-                placeholder={k.hint}
-                onChange={e=>saveKeys({...keys,[k.id]:e.target.value})}
-                style={{width:"100%",background:T.inputBg,border:`1px solid ${val?T.inputBorder:T.borderLight}`,
-                  borderRadius:10,padding:"8px 32px 8px 10px",color:T.text,fontSize:12,
-                  fontFamily:"monospace",boxSizing:"border-box"}}
-              />
-              <button onClick={()=>setVisible(p=>({...p,[k.id]:!p[k.id]}))}
-                style={{position:"absolute",left:8,top:"50%",transform:"translateY(-50%)",
-                  background:"none",border:"none",color:T.textDim,cursor:"pointer",fontSize:12}}>
-                {visible[k.id]?"🙈":"👁"}
-              </button>
+            {hasSaved && <div style={{color:T.textDim,fontSize:10,marginBottom:6,fontFamily:"monospace",paddingRight:16}}>
+              שמור: {srv.masked}
+            </div>}
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <div style={{flex:1,position:"relative"}}>
+                <input
+                  type={visible[k.id]?"text":"password"}
+                  value={val}
+                  placeholder={hasSaved ? "הכנס ערך חדש לעדכון..." : k.hint}
+                  onChange={e=>setKeys(p=>({...p,[k.id]:e.target.value}))}
+                  style={{width:"100%",background:T.card,border:`1px solid ${T.inputBorder}`,
+                    borderRadius:8,padding:"7px 28px 7px 10px",color:T.text,fontSize:11,
+                    fontFamily:"monospace",boxSizing:"border-box"}}
+                />
+                <button onClick={()=>setVisible(p=>({...p,[k.id]:!p[k.id]}))}
+                  style={{position:"absolute",left:6,top:"50%",transform:"translateY(-50%)",
+                    background:"none",border:"none",color:T.textDim,cursor:"pointer",fontSize:11}}>
+                  {visible[k.id]?"🙈":"👁"}
+                </button>
+              </div>
+              <Btn sm disabled={!val||saving[k.id]} onClick={()=>saveKey(k.id, val)}
+                grad="linear-gradient(135deg,#10B981,#3B82F6)">
+                {saving[k.id]?<Spinner size={10}/>:"שמור"}
+              </Btn>
+              <Btn sm disabled={(!val&&!hasSaved)||testing[k.id]} onClick={()=>testKey(k.id)}
+                bg={result==="ok"?"#10B98110":result?"#EF444410":T.card}
+                color={result==="ok"?"#10B981":result?"#EF4444":T.textMuted}>
+                {testing[k.id]?<Spinner size={10}/>:result==="ok"?"✓":result?"✗":"בדוק"}
+              </Btn>
             </div>
-            <Btn sm disabled={!val||testing[k.id]} onClick={()=>testKey(k.id)}
-              bg={result==="ok"?"#10B98110":result?"#EF444410":T.inputBg}
-              color={result==="ok"?"#10B981":result?"#EF4444":T.textMuted}>
-              {testing[k.id]?<Spinner size={10}/>:result==="ok"?"✓":result?"✗":"בדוק"}
-            </Btn>
-            <div style={{width:8,height:8,borderRadius:"50%",
-              background:val?(result==="ok"?"#10B981":result?"#EF4444":T.textMuted):T.border,
-              flexShrink:0}}/>
           </div>;
         })}
-      </div>
+      </div>}
     </Card>
 
     {/* Users */}
@@ -3292,24 +3308,40 @@ export default function App({ session }) {
     return ()=>clearTimeout(timer);
   },[posts, dbReady]);
 
-  // One-time token update via URL hash (e.g. #token-update:base64data)
+  // Facebook OAuth callback handler
+  const [fbPages, setFbPages] = useState(null); // pages returned from OAuth
+  const [fbAssigning, setFbAssigning] = useState(false);
+
   useEffect(()=>{
     const hash = window.location.hash;
+    // Handle FB OAuth pages callback
+    if (hash.startsWith('#fb-pages=')) {
+      try {
+        const encoded = hash.slice('#fb-pages='.length);
+        const data = JSON.parse(atob(encoded));
+        if (data.type === 'fb-oauth' && data.pages) {
+          setFbPages(data.pages);
+          console.log('FB OAuth: received', data.pages.length, 'pages');
+        }
+      } catch(e) { console.error('FB OAuth parse error:', e); }
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+    // Handle FB OAuth error
+    if (hash.startsWith('#fb-error=')) {
+      const err = decodeURIComponent(hash.slice('#fb-error='.length));
+      alert('שגיאת חיבור פייסבוק: ' + err);
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+    // Legacy token-update support
     if (hash.startsWith('#token-update:')) {
       try {
         const encoded = hash.slice('#token-update:'.length);
         const data = JSON.parse(decodeURIComponent(escape(atob(encoded))));
         if (data.type === 'updateTokens' && data.pages) {
-          const nameMap = {
-            '992114487328961': 'צייד טיסות',
-            '183582055509492': 'הקולנוע הנודד',
-            '111528414079620': 'החידונאים'
-          };
           setBusinesses(prev => {
             const updated = prev.map(b => ({...b, social:{...b.social, facebook:{...b.social?.facebook, tokens:{...b.social?.facebook?.tokens}}}}));
             for (const page of data.pages) {
-              const bizName = nameMap[page.id] || page.name;
-              const biz = updated.find(b => b.name === bizName);
+              const biz = updated.find(b => b.name === page.name);
               if (biz) {
                 biz.social.facebook.tokens.META_ACCESS_TOKEN = page.token;
                 biz.social.facebook.pageId = page.id;
@@ -3318,12 +3350,42 @@ export default function App({ session }) {
             return updated;
           });
           window.history.replaceState(null, '', window.location.pathname);
-          window.__tokensUpdated = true;
-          console.log('Tokens updated for', data.pages.length, 'pages');
         }
       } catch(e) { console.error('Token update error:', e); }
     }
   }, []);
+
+  // Assign FB page to a business
+  async function assignFbPage(businessId, page) {
+    setFbAssigning(true);
+    try {
+      const r = await authFetch('/api/auth/facebook/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId,
+          pageId: page.id,
+          pageName: page.name,
+          pageToken: page.token
+        })
+      });
+      const d = await r.json();
+      if (d.ok) {
+        // Update local state
+        setBusinesses(prev => prev.map(b => {
+          if (b.id === businessId) {
+            return { ...b, social: d.social };
+          }
+          return b;
+        }));
+        setFbPages(prev => prev.filter(p => p.id !== page.id));
+        if (fbPages.length <= 1) setFbPages(null);
+      } else {
+        alert('שגיאה: ' + (d.error || 'unknown'));
+      }
+    } catch(e) { alert('שגיאה: ' + e.message); }
+    setFbAssigning(false);
+  }
 
   const running = posts.filter(p=>(p.pipeline&&!p.pipeline.done)||(p.ugc&&!p.ugc.done)).length;
   const published = posts.filter(p=>p.pipeline?.done||p.ugc?.done).length;
@@ -3377,7 +3439,7 @@ export default function App({ session }) {
 
       {/* SIDEBAR — Desktop */}
       <div className="desktop-sidebar" style={{width:220,background:T.sidebar,borderLeft:`1px solid ${T.border}`,
-        flexDirection:"column",position:"sticky",top:0,height:"100vh",flexShrink:0,boxShadow:"2px 0 8px rgba(0,0,0,0.03)"}}>
+        flexDirection:"column",position:"sticky",top:0,height:"100vh",flexShrink:0,boxShadow:"2px 0 8px rgba(0,0,0,0.03)",zIndex:60}}>
         {/* Logo */}
         <div style={{padding:"18px 16px",borderBottom:`1px solid ${T.borderLight}`}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -3476,6 +3538,42 @@ export default function App({ session }) {
               <span style={{fontSize:17}}>{item.icon}</span>
               {item.label}
             </button>)}
+          </div>
+        </div>}
+
+        {/* FB OAuth Page Assignment Modal */}
+        {fbPages && fbPages.length > 0 && <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200,
+          display:"flex",alignItems:"center",justifyContent:"center",padding:20}}
+          onClick={()=>setFbPages(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:16,padding:24,maxWidth:500,width:"100%",
+            boxShadow:"0 20px 60px rgba(0,0,0,0.3)",maxHeight:"80vh",overflowY:"auto"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+              <span style={{fontSize:24}}>📘</span>
+              <div>
+                <div style={{color:T.text,fontSize:16,fontWeight:700}}>חבר עמודי פייסבוק</div>
+                <div style={{color:T.textMuted,fontSize:12}}>נמצאו {fbPages.length} עמודים — שייך כל עמוד לעסק</div>
+              </div>
+            </div>
+            {fbPages.map(page=><div key={page.id} style={{background:T.inputBg,border:`1px solid ${T.borderLight}`,
+              borderRadius:12,padding:14,marginBottom:10}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <span style={{color:"#1877F2",fontWeight:700,fontSize:14}}>{page.name}</span>
+                <span style={{color:T.textDim,fontSize:10}}>ID: {page.id}</span>
+                {page.category && <span style={{background:"#1877F210",color:"#1877F2",fontSize:9,padding:"2px 6px",borderRadius:6}}>{page.category}</span>}
+              </div>
+              <div style={{color:T.textMuted,fontSize:11,marginBottom:6}}>שייך לעסק:</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {businesses.map(biz=><button key={biz.id} onClick={()=>assignFbPage(biz.id, page)}
+                  disabled={fbAssigning}
+                  style={{background:biz.color+"15",border:`1px solid ${biz.color}33`,borderRadius:8,
+                    padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:600,color:T.text,fontFamily:"inherit",
+                    display:"flex",alignItems:"center",gap:4,opacity:fbAssigning?0.5:1}}>
+                  <span>{biz.icon}</span> {biz.name}
+                </button>)}
+              </div>
+            </div>)}
+            <button onClick={()=>setFbPages(null)} style={{width:"100%",marginTop:10,background:T.inputBg,border:`1px solid ${T.borderLight}`,
+              borderRadius:10,padding:"10px",cursor:"pointer",color:T.textMuted,fontSize:12,fontFamily:"inherit"}}>סגור</button>
           </div>
         </div>}
 

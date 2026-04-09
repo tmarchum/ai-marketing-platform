@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
 
-export default function AuthPage() {
+export default function AuthPage({ onBack }) {
   const [mode, setMode] = useState('login'); // login | signup | forgot
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -45,6 +45,12 @@ export default function AuthPage() {
         background: '#fff', borderRadius: 20, padding: '40px 36px', width: 380,
         boxShadow: '0 20px 60px rgba(0,0,0,0.3)', direction: 'rtl',
       }}>
+        {/* Back to landing */}
+        {onBack && <button onClick={onBack} style={{
+          background: 'none', border: 'none', color: '#8B5CF6', cursor: 'pointer', fontSize: 12,
+          fontWeight: 600, marginBottom: 12, display: 'block', fontFamily: 'inherit',
+        }}>← חזרה לדף הראשי</button>}
+
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <div style={{ fontSize: 40, marginBottom: 8 }}>⚡</div>
