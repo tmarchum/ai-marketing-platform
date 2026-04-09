@@ -353,10 +353,34 @@ app.post('/api/did/talks', async (req: any, res) => {
   if (!apiKey) return res.status(503).json({ error: 'DID_API_KEY not set' });
   try {
     const authHeader = `Basic ${apiKey}`;
+    let body = req.body;
+
+    // If audio_url is a base64 data URL, upload to D-ID first
+    if (body.script?.audio_url?.startsWith('data:')) {
+      const matches = body.script.audio_url.match(/^data:([^;]+);base64,(.+)$/);
+      if (matches) {
+        const [, contentType, b64] = matches;
+        const audioBuffer = Buffer.from(b64, 'base64');
+        const formData = new FormData();
+        formData.append('audio', new Blob([audioBuffer], { type: contentType }), 'audio.mp3');
+        const uploadRes = await fetch('https://api.d-id.com/audios', {
+          method: 'POST',
+          headers: { Authorization: authHeader },
+          body: formData,
+        });
+        const uploadData = await uploadRes.json();
+        if (uploadData.url) {
+          body = { ...body, script: { ...body.script, audio_url: uploadData.url } };
+        } else if (uploadData.error || uploadData.kind) {
+          return res.json(uploadData); // Forward D-ID error
+        }
+      }
+    }
+
     const r = await fetch('https://api.d-id.com/talks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: authHeader },
-      body: JSON.stringify(req.body),
+      body: JSON.stringify(body),
     });
     const data = await r.json();
     res.json(data);
