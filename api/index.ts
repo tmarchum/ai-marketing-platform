@@ -1112,8 +1112,8 @@ app.get('/api/cron/scan', async (req: any, res) => {
 
     const raw = await callClaude(`אתה מנתח שיווקי. נתח את העסק "${biz.name}" (${biz.description || ''}).${websiteInfo}${ownPostsInfo}
 
-החזר JSON בלבד, בלי שום טקסט לפני או אחרי:
-{"tone":"טון המותג","audience":"קהל יעד","strengths":["חוזקה 1","חוזקה 2"],"contentIdeas":["רעיון 1","רעיון 2","רעיון 3"],"topThemes":["נושא 1","נושא 2"],"bestHooks":["הוק 1","הוק 2"],"gaps":["פער 1"],"recommendation":"המלצה כללית"}`, claudeKey);
+החזר JSON קצר ותמציתי בלבד (ללא טקסט נוסף). כל ערך מחרוזת — עד 30 מילים. כל מערך — עד 3 פריטים.
+{"tone":"טון","audience":"קהל","strengths":["1","2"],"contentIdeas":["1","2","3"],"topThemes":["1","2"],"bestHooks":["1","2"],"gaps":["1"],"recommendation":"המלצה"}`, claudeKey, 2000);
     let analysis: any = {};
     try {
       // Strip markdown fences and try parsing
