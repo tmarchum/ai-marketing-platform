@@ -1115,10 +1115,13 @@ app.get('/api/cron/scan', async (req: any, res) => {
 החזר JSON בלבד, בלי שום טקסט לפני או אחרי:
 {"tone":"טון המותג","audience":"קהל יעד","strengths":["חוזקה 1","חוזקה 2"],"contentIdeas":["רעיון 1","רעיון 2","רעיון 3"],"topThemes":["נושא 1","נושא 2"],"bestHooks":["הוק 1","הוק 2"],"gaps":["פער 1"],"recommendation":"המלצה כללית"}`, claudeKey);
     let analysis: any = {};
+    steps.push('claude raw len: ' + raw.length);
+    if (raw.length > 0) steps.push('claude raw start: ' + raw.slice(0, 150).replace(/\n/g, '\\n'));
     try {
       const clean = raw.replace(/```json\s?|```/g, '').trim();
       const jsonMatch = clean.match(/\{[\s\S]*\}/);
       if (jsonMatch) analysis = JSON.parse(jsonMatch[0]);
+      else steps.push('no json match in: ' + clean.slice(0, 150));
     } catch (e: any) { steps.push('json parse error: ' + e.message + ' | raw: ' + raw.slice(0, 200)); }
     steps.push('analysis: ' + (Object.keys(analysis).length > 0 ? Object.keys(analysis).join(',') : 'empty'));
 
