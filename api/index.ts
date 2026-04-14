@@ -1004,100 +1004,128 @@ async function callClaude(prompt: string, apiKey: string, maxTokens = 1200): Pro
   return d.content?.[0]?.text || '';
 }
 
+// Helper: fetch website content directly (fast, no Apify needed)
+async function fetchWebsiteContent(url: string): Promise<string> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const r = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MarketingBot/1.0)' },
+    });
+    const html = await r.text();
+    // Strip HTML tags, scripts, styles — extract text
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return text.slice(0, 4000);
+  } finally { clearTimeout(timer); }
+}
+
+// Helper: fetch FB posts via Meta Graph API (fast, no Apify needed)
+async function fetchFBPosts(pageId: string, accessToken: string): Promise<any[]> {
+  try {
+    const r = await fetch(`https://graph.facebook.com/v25.0/${pageId}/posts?fields=message,created_time,shares&limit=15&access_token=${accessToken}`);
+    const d = await r.json();
+    if (!d.data) return [];
+    return d.data.filter((p: any) => p.message).map((p: any) => ({
+      text: p.message || '',
+      likes: 0,
+      comments: 0,
+      shares: p.shares?.count || 0,
+      date: p.created_time,
+    }));
+  } catch { return []; }
+}
+
 app.get('/api/cron/scan', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   try {
-    const { data: businesses } = await sb.from('businesses').select('*');
-    if (!businesses?.length) return res.json({ message: 'No businesses', scanned: 0 });
+    // Pick one business: by ?name= param, or the one least recently scanned
+    const bizName = req.query.name;
+    let businesses: any[];
+    if (bizName) {
+      const { data } = await sb.from('businesses').select('*').eq('name', bizName).limit(1);
+      businesses = data || [];
+    } else {
+      // Get all, sort by scan date (oldest first), pick first
+      const { data } = await sb.from('businesses').select('*').order('visual_extracted_at', { ascending: true, nullsFirst: true }).limit(1);
+      businesses = data || [];
+    }
+    if (!businesses.length) return res.json({ message: 'No businesses to scan', scanned: 0 });
 
-    // Get API keys (from first user or env)
+    const biz = businesses[0];
+
+    // Get Claude API key
     const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
     const keyMap: Record<string, string> = {};
     for (const k of (keys || [])) keyMap[k.key_name] = k.key_value;
-    const apifyToken = keyMap.APIFY_API_TOKEN || process.env.APIFY_TOKEN || process.env.APIFY_API_TOKEN || '';
     const claudeKey = keyMap.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
-    if (!apifyToken || !claudeKey) return res.json({ error: 'Missing APIFY or ANTHROPIC key', scanned: 0 });
+    if (!claudeKey) return res.json({ error: 'Missing ANTHROPIC key', scanned: 0 });
 
-    const results: any[] = [];
+    const steps: string[] = [];
+    let websiteContent = '';
+    let fbPosts: any[] = [];
 
-    for (const biz of businesses) {
-      const bizResult: any = { name: biz.name, steps: [] };
-      let websiteContent = '';
-      let fbPosts: any[] = [];
-      let competitorPosts: any[] = [];
-
-      // 1. Scrape website
-      if (biz.url) {
-        try {
-          const items = await runApify('apify~website-content-crawler', { startUrls: [{ url: biz.url }], maxCrawlPages: 5, maxCrawlDepth: 1 }, apifyToken);
-          websiteContent = items.map((i: any) => i.text || i.body || '').filter(Boolean).join('\n\n').slice(0, 3000);
-          bizResult.steps.push('website: ' + websiteContent.length + ' chars');
-        } catch (e: any) { bizResult.steps.push('website: error ' + e.message); }
-      }
-
-      // 2. Scrape own FB page
-      const pageId = biz.social?.facebook?.tokens?.META_PAGE_ID;
-      if (pageId) {
-        try {
-          const items = await runApify('apify~facebook-posts-scraper', { startUrls: [{ url: `https://www.facebook.com/${pageId}` }], resultsLimit: 15, viewOption: 'CHRONOLOGICAL' }, apifyToken);
-          fbPosts = items.map((p: any) => ({ text: p.text || p.message || '', likes: p.likes || p.reactionsCount || 0, comments: p.comments || p.commentsCount || 0 })).filter((p: any) => p.text);
-          bizResult.steps.push('fb: ' + fbPosts.length + ' posts');
-        } catch (e: any) { bizResult.steps.push('fb: error ' + e.message); }
-      }
-
-      // 3. Scrape competitors
-      const competitors = biz.competitors || [];
-      for (const comp of competitors.slice(0, 3)) {
-        const compUrl = comp.url || comp.fbUrl;
-        if (!compUrl) continue;
-        try {
-          const items = await runApify('apify~facebook-posts-scraper', { startUrls: [{ url: compUrl }], resultsLimit: 10, viewOption: 'CHRONOLOGICAL' }, apifyToken);
-          const posts = items.map((p: any) => ({ text: p.text || p.message || '', likes: p.likes || p.reactionsCount || 0, comments: p.comments || p.commentsCount || 0 })).filter((p: any) => p.text);
-          competitorPosts.push({ name: comp.name, posts });
-          bizResult.steps.push(`comp ${comp.name}: ${posts.length} posts`);
-        } catch {}
-      }
-
-      // 4. Claude analysis
-      const websiteInfo = websiteContent ? `\nתוכן מהאתר:\n${websiteContent.slice(0, 800)}` : '';
-      const ownPostsInfo = fbPosts.length > 0 ? `\nפוסטים אחרונים:\n${fbPosts.slice(0, 5).map(p => `- "${p.text.slice(0, 50)}..." → ${p.likes} לייקים`).join('\n')}` : '';
-      const compInfo = competitorPosts.length > 0 ? `\nפוסטים מתחרים:\n${competitorPosts.map(c => `${c.name}: ${c.posts.slice(0, 3).map((p: any) => `"${p.text.slice(0, 40)}..." (${p.likes})`).join(', ')}`).join('\n')}` : '';
-
+    // 1. Fetch website directly (no Apify — instant)
+    if (biz.url) {
       try {
-        const raw = await callClaude(`אתה מנתח שיווקי. נתח את העסק "${biz.name}" (${biz.description || ''}).${websiteInfo}${ownPostsInfo}${compInfo}
-החזר JSON: {"tone":"טון","audience":"קהל יעד","strengths":["..."],"contentIdeas":["..."],"competitorInsights":"תובנה","topThemes":["..."],"bestHooks":["..."],"gaps":["..."],"recommendation":"המלצה"}
+        websiteContent = await fetchWebsiteContent(biz.url.trim());
+        steps.push('website: ' + websiteContent.length + ' chars');
+      } catch (e: any) { steps.push('website: error ' + e.message); }
+    }
+
+    // 2. Fetch FB posts via Meta Graph API (no Apify)
+    const pageAccessToken = biz.social?.facebook?.tokens?.META_PAGE_ACCESS_TOKEN;
+    const pageId = biz.social?.facebook?.tokens?.META_PAGE_ID;
+    if (pageId && pageAccessToken) {
+      try {
+        fbPosts = await fetchFBPosts(pageId, pageAccessToken);
+        steps.push('fb: ' + fbPosts.length + ' posts');
+      } catch (e: any) { steps.push('fb: error ' + e.message); }
+    } else {
+      steps.push('fb: no tokens');
+    }
+
+    // 3. Claude analysis
+    const websiteInfo = websiteContent ? `\nתוכן מהאתר:\n${websiteContent.slice(0, 1500)}` : '';
+    const ownPostsInfo = fbPosts.length > 0 ? `\nפוסטים אחרונים:\n${fbPosts.slice(0, 5).map(p => `- "${p.text.slice(0, 80)}..."`).join('\n')}` : '';
+
+    const raw = await callClaude(`אתה מנתח שיווקי. נתח את העסק "${biz.name}" (${biz.description || ''}).${websiteInfo}${ownPostsInfo}
+החזר JSON: {"tone":"טון","audience":"קהל יעד","strengths":["..."],"contentIdeas":["..."],"topThemes":["..."],"bestHooks":["..."],"gaps":["..."],"recommendation":"המלצה"}
 JSON תקין בלבד.`, claudeKey);
-        const clean = raw.replace(/```json|```/g, '').trim();
-        const analysis = JSON.parse(clean.match(/\{[\s\S]*\}/)?.[0] || '{}');
+    const clean = raw.replace(/```json|```/g, '').trim();
+    const analysis = JSON.parse(clean.match(/\{[\s\S]*\}/)?.[0] || '{}');
+    steps.push('analysis: done');
 
-        const updateData: any = {
-          scan_result: analysis,
-          full_scan_data: { websiteContent: websiteContent.slice(0, 2000), fbPosts: fbPosts.slice(0, 10), competitorPosts, analysis },
-        };
+    const updateData: any = {
+      scan_result: analysis,
+      full_scan_data: { websiteContent: websiteContent.slice(0, 2000), fbPosts: fbPosts.slice(0, 10), analysis },
+      visual_extracted_at: new Date().toISOString(),
+    };
 
-        // 5. Auto-generate visual_identity if empty
-        if (!biz.visual_identity && (websiteContent || fbPosts.length > 0)) {
-          try {
-            const viRaw = await callClaude(`You are a brand visual consultant. Write a concise VISUAL IDENTITY description in English for AI image/video generation. Include: what the product/service physically LOOKS LIKE, signature visual elements, color palette, photographic style, mood, and 3-5 specific visual motifs. Output ONLY a single paragraph of 80-150 words.
+    // 4. Auto-generate visual_identity if empty
+    if (!biz.visual_identity && websiteContent) {
+      try {
+        const viRaw = await callClaude(`You are a brand visual consultant. Write a concise VISUAL IDENTITY description in English for AI image/video generation. Include: what the product/service physically LOOKS LIKE, signature visual elements, color palette, photographic style, mood, and 3-5 specific visual motifs. Output ONLY a single paragraph of 80-150 words.
 
 Business: ${biz.name}
 Website: ${biz.url || 'N/A'}
 Description: ${biz.description || 'N/A'}
-Recent posts: ${fbPosts.slice(0, 5).map(p => p.text.slice(0, 60)).join(' | ')}`, claudeKey, 500);
-            if (viRaw.trim()) updateData.visual_identity = viRaw.trim();
-            bizResult.steps.push('visual_identity: generated');
-          } catch {}
-        }
-
-        await sb.from('businesses').update(updateData).eq('id', biz.id);
-        bizResult.steps.push('analysis: saved');
-      } catch (e: any) { bizResult.steps.push('analysis: error ' + e.message); }
-
-      results.push(bizResult);
+Website content: ${websiteContent.slice(0, 500)}`, claudeKey, 500);
+        if (viRaw.trim()) updateData.visual_identity = viRaw.trim();
+        steps.push('visual_identity: generated');
+      } catch (e: any) { steps.push('visual_identity: error ' + e.message); }
     }
 
-    res.json({ message: 'Scan complete', results });
+    await sb.from('businesses').update(updateData).eq('id', biz.id);
+    steps.push('saved');
+
+    res.json({ message: 'Scan complete', business: biz.name, steps });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
