@@ -14,41 +14,6 @@ const DEFAULT_BUSINESSES = [
   { id: "cinema",  name: "הקולנוע הנודד", icon: "🎬", color: "#F59E0B", url:"", description:"", social:{}, scanResult:null },
   { id: "flights", name: "צייד טיסות",    icon: "✈️", color: "#3B82F6", url:"", description:"", social:{}, scanResult:null },
 ];
-// Background colors by topic for D-ID greenscreen clips
-const BG_COLORS = {
-  travel:  "#0EA5E9", // sky blue
-  food:    "#EA580C", // warm orange
-  fitness: "#16A34A", // green
-  tech:    "#2563EB", // blue
-  edu:     "#7C3AED", // purple
-  beauty:  "#EC4899", // pink
-  home:    "#D97706", // amber
-  film:    "#DC2626", // red
-  gaming:  "#7C3AED", // purple
-  default: "#1E293B", // dark slate
-};
-function pickBackground(biz) {
-  const txt = `${biz.name} ${biz.description || ""}`.toLowerCase();
-  if (txt.match(/טיס|flight|travel|חופש|נסיע|מלון|hotel/)) return BG_COLORS.travel;
-  if (txt.match(/אוכל|food|מסעד|שף|בישול|cook/)) return BG_COLORS.food;
-  if (txt.match(/כושר|ספורט|fitness|gym|אימון/)) return BG_COLORS.fitness;
-  if (txt.match(/טכנו|tech|הייטק|סטארט|תוכנ/)) return BG_COLORS.tech;
-  if (txt.match(/לימוד|חינוך|edu|קורס|הרצא/)) return BG_COLORS.edu;
-  if (txt.match(/יופי|beauty|קוסמ|איפור|טיפוח/)) return BG_COLORS.beauty;
-  if (txt.match(/בית|home|עיצוב|דירה|נדל/)) return BG_COLORS.home;
-  if (txt.match(/קולנוע|סרט|film|cinema|אירוע/)) return BG_COLORS.film;
-  if (txt.match(/גיימ|game|חידון|משחק/)) return BG_COLORS.gaming;
-  return BG_COLORS.default;
-}
-
-const AVATAR_LIBRARY = [
-  { id:"a1", name:"מיכל", age:"28", desc:"אמא צעירה, חמה", color:"#EC4899", img:"https://clips-presenters.d-id.com/v2/Amber_WhiteBlueShirt_GreenScreen/Q7fF0ERkU2/cgEgRannum/image.png", presenterId:"v2_public_Amber_WhiteBlueShirt_GreenScreen@Q7fF0ERkU2" },
-  { id:"a2", name:"שירה", age:"34", desc:"לייפסטייל, ספורטיבית", color:"#8B5CF6", img:"https://clips-presenters.d-id.com/v2/diana_purple_shirt_1_green_screen/HiT0penpLE/T4mnIx2ISP/image.png", presenterId:"v2_public_diana_purple_shirt_1_green_screen@HiT0penpLE" },
-  { id:"a3", name:"נועה", age:"26", desc:"טרנדי, עירונית", color:"#06B6D4", img:"https://clips-presenters.d-id.com/v2/lily_black_jakcet_green_screen/MsCeSpEt6l/image.png", presenterId:"v2_public_lily_black_jakcet_green_screen@MsCeSpEt6l" },
-  { id:"a4", name:"דנה", age:"41", desc:"מקצועית, אמינה", color:"#10B981", img:"https://clips-presenters.d-id.com/v2/fiona_black_jacket_green_screen/477B7MX1Vf/image.png", presenterId:"v2_public_fiona_black_jacket_green_screen@477B7MX1Vf" },
-  { id:"a5", name:"ליאור", age:"31", desc:"אבא, מעשי", color:"#F59E0B", img:"https://clips-presenters.d-id.com/v2/dylan_grey_suite_green_screen_1/KHlzCjIFiH/CssfNY1Jh4/image.png", presenterId:"v2_public_dylan_grey_suite_green_screen_1@KHlzCjIFiH" },
-  { id:"a6", name:"עמית", age:"38", desc:"מנהל, אמין", color:"#EF4444", img:"https://clips-presenters.d-id.com/v2/alex_black_suite_green_screen/u8RGmlrjpD/Q8ImoYHLlV/image.png", presenterId:"v2_public_alex_black_suite_green_screen@u8RGmlrjpD" },
-];
 const SOURCES_INIT = [
   { id:1, name:"הקולנוע הנודד", url:"wanderingcinema.co.il", type:"url", role:"עסק" },
   { id:2, name:"צייד טיסות", url:"flighthunter.co.il", type:"url", role:"עסק" },
@@ -57,10 +22,10 @@ const SOURCES_INIT = [
 const SAMPLE_POSTS = [
   { id:1, business:"הקולנוע הנודד", platform:"פייסבוק", type:"פוסט קצר",
     content:"🎬 ערב קולנוע תחת כיפת השמיים!\n\nהקולנוע הנודד מגיע לאירוע שלכם – חתונות, גיבוש, ערבים פרטיים.\nהצעת מחיר לאירועי קיץ ⬇️",
-    hashtags:["קולנוע","אירועים","כיפת_השמיים"], date:"ב׳ 01.04 · 20:00", approved:false, media:null, ugc:null, pipeline:null },
+    hashtags:["קולנוע","אירועים","כיפת_השמיים"], date:"ב׳ 01.04 · 20:00", approved:false, media:null, pipeline:null },
   { id:2, business:"צייד טיסות", platform:"אינסטגרם", type:"סטורי",
     content:"✈️ טסים בקרוב?\n\nה-AI שלנו סורק מאות מחירים ומוצא לכם את הטיסה הכי זולה לפני כולם.\nצייד טיסות 🎯",
-    hashtags:["טיסות","חיסכון","צייד_טיסות"], date:"ג׳ 02.04 · 20:00", approved:false, media:null, ugc:null, pipeline:null },
+    hashtags:["טיסות","חיסכון","צייד_טיסות"], date:"ג׳ 02.04 · 20:00", approved:false, media:null, pipeline:null },
 ];
 
 const BIZ_ICONS = ["🏪","🎬","✈️","🍕","💇","🏋️","🏠","🚗","📸","🎵","🛍️","💻","🎓","🏥","⚖️"];
@@ -90,7 +55,7 @@ const NAV_ITEMS = [
   { id:"sources",   icon:"🌐", label:"מקורות" },
   { id:"content",   icon:"✍️", label:"תוכן" },
   { id:"media",     icon:"🖼️", label:"מדיה AI" },
-  { id:"ugc",       icon:"🎭", label:"UGC Avatar" },
+  { id:"agents",    icon:"🤖", label:"סוכנים" },
   { id:"publish",   icon:"📡", label:"פרסום" },
   { id:"schedule",  icon:"📅", label:"תזמון" },
   { id:"analytics", icon:"📈", label:"ניתוח" },
@@ -159,6 +124,22 @@ function SectionTitle({ children, sub }) {
     <h2 style={{ fontWeight:700, fontSize:20, margin:0, color:T.text }}>{children}</h2>
     {sub && <p style={{ color:T.textMuted, fontSize:13, margin:"4px 0 0" }}>{sub}</p>}
   </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// URL SHORTENER
+// ═══════════════════════════════════════════════════════════════════
+async function shortenUrl(url, businessId) {
+  if (!url) return "";
+  try {
+    const r = await authFetch("/api/shorten", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, business_id: businessId }),
+    });
+    const d = await r.json();
+    return d.shortUrl || url;
+  } catch { return url; }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -619,175 +600,157 @@ const MEDIA_STAGES = [
   { id:"image",   label:"תמונה/סרטון", icon:"🖼️", color:"#F59E0B" },
   { id:"publish", label:"Meta",    icon:"📡", color:"#1877F2" },
 ];
-const UGC_STAGES = [
-  { id:"script",  label:"סקריפט", icon:"✍️", color:"#8B5CF6", ms:2000 },
-  { id:"tts",     label:"קול",    icon:"🎙️", color:"#EC4899", ms:3000 },
-  { id:"avatar",  label:"D-ID",   icon:"🎭", color:"#F59E0B", ms:7000 },
-  { id:"bg",      label:"רקע",    icon:"🏠", color:"#10B981", ms:3000 },
-  { id:"publish", label:"Meta",   icon:"📡", color:"#1877F2", ms:2000 },
-];
+// Claude prompt enhancer — converts Hebrew post to detailed English prompt for Gemini/Veo
+async function enhancePromptWithClaude(post, businesses, mediaType = "image") {
+  const biz = (businesses || []).find(b => b.name === post.business) || {};
+  const isVideo = mediaType === "video";
+  const visualIdentity = biz.visual_identity ? `\n\nBRAND VISUAL IDENTITY (style guide — match this consistently):\n"""\n${biz.visual_identity}\n"""` : "";
+  const instruction = `You are a visual director creating prompts for Google ${isVideo ? "Veo 3 video" : "Imagen / Gemini image"} generation.
 
-async function generateImageWithFlux(prompt) {
-  // Use server-side proxy (works on both localhost and Vercel)
-  const resp = await authFetch("/api/replicate/predictions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "black-forest-labs/flux-1.1-pro", input: { prompt, aspect_ratio: "1:1", output_format: "jpg", safety_tolerance: 5 } })
-  });
-  const prediction = await resp.json();
-  if (prediction.error) throw new Error(prediction.error);
-  if (prediction.detail) throw new Error(prediction.title || prediction.detail);
-  if (!resp.ok) throw new Error(`Replicate: ${resp.status} ${resp.statusText}`);
+Your job: read the Hebrew social media post below and produce a DETAILED English ${isVideo ? "video" : "image"} prompt that visually represents THE EXACT SPECIFIC SUBJECT described in the post — not a generic business photo.
 
-  // Poll for result via server proxy
-  const predictionId = prediction.id;
-  if (!predictionId) throw new Error("Replicate: missing prediction ID");
-  for (let i = 0; i < 60; i++) {
-    await sleep(2000);
-    const poll = await authFetch(`/api/replicate/predictions/${predictionId}`);
-    const result = await poll.json();
-    if (result.status === "succeeded") return result.output;
-    if (result.status === "failed" || result.status === "canceled") throw new Error(result.error || "Image generation failed");
+CRITICAL RULES:
+1. FIRST, identify the SINGLE MOST SPECIFIC concrete subject/product/activity mentioned in the post (e.g. "interactive trivia quiz game station with colorful buttons", "chocolate cake slice with melting ganache", "live cooking demo with chef plating dish") — NOT generic "people at an event" or "business meeting".
+2. The prompt MUST showcase that specific subject as the MAIN FOCAL POINT of the ${isVideo ? "video" : "image"}.
+3. Do NOT substitute with a generic stock-photo scene of the business category.
+4. Match the BRAND VISUAL IDENTITY below for style, palette, mood, and recurring motifs — so all media from this brand looks consistent.
+5. Include: specific subject (most important), ${isVideo ? "camera movement, action, " : "composition, camera angle, "}lighting, color palette, mood, style, setting, small authentic details.
+6. ${isVideo ? "Aspect: vertical 9:16 for mobile social media." : ""}
+7. NO text, NO typography, NO logos, NO captions, NO subtitles, NO watermarks anywhere in the ${isVideo ? "video" : "image"}.
+8. Keep under ${isVideo ? "140" : "120"} words. Output ONLY the final prompt text — no preamble, no labels.
+
+Business context: ${biz.name || ""} — ${biz.description || biz.industry || ""}${visualIdentity}
+
+Hebrew post:
+"""
+${post.content}
+"""
+
+Now write the ${isVideo ? "video" : "image"} prompt:`;
+
+  let enhanced = post.content;
+  try {
+    const r = await authFetch("/api/content/claude", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: instruction,
+        maxTokens: 600,
+      }),
+    });
+    const d = await r.json();
+    enhanced = (d.text || "").trim() || post.content;
+    // Always append a hard no-text constraint as insurance
+    enhanced += " No text, no letters, no typography, no logos, no captions anywhere in the frame.";
+  } catch {
+    enhanced = post.content;
   }
-  throw new Error("Timeout: image generation took too long");
+  return enhanced;
 }
 
-const GEMINI_STAGES = [
-  { id:"text",   label:"טקסט",  icon:"✍️", color:"#4285F4" },
-  { id:"image",  label:"תמונה", icon:"🖼️", color:"#EA4335" },
-  { id:"publish",label:"Meta",  icon:"📡", color:"#1877F2" },
-];
+// Generate image for an existing post using Gemini 2.5 Flash Image
+// Pipeline: Claude enhances Hebrew post → English visual prompt → Gemini image
+async function runGeminiImagePipeline(post, businesses, onUpdate) {
+  const s = Object.fromEntries(MEDIA_STAGES.map(st=>[st.id,"pending"]));
 
-async function runGeminiPipeline(biz, platform, onUpdate) {
-  const s = Object.fromEntries(GEMINI_STAGES.map(st=>[st.id,"pending"]));
-
-  // STAGE 1: Generate post text with Gemini
-  s.text = "running";
-  onUpdate({ stages:{...s}, current:"text", done:false });
-  let postText, hashtags;
+  // STAGE 1: Enhance prompt with Claude
+  s.prompt = "running";
+  onUpdate({ stages:{...s}, current:"prompt", done:false });
+  let enhancedPrompt;
   try {
-    const r = await authFetch("/api/gemini/generate", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({
-        prompt: `אתה קופירייטר מקצועי. כתוב פוסט שיווקי קצר ומושך בעברית עבור העסק "${biz.name}"${biz.description ? ` - ${biz.description}` : ""}.
-הפוסט יהיה לפלטפורמה: ${platform}.
-כללים:
-- 2-4 משפטים, עם אימוג'ים
-- שורה אחרונה: 3-5 האשטגים רלוונטיים (עם #)
-- סגנון: ידידותי, מקצועי, קריאה לפעולה
-- אל תכתוב שום דבר מלבד הפוסט עצמו`, maxTokens: 300
-      })
-    });
-    if (!r.ok) throw new Error(`Gemini HTTP ${r.status}`);
-    const d = await r.json();
-    if (d.error) throw new Error(d.error);
-    const fullText = d.text || "";
-    // Extract hashtags from text
-    const hashtagMatch = fullText.match(/#[\u0590-\u05FFa-zA-Z_]+/g) || [];
-    hashtags = hashtagMatch.map(h=>h.replace("#",""));
-    postText = fullText;
-  } catch(e) {
-    s.text = "error";
-    onUpdate({ stages:{...s}, current:null, done:false, error:`שגיאה ב-Gemini: ${e.message}` });
-    return { error: e.message };
+    enhancedPrompt = await enhancePromptWithClaude(post, businesses, "image");
+  } catch {
+    enhancedPrompt = post.content;
   }
-  s.text = "done";
-  onUpdate({ stages:{...s}, current:"text", done:false, postText, hashtags });
-
-  // STAGE 2: Generate image with Gemini Imagen
+  s.prompt = "done";
   s.image = "running";
-  onUpdate({ stages:{...s}, current:"image", done:false, postText, hashtags });
+  onUpdate({ stages:{...s}, current:"image", done:false, enhancedPrompt });
+
   let imageBase64;
   try {
-    const promptR = await authFetch("/api/gemini/generate", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({
-        prompt: `Based on this marketing post for "${biz.name}", write a single-line image prompt in English for AI image generation.
-Post: "${postText}"
-Rules:
-- Describe a professional marketing visual that fits the post
-- NO people, NO hands, NO faces, NO text in image
-- Focus on landscapes, objects, products, icons, abstract illustrations
-- End with: "no people, no hands, no text, professional marketing photo"
-- Write ONLY the prompt, nothing else`, maxTokens: 150
-      })
-    });
-    const promptD = await promptR.json();
-    const imagePrompt = promptD.text || "Professional marketing visual, vibrant, no people, no text";
-
     const imgR = await authFetch("/api/gemini/image", {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ prompt: imagePrompt, aspectRatio: "1:1" })
+      body: JSON.stringify({
+        prompt: enhancedPrompt
+      })
     });
     if (!imgR.ok) {
       const errText = await imgR.text().catch(()=>"");
-      throw new Error(`Imagen HTTP ${imgR.status}: ${errText.substring(0,100)}`);
+      throw new Error(`Gemini HTTP ${imgR.status}: ${errText.substring(0,100)}`);
     }
     const imgD = await imgR.json();
     if (imgD.error) throw new Error(imgD.error);
     imageBase64 = `data:${imgD.contentType};base64,${imgD.imageBase64}`;
   } catch(e) {
     s.image = "error";
-    onUpdate({ stages:{...s}, current:null, done:false, postText, hashtags, error:`שגיאה ב-Imagen: ${e.message}` });
-    return { postText, hashtags, error: e.message };
+    onUpdate({ stages:{...s}, current:null, done:false, error:`שגיאה ב-Gemini: ${e.message}` });
+    return { error: e.message };
   }
   s.image = "done";
 
   // STOP — wait for user approval
   s.publish = "waiting";
-  onUpdate({ stages:{...s}, current:null, done:true, postText, hashtags, imageUrl: imageBase64, readyToPublish:true });
-  return { postText, hashtags, imageUrl: imageBase64 };
+  onUpdate({ stages:{...s}, current:null, done:false, imageUrl: imageBase64, readyToPublish:true });
+  return { imageUrl: imageBase64 };
 }
 
-async function runRealPipeline(post, businesses, onUpdate, mediaType="image") {
-  const stages = MEDIA_STAGES;
-  const s = Object.fromEntries(stages.map(st=>[st.id,"pending"]));
+// Generate VIDEO for an existing post using Gemini Veo
+async function runGeminiVideoPipeline(post, businesses, onUpdate, opts={}) {
+  const s = Object.fromEntries(MEDIA_STAGES.map(st=>[st.id,"pending"]));
 
-  // STAGE 1: Generate prompt with Claude
+  // STAGE 1: Enhance prompt with Claude
   s.prompt = "running";
   onUpdate({ stages:{...s}, current:"prompt", done:false });
-  let mediaPrompt;
-  const isVideo = mediaType === "video";
+  let enhancedPrompt;
   try {
-    mediaPrompt = await claudeCall(
-      `אתה מומחה ליצירת ${isVideo?"סרטונים":"תמונות"} AI. קרא את הפוסט הבא וצור prompt באנגלית ליצירת ${isVideo?"סרטון קצר":"תמונה"} שתתאים לו בפייסבוק/אינסטגרם.
-הפוסט: "${post.content}"
-כתוב רק את ה-prompt באנגלית, שורה אחת, ללא הסברים. ${isVideo?"הסרטון":"התמונה"} צריכ${isVideo?"":"ה"} להיות מקצועי${isVideo?"":"ת"}, מושכ${isVideo?"":"ת"}, ומתאימ${isVideo?"":"ה"} לשיווק ברשתות חברתיות.
-כללים חשובים:
-- אל תכלול טקסט ${isVideo?"בסרטון":"בתמונה"}
-- אל תכלול אנשים, ידיים, אצבעות, פנים או חלקי גוף — AI יוצר אותם מעוותים
-- התמקד בנוף, חפצים, מוצרים, אייקונים או אילוסטרציות מופשטות
-- הוסף בסוף: "no people, no hands, no fingers, no faces, no text"`, 250
-    );
-  } catch(e) {
-    mediaPrompt = "Professional marketing visual, vibrant colors, eye-catching social media content, 4k quality, no people, no text";
+    enhancedPrompt = await enhancePromptWithClaude(post, businesses, "video");
+  } catch {
+    enhancedPrompt = post.content;
   }
   s.prompt = "done";
-  onUpdate({ stages:{...s}, current:"prompt", done:false });
-
-  // STAGE 2: Generate media (image or video)
   s.image = "running";
-  onUpdate({ stages:{...s}, current:"image", done:false });
-  let imageUrl, videoUrl;
+  onUpdate({ stages:{...s}, current:"image", done:false, enhancedPrompt });
+
   try {
-    if (isVideo) {
-      // Generate image first as thumbnail, then animate with Runway
-      imageUrl = await generateImageWithFlux(mediaPrompt);
-      onUpdate({ stages:{...s}, current:"image", done:false, imageUrl });
-      videoUrl = await runwayImageToVideo(imageUrl);
-    } else {
-      imageUrl = await generateImageWithFlux(mediaPrompt);
+    // Start video generation
+    const aspect = opts?.aspect || "9:16";
+    const duration = opts?.duration || 8;
+    const r = await authFetch("/api/gemini/video", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        prompt: enhancedPrompt,
+        aspectRatio: aspect,
+        durationSeconds: duration
+      })
+    });
+    if (!r.ok) {
+      const errText = await r.text().catch(()=>"");
+      throw new Error(`Veo HTTP ${r.status}: ${errText.substring(0,100)}`);
     }
+    const { operationName, error } = await r.json();
+    if (error) throw new Error(error);
+
+    // Poll for completion
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r=>setTimeout(r, 3000));
+      const poll = await authFetch(`/api/gemini/video/${encodeURIComponent(operationName)}`);
+      const result = await poll.json();
+      if (result.error) throw new Error(result.error);
+      if (result.done) {
+        const videoUrl = result.videoUrl;
+        if (!videoUrl) throw new Error("No video URL returned");
+        s.image = "done";
+        s.publish = "waiting";
+        onUpdate({ stages:{...s}, current:null, done:false, videoUrl, readyToPublish:true });
+        return { videoUrl };
+      }
+    }
+    throw new Error("Timeout — video generation took too long");
   } catch(e) {
     s.image = "error";
-    onUpdate({ stages:{...s}, current:null, done:false, imageUrl, error: `שגיאה ביצירת ${isVideo?"סרטון":"תמונה"}: ${e.message}` });
+    onUpdate({ stages:{...s}, current:null, done:false, error:`שגיאה ב-Veo: ${e.message}` });
     return { error: e.message };
   }
-  s.image = "done";
-  // STOP HERE — wait for user approval before publishing
-  s.publish = "waiting";
-  onUpdate({ stages:{...s}, current:null, done:false, imageUrl, videoUrl, readyToPublish:true });
-  return { imageUrl, videoUrl };
 }
 
 // Publish media to Facebook — called only after user approves
@@ -806,14 +769,32 @@ async function publishMediaToFB(post, businesses, pipeline, onUpdate) {
     const accessToken = fbTokens.META_ACCESS_TOKEN;
     const hashtags = (post.hashtags||[]).map(h=>h.startsWith("#")?h:`#${h}`).join(" ");
     const message = post.content + (hashtags ? "\n\n" + hashtags : "");
-    const mediaUrl = pipeline.videoUrl || pipeline.imageUrl;
-    const endpoint = pipeline.videoUrl
+    let mediaUrl = pipeline.videoUrl || pipeline.imageUrl;
+
+    // If base64 data URL, upload to Supabase Storage first to get a real URL
+    if (mediaUrl && mediaUrl.startsWith("data:")) {
+      const upR = await authFetch("/api/upload/image", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base64: mediaUrl, contentType: mediaUrl.match(/data:([^;]+)/)?.[1] || "image/png" })
+      });
+      const upD = await upR.json();
+      if (upD.error) throw new Error(`העלאת תמונה: ${upD.error}`);
+      mediaUrl = upD.url;
+    }
+
+    const isVideo = !!pipeline.videoUrl;
+    const endpoint = isVideo
       ? `https://graph.facebook.com/v25.0/${pageId}/videos`
       : `https://graph.facebook.com/v25.0/${pageId}/photos`;
 
+    // Facebook videos require file_url + description, photos require url + message
+    const body = isVideo
+      ? { file_url: mediaUrl, description: message, access_token: accessToken }
+      : { url: mediaUrl, message, access_token: accessToken };
+
     const r = await fetch(endpoint, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: mediaUrl, message, access_token: accessToken })
+      body: JSON.stringify(body)
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error.message);
@@ -827,206 +808,15 @@ async function publishMediaToFB(post, businesses, pipeline, onUpdate) {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// ELEVENLABS TTS — Real Hebrew Text-to-Speech
-// ═══════════════════════════════════════════════════════════════════
-function cleanScriptForTTS(text) {
-  // Remove stage directions: **text**, [text], (text)
-  let clean = text.replace(/\*\*[^*]+\*\*/g, "");
-  clean = clean.replace(/\[[^\]]+\]/g, "");
-  clean = clean.replace(/\([^)]*הוראה[^)]*\)/g, "");
-  clean = clean.replace(/\([^)]*מדבר[^)]*\)/g, "");
-  clean = clean.replace(/\([^)]*צוחק[^)]*\)/g, "");
-  // Remove excessive whitespace/newlines
-  clean = clean.replace(/\n{2,}/g, "\n").replace(/^\s+|\s+$/gm, "").trim();
-  return clean;
-}
-
-async function elevenLabsTTS(text, voiceId) {
-  const cleanText = cleanScriptForTTS(text);
-  const r = await authFetch("/api/elevenlabs/tts", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: cleanText, voiceId: voiceId || "EXAVITQu4vr4xnSDxMaL", languageCode: "he" })
-  });
-  if (!r.ok) {
-    const errText = await r.text().catch(() => "");
-    throw new Error(`ElevenLabs HTTP ${r.status}: ${errText.substring(0, 100)}`);
-  }
-  const data = await r.json();
-  if (data.error) throw new Error(data.error);
-  return `data:${data.contentType};base64,${data.audioBase64}`;
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// D-ID — Avatar Video Generation
-// ═══════════════════════════════════════════════════════════════════
-async function didCreateTalk(imageUrl, audioUrl, presenterId, bgColor) {
-  // Use clips API with presenter for movement + backgrounds, fallback to talks
-  const useClips = !!presenterId;
-  const endpoint = useClips ? "/api/did/clips" : "/api/did/talks";
-  const body = useClips
-    ? {
-        presenter_id: presenterId,
-        script: { type: "audio", audio_url: audioUrl },
-        config: { result_format: "mp4" },
-        ...(bgColor ? { background: { color: bgColor } } : {}),
-      }
-    : { source_url: imageUrl, script: { type: "audio", audio_url: audioUrl }, config: { stitch: true } };
-
-  const r = await authFetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  if (!r.ok) {
-    const errText = await r.text().catch(() => "");
-    throw new Error(`D-ID HTTP ${r.status}: ${errText.substring(0, 100)}`);
-  }
-  const data = await r.json();
-  if (data.error || data.kind || data.status === "error") {
-    throw new Error(data.error || data.description || data.message || "D-ID error");
-  }
-  const jobId = data.id;
-  if (!jobId) throw new Error("D-ID: missing job ID");
-
-  // Poll for result
-  const pollEndpoint = useClips ? `/api/did/clips/${jobId}` : `/api/did/talks/${jobId}`;
-  for (let i = 0; i < 60; i++) {
-    await sleep(3000);
-    const poll = await authFetch(pollEndpoint);
-    const result = await poll.json();
-    if (result.status === "done") return result.result_url;
-    if (result.status === "error" || result.status === "rejected") {
-      throw new Error(result.error?.description || "D-ID video generation failed");
-    }
-  }
-  throw new Error("Timeout: D-ID video generation took too long");
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// RUNWAY ML — Image to Video
-// ═══════════════════════════════════════════════════════════════════
-async function runwayImageToVideo(imageUrl) {
-  // Use server-side proxy (works on both localhost and Vercel)
-  const r = await authFetch("/api/runway/image-to-video", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "gen3a_turbo",
-      promptImage: imageUrl,
-      duration: 5,
-      ratio: "9:16"
-    })
-  });
-  const data = await r.json();
-  if (data.error) throw new Error(data.error);
-  const taskId = data.id;
-  if (!taskId) throw new Error("Runway: missing task ID");
-
-  for (let i = 0; i < 60; i++) {
-    await sleep(5000);
-    const poll = await authFetch(`/api/runway/tasks/${taskId}`);
-    const result = await poll.json();
-    if (result.status === "SUCCEEDED") return result.output?.[0] || result.output;
-    if (result.status === "FAILED") throw new Error(result.failure || "Runway video generation failed");
-  }
-  throw new Error("Timeout: Runway video generation took too long");
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// REAL UGC PIPELINE — ElevenLabs + D-ID + Optional Runway
-// ═══════════════════════════════════════════════════════════════════
-async function runRealUGCPipeline(script, avatar, biz, onUpdate) {
-  const stages = UGC_STAGES;
-  const s = Object.fromEntries(stages.map(st => [st.id, "pending"]));
-
-  // STAGE 1: Script (already written)
-  s.script = "running";
-  onUpdate({ stages: {...s}, current: "script", done: false });
-  await sleep(500); // brief pause for UI
-  s.script = "done";
-  onUpdate({ stages: {...s}, current: "script", done: false });
-
-  // STAGE 2: Generate audio with ElevenLabs
-  s.tts = "running";
-  onUpdate({ stages: {...s}, current: "tts", done: false });
-  let audioUrl;
-  try {
-    audioUrl = await elevenLabsTTS(script);
-  } catch (e) {
-    s.tts = "error";
-    onUpdate({ stages: {...s}, current: null, done: false, error: `שגיאה ב-ElevenLabs: ${e.message}` });
-    return { error: e.message };
-  }
-  s.tts = "done";
-  onUpdate({ stages: {...s}, current: "tts", done: false, audioUrl });
-
-  // STAGE 3: Generate avatar video with D-ID
-  s.avatar = "running";
-  onUpdate({ stages: {...s}, current: "avatar", done: false, audioUrl });
-  let videoUrl;
-  try {
-    const bgUrl = pickBackground(biz);
-    videoUrl = await didCreateTalk(avatar.img, audioUrl, avatar.presenterId, bgUrl);
-  } catch (e) {
-    s.avatar = "error";
-    onUpdate({ stages: {...s}, current: null, done: false, audioUrl, error: `שגיאה ב-D-ID: ${e.message}` });
-    return { audioUrl, error: e.message };
-  }
-  s.avatar = "done";
-  onUpdate({ stages: {...s}, current: "avatar", done: false, videoUrl });
-
-  // STAGE 4: Background video (optional Runway enhancement)
-  s.bg = "running";
-  onUpdate({ stages: {...s}, current: "bg", done: false, videoUrl });
-  try {
-    // Try Runway for background, but don't fail if unavailable
-    const keys = JSON.parse(localStorage.getItem("admin_keys") || "{}");
-    if (keys.RUNWAYML_API_SECRET) {
-      // Generate a complementary background video using Flux image + Runway
-      const bgPrompt = `Professional marketing background for ${biz.name}, subtle motion, bokeh effect, 9:16 vertical`;
-      const bgImage = await generateImageWithFlux(bgPrompt).catch(() => null);
-      if (bgImage) {
-        const bgVideo = await runwayImageToVideo(bgImage).catch(() => null);
-        if (bgVideo) {
-          s.bg = "done";
-          onUpdate({ stages: {...s}, current: "bg", done: false, videoUrl, bgVideoUrl: bgVideo });
-        } else {
-          s.bg = "done"; // Skip if fails, not critical
-        }
-      } else {
-        s.bg = "done";
-      }
-    } else {
-      s.bg = "done"; // Skip if no Runway key
-    }
-  } catch {
-    s.bg = "done"; // Non-critical stage
-  }
-  onUpdate({ stages: {...s}, current: "bg", done: false, videoUrl });
-
-  // STAGE 5: STOP — wait for user approval before publishing
-  s.publish = "waiting";
-  onUpdate({ stages: {...s}, current: null, done: true, videoUrl, readyToPublish: true });
-  return { videoUrl };
-}
-
-// Check which UGC API keys are missing and return error
-function checkUGCKeys() {
-  const keys = JSON.parse(localStorage.getItem("admin_keys")||"{}");
-  const missing = [];
-  if (!keys.ELEVENLABS_API_KEY) missing.push("ElevenLabs (קול עברי)");
-  if (!keys.DID_API_KEY) missing.push("D-ID (אווטר וידאו)");
-  return missing;
-}
-
 function PipelineBar({ stages, pipeline, compact }) {
   if (!pipeline) return null;
   if (compact) {
     const cur = stages.find(s=>s.id===pipeline.current);
-    if (pipeline.done) return <Tag label="פורסם" color="#10B981"/>;
-    if (pipeline.error) return <Tag label="שגיאה" color="#EF4444"/>;
+    if (pipeline.error) return <Tag label={`שגיאה: ${String(pipeline.error).slice(0,40)}`} color="#EF4444"/>;
+    const pubStage = pipeline.stages?.publish;
+    if (pubStage==="done") return <Tag label="פורסם" color="#10B981"/>;
+    if (pubStage==="waiting"||pipeline.readyToPublish) return <Tag label="ממתין לאישור" color="#F59E0B"/>;
+    if (pipeline.done && !pipeline.readyToPublish) return <Tag label="פורסם" color="#10B981"/>;
     if (cur) return <span style={{display:"flex",alignItems:"center",gap:5,fontSize:11}}>
       <Spinner size={10} color={cur.color}/><span style={{color:cur.color}}>{cur.label}</span>
     </span>;
@@ -1039,13 +829,13 @@ function PipelineBar({ stages, pipeline, compact }) {
         const active = pipeline.current===s.id;
         return <div key={s.id} style={{display:"flex",alignItems:"center",gap:4}}>
           <div style={{ width:32,height:32,borderRadius:"50%",
-            background: st==="done"?s.color+"20":st==="error"?"#EF444420":active?s.color+"10":T.inputBg,
-            border:`2px solid ${st==="done"?s.color:st==="error"?"#EF4444":active?s.color:T.border}`,
+            background: st==="done"?s.color+"20":st==="error"?"#EF444420":st==="waiting"?"#F59E0B20":active?s.color+"10":T.inputBg,
+            border:`2px solid ${st==="done"?s.color:st==="error"?"#EF4444":st==="waiting"?"#F59E0B":active?s.color:T.border}`,
             display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,
             boxShadow:active?`0 0 12px ${s.color}33`:"none",transition:"all 0.4s" }}>
-            {st==="done"?"✓":st==="error"?"✗":active?<Spinner size={12} color={s.color}/>:s.icon}
+            {st==="done"?"✓":st==="error"?"✗":st==="waiting"?"⏸":active?<Spinner size={12} color={s.color}/>:s.icon}
           </div>
-          <div style={{fontSize:9,color:st==="done"||active?s.color:st==="error"?"#EF4444":T.textDim,fontWeight:active?700:400}}>{s.label}</div>
+          <div style={{fontSize:9,color:st==="done"||active?s.color:st==="error"?"#EF4444":st==="waiting"?"#F59E0B":T.textDim,fontWeight:active||st==="waiting"?700:400}}>{s.label}</div>
           {i<stages.length-1&&<div style={{width:10,height:2,background:st==="done"?s.color:T.border,marginLeft:4}}/>}
         </div>;
       })}
@@ -1053,55 +843,72 @@ function PipelineBar({ stages, pipeline, compact }) {
     {pipeline.imageUrl&&<div style={{marginTop:10}}>
       <img src={pipeline.imageUrl} alt="AI generated" style={{width:120,height:120,borderRadius:10,objectFit:"cover",border:`1px solid ${T.border}`}}/>
     </div>}
-    {pipeline.error&&<div style={{marginTop:8,color:"#EF4444",fontSize:11,fontWeight:600}}>{pipeline.error}</div>}
+    {pipeline.error&&<div style={{marginTop:8,padding:"8px 10px",background:"#EF444415",border:`1px solid #EF444440`,borderRadius:8,color:"#EF4444",fontSize:11,fontWeight:600,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>⚠️ {pipeline.error}</div>}
   </div>;
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // POST CARD
 // ═══════════════════════════════════════════════════════════════════
-function PostCard({ post, onUpdate, onDelete, compact, businesses }) {
+function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses, postMetrics }) {
   const [exp, setExp] = useState(false);
   const [editing, setEditing] = useState(false);
   const [txt, setTxt] = useState(post.content);
   const pl = PLATFORMS.find(p=>post.platform.includes(p.label.split(" ")[0]))||PLATFORMS[0];
+  const metrics = postMetrics; // {likes, comments, shares} or null
 
-  const [mediaChoice, setMediaChoice] = useState(null); // "image" | "video" | null
-  async function startMedia(type) {
+  const [mediaChoice, setMediaChoice] = useState(null);
+  const [videoOpts, setVideoOpts] = useState(null); // {aspect, duration} or null
+  async function startMedia(type, opts) {
     setMediaChoice(null);
-    const init = { stages:Object.fromEntries(MEDIA_STAGES.map(s=>[s.id,"pending"])), current:null, done:false, mediaType:type };
+    setVideoOpts(null);
+    const init = { stages:Object.fromEntries(MEDIA_STAGES.map(s=>[s.id,"pending"])), current:null, done:false, mediaType:type, aspect: opts?.aspect, duration: opts?.duration };
     onUpdate({...post, pipeline:init});
     setExp(true);
-    await runRealPipeline(post, businesses||[], upd => onUpdate(p=>({...p, pipeline:upd})), type);
+    const mergeUpd = upd => onUpdate(p=>({...p, pipeline:{...upd, mediaType:type, aspect: opts?.aspect, duration: opts?.duration}}));
+    if (type === "gemini-video") {
+      await runGeminiVideoPipeline(post, businesses||[], mergeUpd, opts);
+    } else {
+      await runGeminiImagePipeline(post, businesses||[], mergeUpd);
+    }
   }
   async function doPublish() {
-    await publishMediaToFB(post, businesses||[], post.pipeline, upd => onUpdate(p=>({...p, pipeline:upd})));
-  }
-  async function startUGC() {
-    const missing = checkUGCKeys();
-    if (missing.length > 0) {
-      onUpdate({...post, ugc:{ stages:{}, current:null, done:false, error:`חסרים מפתחות API: ${missing.join(", ")}. הגדר בדף ניהול ⚙️` }});
-      setExp(true);
-      return;
+    const result = await publishMediaToFB(post, businesses||[], post.pipeline, upd => onUpdate(p=>({...p, pipeline:upd})));
+    if (result?.ok) {
+      const now = new Date().toISOString();
+      onUpdate(p=>({...p, published: true, publishedAt: now, fbPostId: result.postId || p.fbPostId}));
+      // Persist to DB
+      if (typeof post.id === 'string') {
+        authFetch(`/api/content/${post.id}`, {
+          method:"PUT", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ status:"published", published_at: now, fb_post_id: result.postId || null })
+        }).catch(()=>{});
+      }
     }
-    const init = { stages:Object.fromEntries(UGC_STAGES.map(s=>[s.id,"pending"])), current:null, done:false };
-    onUpdate({...post, ugc:init});
-    setExp(true);
-    const biz = (businesses||[]).find(b=>b.name===post.business) || {};
-    const avatar = AVATAR_LIBRARY[Math.floor(Math.random() * AVATAR_LIBRARY.length)];
-    await runRealUGCPipeline(post.content, avatar, biz, upd => onUpdate(p=>({...p, ugc:upd})));
   }
 
-  return <Card accent={post.pipeline?.done||post.ugc?.done?"#10B98133":undefined}>
+  return <Card accent={post.published?"#1877F233":post.pipeline?.done?"#10B98133":undefined}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:6}}>
       <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
         <Tag label={post.platform} color={pl.color}/>
+        {post.published && <Tag label="📡 פורסם" color="#1877F2"/>}
         <Tag label={post.business} color={T.textMuted}/>
-        {post.pipeline&&<PipelineBar stages={post.pipeline.gemini?GEMINI_STAGES:MEDIA_STAGES} pipeline={post.pipeline} compact/>}
-        {post.ugc&&<PipelineBar stages={UGC_STAGES} pipeline={post.ugc} compact/>}
+        {post.pipeline&&<PipelineBar stages={MEDIA_STAGES} pipeline={post.pipeline} compact/>}
       </div>
       <span style={{color:T.textDim,fontSize:11}}>{post.date}</span>
     </div>
+
+    {/* Per-post engagement metrics */}
+    {post.published && metrics && (
+      <div style={{display:"flex",gap:16,padding:"8px 12px",background:T.inputBg,borderRadius:8,marginBottom:10,alignItems:"center",flexWrap:"wrap"}}>
+        <span style={{color:"#1877F2",fontSize:12,fontWeight:600}}>👍 {metrics.likes ?? "—"}</span>
+        <span style={{color:"#10B981",fontSize:12,fontWeight:600}}>💬 {metrics.comments ?? "—"}</span>
+        <span style={{color:"#F59E0B",fontSize:12,fontWeight:600}}>🔄 {metrics.shares ?? "—"}</span>
+        {metrics.impressions != null && <span style={{color:"#8B5CF6",fontSize:12,fontWeight:600}}>👁️ {metrics.impressions}</span>}
+        {metrics.reach != null && <span style={{color:"#EC4899",fontSize:12,fontWeight:600}}>📣 {metrics.reach}</span>}
+        {metrics.permalink_url && <a href={metrics.permalink_url} target="_blank" rel="noreferrer" style={{color:"#1877F2",fontSize:10,fontWeight:600,textDecoration:"none",marginRight:"auto"}}>צפה בפייסבוק ↗</a>}
+      </div>
+    )}
 
     {editing
       ? <textarea value={txt} onChange={e=>setTxt(e.target.value)} style={{
@@ -1136,10 +943,6 @@ function PostCard({ post, onUpdate, onDelete, compact, businesses }) {
     )}
 
     <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-      {!post.approved
-        ? <Btn sm bg="#10B98115" color="#10B981" onClick={()=>onUpdate({...post,approved:true})}>אשר</Btn>
-        : <Tag label="מאושר" color="#10B981"/>
-      }
       {editing
         ? <><Btn sm bg="#10B98115" color="#10B981" onClick={()=>{onUpdate({...post,content:txt});setEditing(false);}}>שמור</Btn>
             <Btn sm bg={T.inputBg} color={T.textMuted} onClick={()=>setEditing(false)}>ביטול</Btn></>
@@ -1147,26 +950,49 @@ function PostCard({ post, onUpdate, onDelete, compact, businesses }) {
       }
       {!post.pipeline || (!post.pipeline.done && !post.pipeline.current && !post.pipeline.readyToPublish && (!post.pipeline.stages || Object.keys(post.pipeline.stages).length===0))
         ? <>
-          <Btn sm bg="#F59E0B15" color="#F59E0B" onClick={()=>setMediaChoice(v=>v?"":true)}>מדיה AI ▼</Btn>
-          {mediaChoice && <span style={{display:"inline-flex",gap:4}}>
-            <Btn sm bg="#8B5CF615" color="#8B5CF6" onClick={()=>startMedia("image")}>🖼️ תמונה</Btn>
-            <Btn sm bg="#EC489915" color="#EC4899" onClick={()=>startMedia("video")}>🎬 סרטון</Btn>
-          </span>}
+          <Btn sm bg="#4285F415" color="#4285F4" onClick={()=>startMedia("gemini")}>🖼️ תמונה</Btn>
+          <Btn sm bg="#34A85315" color="#34A853" onClick={()=>setVideoOpts(v=>v?null:{aspect:"9:16",duration:8})}>
+            🎬 סרטון {videoOpts?"▲":"▼"}
+          </Btn>
+          {videoOpts && <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",background:T.inputBg,borderRadius:10,padding:"6px 10px",border:`1px solid ${T.border}`,marginTop:6,width:"100%"}}>
+            <span style={{fontSize:11,color:T.textMuted}}>פורמט:</span>
+            <select value={videoOpts.aspect} onChange={e=>setVideoOpts(v=>({...v,aspect:e.target.value}))}
+              style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:6,color:T.text,fontSize:12,fontFamily:"inherit",cursor:"pointer",padding:"4px 8px"}}>
+              <option value="9:16">📱 אורך (9:16)</option>
+              <option value="16:9">🖥️ רוחב (16:9)</option>
+            </select>
+            <span style={{fontSize:11,color:T.textMuted,marginRight:8}}>משך:</span>
+            <select value={videoOpts.duration} onChange={e=>setVideoOpts(v=>({...v,duration:Number(e.target.value)}))}
+              style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:6,color:T.text,fontSize:12,fontFamily:"inherit",cursor:"pointer",padding:"4px 8px"}}>
+              <option value={4}>4 שניות</option>
+              <option value={6}>6 שניות</option>
+              <option value={8}>8 שניות</option>
+            </select>
+            <Btn sm bg="#34A853" color="#fff" onClick={()=>startMedia("gemini-video",videoOpts)}>▶ צור סרטון</Btn>
+            <Btn sm bg={T.inputBg} color={T.textMuted} onClick={()=>setVideoOpts(null)}>ביטול</Btn>
+          </div>}
         </>
         : <>
           <Btn sm bg={T.inputBg} color={T.textSec} onClick={()=>setExp(p=>!p)}>{exp?"▲":"▼"} מדיה</Btn>
           {post.pipeline?.readyToPublish && <Btn sm bg="#1877F215" color="#1877F2" onClick={doPublish}>📡 פרסם עכשיו</Btn>}
+          {(post.pipeline?.readyToPublish || post.pipeline?.error || post.pipeline?.done) && <>
+            <Btn sm bg="#8B5CF615" color="#8B5CF6" title="צור גרסה חדשה עם אותם הגדרות"
+              onClick={()=>{
+                const wasVideo = !!post.pipeline?.videoUrl || post.pipeline?.mediaType === "gemini-video";
+                onUpdate({...post, pipeline: null});
+                if (wasVideo) startMedia("gemini-video", {aspect: post.pipeline?.aspect||"9:16", duration: post.pipeline?.duration||8});
+                else startMedia("gemini");
+              }}>🔄 צור שוב</Btn>
+            <Btn sm bg={T.inputBg} color={T.textMuted} title="נקה והתחל מחדש"
+              onClick={()=>onUpdate({...post, pipeline: null})}>✨ אפשרות אחרת</Btn>
+          </>}
         </>
       }
-      {!post.ugc
-        ? <Btn sm bg="#EC489915" color="#EC4899" onClick={startUGC}>UGC</Btn>
-        : <Btn sm bg={T.inputBg} color={T.textSec} onClick={()=>setExp(p=>!p)}>{exp?"▲":"▼"} UGC</Btn>
-      }
+      {onRegenerate && <Btn sm bg="#8B5CF610" color="#8B5CF6" onClick={onRegenerate}>🔄 צור פוסט אחר</Btn>}
       {onDelete && <Btn sm bg="#EF444410" color="#EF4444" onClick={()=>{if(confirm("למחוק את הפוסט?"))onDelete(post.id)}}>🗑️</Btn>}
     </div>
 
-    {exp && post.pipeline && <PipelineBar stages={post.pipeline.gemini ? GEMINI_STAGES : MEDIA_STAGES} pipeline={post.pipeline}/>}
-    {exp && post.ugc && <PipelineBar stages={UGC_STAGES} pipeline={post.ugc}/>}
+    {(exp || post.pipeline?.error) && post.pipeline && <PipelineBar stages={post.pipeline.gemini ? GEMINI_STAGES : MEDIA_STAGES} pipeline={post.pipeline}/>}
   </Card>;
 }
 
@@ -1176,24 +1002,31 @@ function PostCard({ post, onUpdate, onDelete, compact, businesses }) {
 
 // DASHBOARD
 function Dashboard({ posts, sources, businesses }) {
-  const approved = posts.filter(p=>p.approved).length;
   const published = posts.filter(p=>p.published).length;
   const withMedia = posts.filter(p=>p.pipeline?.done).length;
-  const withUGC = posts.filter(p=>p.ugc?.done).length;
   const [metricsLoading, setMetricsLoading] = useState(false);
-  const [latestMetrics, setLatestMetrics] = useState(()=>{
-    try {
-      const h = JSON.parse(localStorage.getItem("post_metrics")||"{}");
-      // Get latest metrics for each post
-      return Object.entries(h).map(([postId, history])=>{
-        const latest = history[history.length-1];
-        const post = posts.find(p=>p.fbPostId===postId);
-        return { postId, ...latest, business: post?.business, content: post?.content?.slice(0,60) };
-      }).filter(m=>m.business);
-    } catch { return []; }
-  });
+  const [latestMetrics, setLatestMetrics] = useState([]);
 
   const [permWarning, setPermWarning] = useState(false);
+
+  // Auto-load metrics from DB on mount
+  useEffect(()=>{
+    async function loadMetrics() {
+      try {
+        const r = await authFetch("/api/metrics?days=30");
+        const data = await r.json();
+        if (Array.isArray(data) && data.length > 0) {
+          // Group by post_id, take latest per post
+          const byPost = {};
+          for (const m of data) {
+            if (!byPost[m.post_id] || m.date > byPost[m.post_id].date) byPost[m.post_id] = m;
+          }
+          setLatestMetrics(Object.values(byPost));
+        }
+      } catch {}
+    }
+    loadMetrics();
+  }, []);
 
   const [pageStats, setPageStats] = useState({});
 
@@ -1214,7 +1047,6 @@ function Dashboard({ posts, sources, businesses }) {
   const stats = [
     { label:"עסקים", value:businesses?.length||0, color:"#F59E0B", icon:"🏪" },
     { label:"פוסטים", value:posts.length, color:"#8B5CF6", icon:"✍️" },
-    { label:"מאושרים", value:approved, color:"#10B981", icon:"✅" },
     { label:"פורסמו", value:published, color:"#1877F2", icon:"📡" },
     { label:"עם מדיה AI", value:withMedia, color:"#F59E0B", icon:"🖼️" },
   ];
@@ -1310,11 +1142,9 @@ function Dashboard({ posts, sources, businesses }) {
       <Card>
         <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1}}>PIPELINE</div>
         {[
-          ["Claude API","כתיבת תוכן + פרומפטים","#8B5CF6"],
-          ["Flux (Replicate)","יצירת תמונות","#F59E0B"],
-          ["Runway ML","יצירת סרטונים","#EC4899"],
-          ["ElevenLabs","קול עברי (UGC)","#06B6D4"],
-          ["D-ID","Avatar מדבר","#F59E0B"],
+          ["Claude API","כתיבת תוכן + פוסטים","#8B5CF6"],
+          ["Gemini 2.5 Flash","יצירת תמונות","#4285F4"],
+          ["Veo 3.0 Fast","יצירת סרטונים","#4285F4"],
           ["Meta Graph API","פרסום אוטומטי","#1877F2"],
         ].map(([name,desc,c])=><div key={name} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:`1px solid ${T.borderLight}`}}>
           <div style={{width:8,height:8,borderRadius:"50%",background:c,flexShrink:0}}/>
@@ -1329,9 +1159,8 @@ function Dashboard({ posts, sources, businesses }) {
         <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1}}>עלויות חודשיות</div>
         {[
           ["100 פוסטים + מדיה","~$40","#10B981"],
-          ["100 סרטוני UGC","~$19","#EC4899"],
           ["Backend (Railway)","$7","#8B5CF6"],
-          ["סה\"כ","~$66/חודש","#F59E0B"],
+          ["סה\"כ","~$47/חודש","#F59E0B"],
         ].map(([k,v,c])=><div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${T.borderLight}`}}>
           <span style={{color:T.textSec,fontSize:13}}>{k}</span>
           <span style={{color:c,fontWeight:700,fontSize:13}}>{v}</span>
@@ -1418,10 +1247,29 @@ function Content({ posts, setPosts, sources, businesses, setBusinesses, analytic
   const [selTypes, setSelTypes] = useState(["פוסט קצר"]);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
+  const [postMetricsMap, setPostMetricsMap] = useState({}); // {fb_post_id: {likes,comments,shares,...}}
 
   function updateBiz(id, upd) { setBusinesses?.(p=>p.map(b=>b.id===id?{...b,...upd}:b)); }
 
   const existingBizPosts = posts.filter(p=>p.business===selBiz?.name);
+
+  // Load per-post metrics from DB
+  useEffect(()=>{
+    (async()=>{
+      try {
+        const r = await authFetch("/api/metrics?days=30");
+        if(!r.ok) return;
+        const data = await r.json();
+        // Group by post_id, take latest date entry
+        const map = {};
+        for(const m of data){
+          if(!m.post_id) continue;
+          if(!map[m.post_id] || m.date > map[m.post_id].date) map[m.post_id] = m;
+        }
+        setPostMetricsMap(map);
+      } catch{}
+    })();
+  }, []);
 
   // Quick scan using Facebook Graph API + website (no Apify needed)
   async function quickScan(biz) {
@@ -1545,9 +1393,15 @@ ${fsd.fbPosts.slice(0,5).map(p=>`- "${p.text.slice(0,120)}..." → ${p.likes} ל
         if (analysis?.contentIdeas?.length) richContext += `\nרעיונות תוכן מומלצים: ${analysis.contentIdeas.join(", ")}`;
       }
 
-      const existingContent = existingBizPosts.length>0
-        ? `\n\nפוסטים קיימים (אל תחזור עליהם!):\n${existingBizPosts.slice(0,5).map(p=>`- [${p.platform}] ${p.content.slice(0,60)}...`).join("\n")}`
-        : "";
+      const publishedPosts = existingBizPosts.filter(p=>p.published);
+      const unpublishedPosts = existingBizPosts.filter(p=>!p.published);
+      let existingContent = "";
+      if (publishedPosts.length > 0) {
+        existingContent += `\n\nפוסטים שפורסמו (למד מהם והמשך את הסגנון — אל תחזור על אותו נושא!):\n${publishedPosts.slice(0,8).map(p=>`- [${p.platform}] ${p.content.slice(0,80)}...`).join("\n")}`;
+      }
+      if (unpublishedPosts.length > 0) {
+        existingContent += `\n\nפוסטים שנוצרו אך לא פורסמו (אל תחזור עליהם!):\n${unpublishedPosts.slice(0,5).map(p=>`- [${p.platform}] ${p.content.slice(0,60)}...`).join("\n")}`;
+      }
 
       // Engagement insights
       let engagementHint = "";
@@ -1579,12 +1433,20 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
         }
       }
 
-      setMsg("✍️ Claude יוצר פוסטים...");
-      const raw = await claudeCall(`אתה מומחה שיווק ישראלי. צור 2 פוסטים חדשים ושונים לעסק: ${activeBiz.name}.${bizDesc}${scanInfo}${richContext}${sourceInfo}
+      // Brand visual identity — use it as a brand-voice anchor so posts feel consistent with media
+      const brandVoiceHint = activeBiz.visual_identity
+        ? `\n\nזהות מותג (משמשת גם ליצירת תמונות/סרטונים — התאם את הטון, הערכים והאסתטיקה):\n${activeBiz.visual_identity}`
+        : "";
+
+      setMsg("✍️ Claude יוצר פוסט...");
+      const raw = await claudeCall(`אתה מומחה שיווק ישראלי. צור פוסט אחד בלבד חדש ושונה לעסק: ${activeBiz.name}.${bizDesc}${scanInfo}${brandVoiceHint}${richContext}${sourceInfo}
 פלטפורמות: ${platLabels}. סוגים: ${selTypes.join(", ")}. מטרה: לידים.${existingContent}${engagementHint}${competitorHint}
-חשוב: התאם טון ושפה לעסק. צור תוכן ייחודי שלא דומה לפוסטים קיימים. השתמש במונחים ובשפה של העסק עצמו.
+חשוב מאוד — כללי כתיבה:
+1. כתוב תמיד בגוף ראשון רבים ("אנחנו", "שלנו", "אצלנו", "הצוות שלנו") — לא "אני" או גוף יחיד.
+2. התאם טון ושפה לעסק. צור תוכן ייחודי שלא דומה לפוסטים קיימים. השתמש במונחים ובשפה של העסק עצמו.
+3. כל פוסט חייב לתאר נושא/מוצר/פעילות ספציפי וקונקרטי (לא "אנחנו מציעים שירותים איכותיים" — אלא משהו מוחשי שאפשר לצלם אותו).
 החזר JSON בלבד: {"posts":[{"platform":"פייסבוק","type":"פוסט קצר","content":"...","hashtags":["..."]}]}
-חשוב: החזר JSON תקין בלבד, ללא טקסט נוסף לפני או אחרי ה-JSON.`, 2000);
+חשוב: החזר פוסט אחד בלבד. החזר JSON תקין בלבד, ללא טקסט נוסף לפני או אחרי ה-JSON.`, 2000);
       const clean = raw.replace(/```json|```/g,"").trim();
       let arr;
       try { arr = JSON.parse(clean).posts; } catch {
@@ -1598,12 +1460,22 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
           }
         } else { throw new Error("Claude returned invalid JSON — try again"); }
       }
-      const newPosts = arr.map((p,i)=>({
+      let newPosts = arr.slice(0, 1).map((p,i)=>({
         id:Date.now()+i, business:activeBiz.name, ...p,
-        date:"ד׳ 03.04 · 20:00", approved:false, media:null, ugc:null, pipeline:null
+        date: new Date().toLocaleDateString("he-IL", {weekday:"short",day:"2-digit",month:"2-digit"}) + " · " + new Date().toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"}),
+        approved:true, media:null, pipeline:null
       }));
+      // Append CTA with shortened URL to each post if business has a URL
+      if (activeBiz.url) {
+        try {
+          const shortUrl = await shortenUrl(activeBiz.url, activeBiz.id);
+          if (shortUrl) {
+            newPosts = newPosts.map(p => ({ ...p, content: `${p.content}\n\n🔗 ${shortUrl}` }));
+          }
+        } catch {}
+      }
       setPosts(p=>[...newPosts,...p]);
-      setMsg(`נוצרו ${newPosts.length} פוסטים עבור ${selBiz.name}`);
+      setMsg(`נוצר פוסט עבור ${selBiz.name}`);
     } catch(e) { setMsg(`שגיאה: ${e.message || "בדוק API key בדף ניהול"}`); }
     setLoading(false);
   }
@@ -1636,7 +1508,7 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
       padding:"10px 14px",marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
       <span style={{color:"#8B5CF6",fontSize:12}}>📋</span>
       <span style={{color:"#8B5CF6",fontSize:12}}>
-        ל-{selBiz?.name} יש {existingBizPosts.length} פוסטים קיימים ({existingBizPosts.filter(p=>p.approved).length} מאושרים).
+        ל-{selBiz?.name} יש {existingBizPosts.length} פוסטים קיימים.
         ה-AI ייצור תוכן שונה מהקיים.
       </span>
     </div>}
@@ -1672,45 +1544,14 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
         <Btn disabled={loading||!selBiz}
           grad={loading||!selBiz?undefined:"linear-gradient(135deg,#8B5CF6,#3B82F6)"}
           onClick={generate}>
-          {loading?<><Spinner/>מייצר...</>:`צור פוסטים ל${selBiz?.name||"..."}`}
+          {loading?<><Spinner/>מייצר...</>:`צור פוסט ל${selBiz?.name||"..."}`}
         </Btn>
-        <Btn grad="linear-gradient(135deg,#EC4899,#F59E0B)"
-          onClick={()=>existingBizPosts.filter(p=>(!p.pipeline||!p.pipeline.done&&!p.pipeline.current)&&!p.ugc).forEach(post=>{
+        <Btn grad="linear-gradient(135deg,#4285F4,#34A853)"
+          onClick={()=>existingBizPosts.filter(p=>(!p.pipeline||!p.pipeline.done&&!p.pipeline.current)).forEach(post=>{
             updatePost(post.id,{...post,pipeline:{stages:Object.fromEntries(MEDIA_STAGES.map(s=>[s.id,"pending"])),current:null,done:false}});
-            runRealPipeline(post, BUSINESSES, upd=>setPosts(prev=>prev.map(p=>p.id===post.id?{...p,pipeline:upd}:p)), "image");
+            runGeminiImagePipeline(post, BUSINESSES, upd=>setPosts(prev=>prev.map(p=>p.id===post.id?{...p,pipeline:upd}:p)));
           })}>
-          🖼️ הפעל תמונות AI
-        </Btn>
-        <Btn grad="linear-gradient(135deg,#EC4899,#8B5CF6)"
-          onClick={()=>existingBizPosts.filter(p=>(!p.pipeline||!p.pipeline.done&&!p.pipeline.current)&&!p.ugc).forEach(post=>{
-            updatePost(post.id,{...post,pipeline:{stages:Object.fromEntries(MEDIA_STAGES.map(s=>[s.id,"pending"])),current:null,done:false}});
-            runRealPipeline(post, BUSINESSES, upd=>setPosts(prev=>prev.map(p=>p.id===post.id?{...p,pipeline:upd}:p)), "video");
-          })}>
-          🎬 הפעל סרטונים AI
-        </Btn>
-        <Btn grad="linear-gradient(135deg,#4285F4,#EA4335)"
-          disabled={!selBiz}
-          onClick={async()=>{
-            if (!selBiz) return;
-            const platform = selPlatforms[0]||"פייסבוק";
-            const newId = Date.now();
-            const newPost = {
-              id:newId, business:selBiz.name, platform, type:"פוסט קצר",
-              content:"⏳ Gemini מייצר פוסט + תמונה...", hashtags:[], date: new Date().toLocaleString("he-IL",{weekday:"short",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}),
-              approved:false, media:null, ugc:null,
-              pipeline:{stages:Object.fromEntries(GEMINI_STAGES.map(s=>[s.id,"pending"])),current:null,done:false,gemini:true}
-            };
-            setPosts(prev=>[newPost,...prev]);
-            const result = await runGeminiPipeline(selBiz, platform, upd=>{
-              setPosts(prev=>prev.map(p=>p.id===newId?{...p,
-                content:upd.postText||p.content,
-                hashtags:upd.hashtags||p.hashtags,
-                image_url:upd.imageUrl||p.image_url,
-                pipeline:{...upd,gemini:true}
-              }:p));
-            });
-          }}>
-          ✨ Gemini פוסט+תמונה
+          🖼️ תמונות לכל הפוסטים
         </Btn>
         {msg&&<span style={{color:msg.includes("שגיאה")?"#EF4444":"#10B981",fontSize:12,fontWeight:600}}>{msg}</span>}
       </div>
@@ -1721,8 +1562,10 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
       {existingBizPosts.length===0
         ? <Card><div style={{textAlign:"center",color:T.textDim,padding:30}}>אין פוסטים ל-{selBiz?.name} — לחץ "צור פוסטים"</div></Card>
         : existingBizPosts.map(post=><PostCard key={post.id} post={post} businesses={BUSINESSES}
+          postMetrics={post.fbPostId ? postMetricsMap[post.fbPostId] : null}
           onUpdate={upd=>setPosts(prev=>prev.map(p=>p.id===post.id?(typeof upd==="function"?upd(p):upd):p))}
-          onDelete={id=>{setPosts(prev=>prev.filter(p=>p.id!==id));authFetch(`/api/content/${id}`,{method:"DELETE"}).catch(()=>{})}}/>)}
+          onDelete={id=>{setPosts(prev=>prev.filter(p=>p.id!==id));authFetch(`/api/content/${id}`,{method:"DELETE"}).catch(()=>{})}}
+          onRegenerate={()=>generate()}/>)}
     </div>
   </div>;
 }
@@ -1730,20 +1573,20 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
 // MEDIA AI INFO
 function MediaAI() {
   return <div style={{animation:"fadeUp 0.3s ease"}}>
-    <SectionTitle sub="Claude → Flux → Runway → Meta">מדיה AI — ארכיטקטורה</SectionTitle>
+    <SectionTitle sub="Claude → Gemini/Veo → Meta">מדיה AI — ארכיטקטורה</SectionTitle>
     <div style={{display:"flex",flexDirection:"column",gap:14,marginBottom:24}}>
       {[
-        {step:"1",title:"Claude בונה פרומפט תמונה",color:"#8B5CF6",
-          desc:"מנתח את הפוסט ובונה פרומפט אנגלית מקצועי כולל אווירה, תאורה, צבעים, קומפוזיציה.",
-          api:"Claude API → image prompt"},
-        {step:"2",title:"Flux מייצר תמונה",color:"#F59E0B",
-          desc:"Flux 1.1 Pro מייצר תמונה בדיוק לפי הפרומפט — $0.003 לתמונה, 3-8 שניות.",
-          api:"Replicate API → Flux 1.1"},
-        {step:"3",title:"Runway מייצר סרטון",color:"#EC4899",
-          desc:"Gen-3 Alpha Turbo ממיר תמונה לסרטון 5 שניות עם תנועה טבעית — $0.25 לסרטון.",
-          api:"Runway ML Gen-3 Turbo"},
-        {step:"4",title:"Meta מפרסם אוטומטית",color:"#1877F2",
-          desc:"Video upload + scheduling דרך Meta Graph API v25. תומך ב-Reels ו-Feed.",
+        {step:"1",title:"Claude כותב פוסט",color:"#8B5CF6",
+          desc:"סוקר את הנושאים, היסטוריית הפוסטים והעסק — וכותב פוסט ממוקד בעברית.",
+          api:"Claude API → post content"},
+        {step:"2",title:"Gemini מייצר תמונה או וידאו",color:"#4285F4",
+          desc:"Gemini 2.5 Flash Image מייצר תמונה ישירות מהפוסט העברי, או Veo 3.0 Fast מייצר וידאו (עד 8 שניות, לאורך/לרוחב).",
+          api:"Gemini 2.5 Flash Image / Veo 3.0 Fast"},
+        {step:"3",title:"אישור משתמש",color:"#F59E0B",
+          desc:"המדיה מוצגת לבדיקה. רק אחרי אישור המשתמש היא מועלית ל-Supabase Storage ונשלחת לפרסום.",
+          api:"Supabase Storage"},
+        {step:"4",title:"Meta מפרסם",color:"#1877F2",
+          desc:"Photo/Video upload דרך Meta Graph API v25. תומך ב-Reels ו-Feed.",
           api:"Meta Graph API v25"},
       ].map(item=><Card key={item.step} accent={item.color+"18"}>
         <div style={{display:"flex",gap:14}}>
@@ -1763,8 +1606,8 @@ function MediaAI() {
     </div>
     <Card>
       <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:12}}>עלויות ל-100 פוסטים</div>
-      {[["Claude (פרומפטים)","~$2","#8B5CF6"],["Flux (תמונות)","~$0.30","#F59E0B"],
-        ["Runway (סרטונים)","~$25","#EC4899"],["Meta API","חינם","#1877F2"],["סה\"כ","~$27","#10B981"]]
+      {[["Claude (פוסטים)","~$2","#8B5CF6"],["Gemini (תמונות)","~$3","#4285F4"],
+        ["Veo 3.0 (סרטונים)","~$20","#4285F4"],["Meta API","חינם","#1877F2"],["סה\"כ","~$25","#10B981"]]
         .map(([k,v,c])=><div key={k} style={{display:"flex",justifyContent:"space-between",
           padding:"8px 0",borderBottom:`1px solid ${T.borderLight}`}}>
           <span style={{color:T.textSec,fontSize:12}}>{k}</span>
@@ -1774,172 +1617,471 @@ function MediaAI() {
   </div>;
 }
 
-// UGC STUDIO
-function UGCStudio({ businesses: bizList }) {
-  const BIZS = bizList && bizList.length > 0 ? bizList : DEFAULT_BUSINESSES;
-  const [step, setStep] = useState(0);
-  const [biz, setBiz] = useState(BIZS[0]);
-  const [avatar, setAvatar] = useState(null);
-  const [script, setScript] = useState("");
-  const [pipeline, setPipeline] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [genLoading, setGenLoading] = useState(false);
-  const fileRef = useRef();
+// ═══════════════════════════════════════════════════════════════════
+// CLAUDE MANAGED AGENTS — autonomous agents console
+// ═══════════════════════════════════════════════════════════════════
+const DEFAULT_AGENT_PRESETS = [
+  {
+    icon: "🕵️",
+    name: "סייר מתחרים",
+    description: "סורק מתחרים ברשת, מאתר פוסטים חדשים וזוויות שיווקיות.",
+    system_prompt: "You are a competitive marketing analyst for Israeli businesses. Research competitors via web search, summarize their latest content strategies in Hebrew, and identify content gaps my business can exploit. Always respond in Hebrew.",
+    default_task: "חקור 3 מתחרים בתחום טיסות זולות בישראל. סכם את 5 הפוסטים האחרונים של כל אחד ותן לי 3 רעיונות לפוסט שייבדל מהם.",
+  },
+  {
+    icon: "💡",
+    name: "מחולל רעיונות",
+    description: "קורא את היסטוריית הפוסטים ומציע רעיונות חדשים.",
+    system_prompt: "You are a creative content strategist. Given a business's past posts and audience, generate fresh, non-repetitive post ideas in Hebrew with hooks, angles, and hashtags.",
+    default_task: "על סמך עסק 'צייד טיסות' — תן 10 רעיונות לפוסטים חדשים לשבוע הקרוב, כל רעיון עם hook, זווית ו-hashtags.",
+  },
+  {
+    icon: "📊",
+    name: "מנתח ביצועים",
+    description: "סוקר ביצועי פוסטים ומסיק מה עובד.",
+    system_prompt: "You are a social media performance analyst. Analyze engagement data, identify patterns in top-performing vs under-performing posts, and recommend specific changes in Hebrew.",
+    default_task: "נתח את הפוסטים של השבוע האחרון. זהה מה גרם לתוצאות הטובות והמלץ על 5 שיפורים קונקרטיים.",
+  },
+];
 
-  async function genScript() {
-    if (!avatar) return;
-    setGenLoading(true);
-    try {
-      const txt = await claudeCall(`כתוב סקריפט UGC לסרטון 30-40 שניות בעברית מדוברת.
-דמות: ${avatar.name}, ${avatar.age}, ${avatar.desc}. עסק: ${biz.name} — ${biz.description || ""}.
-סגנון: אותנטי, שיחתי, לא פרסומי. 90-110 מילים.
-התחל עם hook שמושך תשומת לב. סיים עם: "קישור בביו".
-חשוב מאוד: החזר רק את הטקסט המדובר — ללא הוראות במה, ללא כוכביות, ללא סוגריים, ללא תיאורי פעולה. רק מה שהדמות אומרת.`, 400);
-      setScript(txt);
-    } catch { setScript(`היי חברות... חייבת לספר לכן על ${biz.name}. פשוט שינה לי את הכל. אם רוצות לדעת עוד — קישור בביו 🙂`); }
-    setGenLoading(false);
-  }
+function ShortLinksCard() {
+  const [links, setLinks] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [newUrl, setNewUrl] = useState("");
+  const [creating, setCreating] = useState(false);
 
-  async function produce() {
-    const missing = checkUGCKeys();
-    if (missing.length > 0) {
-      setPipeline({ stages:{}, current:null, done:false, error:`חסרים מפתחות API: ${missing.join(", ")}. הגדר בדף ניהול ⚙️` });
-      setStep(2);
-      return;
-    }
+  async function load() {
     setLoading(true);
-    const init = { stages:Object.fromEntries(UGC_STAGES.map(s=>[s.id,"pending"])), current:null, done:false };
-    setPipeline(init);
-    setStep(2);
-    await runRealUGCPipeline(script, avatar, biz, upd=>setPipeline(upd));
+    try {
+      const r = await authFetch("/api/shorten");
+      const d = await r.json();
+      setLinks(Array.isArray(d) ? d : []);
+    } catch {}
     setLoading(false);
   }
+  useEffect(() => { load(); }, []);
 
-  const STEPS_LABELS = ["עסק","דמות + סקריפט","הפקה"];
+  async function createLink() {
+    if (!newUrl.trim()) return;
+    setCreating(true);
+    try {
+      await authFetch("/api/shorten", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: newUrl.trim() }),
+      });
+      setNewUrl("");
+      await load();
+    } catch {}
+    setCreating(false);
+  }
+
+  async function deleteLink(code) {
+    if (!confirm("למחוק את הלינק?")) return;
+    await authFetch(`/api/shorten/${code}`, { method: "DELETE" });
+    await load();
+  }
+
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+
+  return <Card>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+      <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1}}>🔗 לינקים מקוצרים</div>
+      <Tag label={`${links.length} לינקים`} color={T.textMuted}/>
+    </div>
+    <div style={{display:"flex",gap:8,marginBottom:12}}>
+      <input value={newUrl} onChange={e=>setNewUrl(e.target.value)} placeholder="https://example.com/page"
+        style={{flex:1,background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,
+          color:T.text,padding:"10px 12px",fontSize:12,direction:"ltr",fontFamily:"inherit"}}/>
+      <button onClick={createLink} disabled={creating||!newUrl.trim()}
+        style={{padding:"10px 16px",borderRadius:8,border:"none",cursor:creating?"default":"pointer",
+          background:creating?T.border:"#10B981",color:"#fff",fontWeight:700,fontSize:12}}>
+        {creating?"...":"צור"}
+      </button>
+    </div>
+    {loading ? <div style={{padding:14,textAlign:"center",color:T.textMuted,fontSize:12}}>טוען...</div>
+      : links.length===0 ? <div style={{padding:14,textAlign:"center",color:T.textMuted,fontSize:12}}>אין לינקים עדיין</div>
+      : <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:300,overflowY:"auto"}}>
+        {links.map(l => (
+          <div key={l.code} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:T.inputBg,borderRadius:8,fontSize:11}}>
+            <code style={{color:"#8B5CF6",fontWeight:700,direction:"ltr"}}>/s/{l.code}</code>
+            <span style={{flex:1,color:T.textMuted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",direction:"ltr"}}>{l.url}</span>
+            <Tag label={`${l.clicks||0} קליקים`} color="#10B981"/>
+            <button onClick={()=>navigator.clipboard.writeText(`${origin}/s/${l.code}`)}
+              style={{background:"none",border:`1px solid ${T.border}`,borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:10}}>העתק</button>
+            <button onClick={()=>deleteLink(l.code)}
+              style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:T.textMuted}}>🗑</button>
+          </div>
+        ))}
+      </div>
+    }
+  </Card>;
+}
+
+function PresetEditor({ preset, onSave, onCancel }) {
+  const [form, setForm] = useState(() => ({
+    icon: preset?.icon || "🤖",
+    name: preset?.name || "",
+    description: preset?.description || "",
+    system_prompt: preset?.system_prompt || "",
+    default_task: preset?.default_task || "",
+  }));
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    if (!form.name.trim() || !form.system_prompt.trim()) return;
+    setSaving(true);
+    await onSave(form);
+    setSaving(false);
+  }
+
+  return <Card accent="#8B5CF620">
+    <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:12,letterSpacing:1}}>
+      {preset?.id ? "✏️ ערוך סוכן" : "➕ סוכן חדש"}
+    </div>
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      <div style={{display:"flex",gap:8}}>
+        <input value={form.icon} onChange={e=>setForm({...form,icon:e.target.value})} placeholder="🤖"
+          style={{width:60,textAlign:"center",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,padding:"10px",fontSize:20,fontFamily:"inherit"}}/>
+        <input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="שם הסוכן"
+          style={{flex:1,background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,color:T.text,padding:"10px 12px",fontSize:13,direction:"rtl",fontFamily:"inherit"}}/>
+      </div>
+      <input value={form.description} onChange={e=>setForm({...form,description:e.target.value})} placeholder="תיאור קצר (מה הסוכן עושה)"
+        style={{background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,color:T.text,padding:"10px 12px",fontSize:12,direction:"rtl",fontFamily:"inherit"}}/>
+      <textarea value={form.system_prompt} onChange={e=>setForm({...form,system_prompt:e.target.value})}
+        placeholder="System Prompt (באנגלית — מגדיר את אופי הסוכן)"
+        style={{minHeight:100,background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,color:T.text,padding:"10px 12px",fontSize:12,direction:"ltr",fontFamily:"monospace",resize:"vertical"}}/>
+      <textarea value={form.default_task} onChange={e=>setForm({...form,default_task:e.target.value})}
+        placeholder="משימה ברירת מחדל (בעברית)"
+        style={{minHeight:60,background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,color:T.text,padding:"10px 12px",fontSize:12,direction:"rtl",fontFamily:"inherit",resize:"vertical"}}/>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={save} disabled={saving||!form.name.trim()||!form.system_prompt.trim()}
+          style={{flex:1,padding:"10px",borderRadius:8,border:"none",cursor:"pointer",background:"#8B5CF6",color:"#fff",fontWeight:700,fontSize:12}}>
+          {saving?"שומר...":"שמור"}
+        </button>
+        <button onClick={onCancel}
+          style={{padding:"10px 16px",borderRadius:8,border:`1px solid ${T.border}`,cursor:"pointer",background:T.card,color:T.text,fontWeight:700,fontSize:12}}>ביטול</button>
+      </div>
+    </div>
+  </Card>;
+}
+
+function ManagedAgents({ businesses }) {
+  const [presets, setPresets] = useState([]);
+  const [loadingPresets, setLoadingPresets] = useState(true);
+  const [environmentId, setEnvironmentId] = useState(() => localStorage.getItem("ma_env_id") || "");
+  const [selectedPreset, setSelectedPreset] = useState(null);
+  const [task, setTask] = useState("");
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
+  const [session, setSession] = useState(null);
+  const [events, setEvents] = useState([]);
+  const [editingPreset, setEditingPreset] = useState(null); // null = closed, {} = new, {id,..} = edit
+  const streamRef = useRef(null);
+
+  async function loadPresets() {
+    setLoadingPresets(true);
+    try {
+      const r = await authFetch("/api/agent-presets");
+      let list = await r.json();
+      if (!Array.isArray(list)) list = [];
+      // Seed defaults on first load
+      if (list.length === 0) {
+        for (const p of DEFAULT_AGENT_PRESETS) {
+          try {
+            const cr = await authFetch("/api/agent-presets", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(p),
+            });
+            const created = await cr.json();
+            if (created && created.id) list.push(created);
+          } catch {}
+        }
+      }
+      setPresets(list);
+      if (list[0]) { setSelectedPreset(list[0]); setTask(list[0].default_task || ""); }
+    } catch (e) {
+      setError(e.message);
+    }
+    setLoadingPresets(false);
+  }
+  useEffect(() => { loadPresets(); }, []);
+
+  async function savePreset(form) {
+    const isEdit = editingPreset && editingPreset.id;
+    const url = isEdit ? `/api/agent-presets/${editingPreset.id}` : "/api/agent-presets";
+    const method = isEdit ? "PUT" : "POST";
+    try {
+      await authFetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      setEditingPreset(null);
+      await loadPresets();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function deletePreset(id) {
+    if (!confirm("למחוק את הסוכן?")) return;
+    try {
+      await authFetch(`/api/agent-presets/${id}`, { method: "DELETE" });
+      await loadPresets();
+    } catch (e) { setError(e.message); }
+  }
+
+  async function ensureEnvironment() {
+    if (environmentId) return environmentId;
+    const r = await authFetch("/api/managed-agents/environments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "dashboard-env",
+        config: { type: "cloud", networking: { type: "unrestricted" } },
+      }),
+    });
+    const d = await r.json();
+    if (d.error || !d.id) throw new Error(d.error?.message || d.error || "Environment creation failed");
+    localStorage.setItem("ma_env_id", d.id);
+    setEnvironmentId(d.id);
+    return d.id;
+  }
+
+  async function ensureAgent(preset) {
+    // Reuse if already created for this preset
+    if (preset.agent_id) return preset.agent_id;
+    const r = await authFetch("/api/managed-agents/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: preset.name,
+        model: "claude-sonnet-4-6",
+        system: preset.system_prompt,
+        tools: [{ type: "agent_toolset_20260401" }],
+      }),
+    });
+    const d = await r.json();
+    if (d.error || !d.id) throw new Error(d.error?.message || d.error || "Agent creation failed");
+    // Persist agent_id back to preset
+    try {
+      await authFetch(`/api/agent-presets/${preset.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent_id: d.id }),
+      });
+      setPresets(prev => prev.map(p => p.id === preset.id ? { ...p, agent_id: d.id } : p));
+    } catch {}
+    return d.id;
+  }
+
+  async function runTask() {
+    setRunning(true);
+    setError("");
+    setEvents([]);
+    setSession(null);
+    try {
+      const envId = await ensureEnvironment();
+      const agentId = await ensureAgent(selectedPreset);
+      // Create session
+      const sr = await authFetch("/api/managed-agents/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent: agentId, environment_id: envId, title: selectedPreset?.name || "Task" }),
+      });
+      const sData = await sr.json();
+      if (sData.error || !sData.id) throw new Error(sData.error?.message || sData.error || "Session creation failed");
+      setSession(sData);
+      // Open SSE stream FIRST (before sending message to avoid race condition)
+      const resp = await authFetch(`/api/managed-agents/sessions/${sData.id}/stream`, {
+        headers: { Accept: "text/event-stream" },
+      });
+      // Send user message after stream is open
+      authFetch(`/api/managed-agents/sessions/${sData.id}/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          events: [{ type: "user.message", content: [{ type: "text", text: task }] }],
+        }),
+      }).catch(() => {});
+      if (!resp.ok || !resp.body) throw new Error(`Stream HTTP ${resp.status}`);
+      const reader = resp.body.getReader();
+      streamRef.current = reader;
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            const ev = JSON.parse(line.slice(5).trim());
+            setEvents(prev => [...prev, ev]);
+            if (ev.type === "status_idle" || ev.type === "session.status_idle") {
+              try { reader.cancel(); } catch {}
+              return;
+            }
+          } catch {}
+        }
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  function stopStream() {
+    try { streamRef.current?.cancel(); } catch {}
+    setRunning(false);
+  }
 
   return <div style={{animation:"fadeUp 0.3s ease"}}>
-    <SectionTitle sub="סרטוני משפיעניות AI בעברית — D-ID + ElevenLabs">UGC Avatar Studio</SectionTitle>
+    <SectionTitle sub="סוכנים אוטונומיים עם כלי sandbox — Claude Managed Agents (beta 2026-04-01)">🤖 סוכנים מנוהלים</SectionTitle>
 
-    {/* Step indicator */}
-    <div style={{display:"flex",gap:0,marginBottom:24,flexWrap:"wrap"}}>
-      {STEPS_LABELS.map((s,i)=><div key={s} style={{display:"flex",alignItems:"center"}}>
-        <div style={{display:"flex",alignItems:"center",gap:6,
-          padding:"6px 14px",borderRadius:20,
-          background:i===step?"#EC489910":i<step?"#10B98110":"transparent",
-          border:`1px solid ${i===step?"#EC4899":i<step?"#10B981":T.border}`}}>
-          <span style={{width:18,height:18,borderRadius:"50%",background:i<step?"#10B981":i===step?"#EC4899":T.border,
-            display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff",fontWeight:700,flexShrink:0}}>
-            {i<step?"✓":i+1}
-          </span>
-          <span style={{fontSize:12,color:i===step?"#EC4899":i<step?"#10B981":T.textDim,fontWeight:i===step?700:400}}>{s}</span>
+    <div className="two-col-grid" style={{display:"grid",gap:16,marginBottom:16}}>
+      <Card>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1}}>בחר סוכן</div>
+          <button onClick={()=>setEditingPreset({})}
+            style={{background:"#8B5CF615",border:`1px solid #8B5CF640`,borderRadius:6,padding:"4px 10px",cursor:"pointer",color:"#8B5CF6",fontWeight:700,fontSize:11}}>
+            ➕ חדש
+          </button>
         </div>
-        {i<STEPS_LABELS.length-1&&<div style={{width:20,height:1,background:i<step?"#10B981":T.border}}/>}
-      </div>)}
+        {loadingPresets ? <div style={{padding:14,textAlign:"center",color:T.textMuted,fontSize:12}}>טוען...</div>
+          : <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {presets.map(p => (
+            <div key={p.id} style={{
+              display:"flex",gap:8,alignItems:"stretch",
+              border:`2px solid ${selectedPreset?.id===p.id?"#8B5CF6":T.border}`,
+              borderRadius:10,background:selectedPreset?.id===p.id?"#8B5CF608":T.card,
+              overflow:"hidden"
+            }}>
+              <button onClick={()=>{setSelectedPreset(p);setTask(p.default_task||"");}}
+                style={{
+                  flex:1,textAlign:"right",padding:"12px 14px",cursor:"pointer",
+                  border:"none",background:"transparent",
+                  display:"flex",gap:12,alignItems:"center",fontFamily:"inherit"
+                }}>
+                <span style={{fontSize:24}}>{p.icon}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{color:T.text,fontWeight:700,fontSize:13}}>{p.name}</div>
+                  <div style={{color:T.textMuted,fontSize:11,marginTop:2}}>{p.description}</div>
+                </div>
+                {p.agent_id && <Tag label="פעיל" color="#10B981"/>}
+              </button>
+              <div style={{display:"flex",flexDirection:"column",borderRight:`1px solid ${T.border}`}}>
+                <button onClick={(e)=>{e.stopPropagation();setEditingPreset(p);}}
+                  style={{flex:1,padding:"0 12px",background:"transparent",border:"none",cursor:"pointer",fontSize:14,color:T.textMuted,borderBottom:`1px solid ${T.border}`}}>✏️</button>
+                <button onClick={(e)=>{e.stopPropagation();deletePreset(p.id);}}
+                  style={{flex:1,padding:"0 12px",background:"transparent",border:"none",cursor:"pointer",fontSize:14,color:T.textMuted}}>🗑</button>
+              </div>
+            </div>
+          ))}
+          {presets.length===0 && <div style={{padding:14,textAlign:"center",color:T.textMuted,fontSize:12}}>אין סוכנים עדיין — לחץ "חדש"</div>}
+        </div>}
+        {environmentId && <div style={{marginTop:12,fontSize:10,color:T.textDim,direction:"ltr",textAlign:"left"}}>env: {environmentId.slice(0,24)}...</div>}
+      </Card>
+
+      <Card>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:12,letterSpacing:1}}>משימה</div>
+        <textarea value={task} onChange={e=>setTask(e.target.value)}
+          placeholder="מה הסוכן צריך לעשות?"
+          style={{width:"100%",minHeight:140,background:T.inputBg,border:`1px solid ${T.inputBorder}`,
+            borderRadius:10,color:T.text,padding:12,fontSize:13,fontFamily:"inherit",
+            direction:"rtl",resize:"vertical",boxSizing:"border-box"}}/>
+        <div style={{display:"flex",gap:8,marginTop:12}}>
+          <button onClick={runTask} disabled={running||!task.trim()||!selectedPreset}
+            style={{flex:1,padding:"12px",borderRadius:10,border:"none",cursor:running?"not-allowed":"pointer",
+              background:running?T.border:"#8B5CF6",color:"#fff",fontWeight:700,fontSize:13}}>
+            {running ? <><Spinner size={12} color="#fff"/> רץ...</> : "▶ הפעל סוכן"}
+          </button>
+          {running && <button onClick={stopStream}
+            style={{padding:"12px 16px",borderRadius:10,border:`1px solid ${T.border}`,cursor:"pointer",
+              background:T.card,color:T.text,fontWeight:700,fontSize:13}}>עצור</button>}
+        </div>
+        {error && <div style={{marginTop:10,padding:10,borderRadius:8,background:"#EF444415",color:"#EF4444",fontSize:12}}>{error}</div>}
+      </Card>
     </div>
 
-    {step===0&&<div style={{animation:"fadeUp 0.3s ease"}}>
-      <div className="two-col-grid" style={{display:"grid",gap:14,marginBottom:20}}>
-        {BIZS.map(b=><Card key={b.id} accent={biz.id===b.id?b.color:undefined}
-          style={{cursor:"pointer",transition:"all 0.2s"}} onClick={()=>setBiz(b)}>
-          <div style={{fontSize:32,marginBottom:8}}>{b.icon}</div>
-          <div style={{fontWeight:700,color:T.text}}>{b.name}</div>
-          <div style={{color:T.textMuted,fontSize:12,marginTop:4}}>{b.description||""}</div>
-        </Card>)}
-      </div>
-      <Btn grad="linear-gradient(135deg,#EC4899,#8B5CF6)" onClick={()=>{setScript("");setPipeline(null);setStep(1);}}>המשך ←</Btn>
-    </div>}
-
-    {step===1&&<div style={{animation:"fadeUp 0.3s ease"}}>
-      <div style={{marginBottom:16}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
-          <div style={{color:T.textMuted,fontSize:11,fontWeight:700}}>בחר דמות</div>
-          <div>
-            <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}}
-              onChange={e=>{const u=URL.createObjectURL(e.target.files[0]);
-                setAvatar({id:"custom",name:"דמות מותאמת",age:"—",desc:"תמונה שלך",color:"#10B981",img:u});}}/>
-            <Btn sm bg="#10B98110" color="#10B981"
-              style={{border:"1px solid #10B98133"}} onClick={()=>fileRef.current.click()}>
-              העלה תמונה
-            </Btn>
-          </div>
+    {(session || events.length > 0) && (
+      <Card>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1}}>זרם אירועים</div>
+          {session && <span style={{fontSize:10,color:T.textDim,direction:"ltr"}}>session: {session.id?.slice(0,24)}...</span>}
         </div>
-        <div className="avatar-grid" style={{display:"grid",gap:10}}>
-          {AVATAR_LIBRARY.map(av=><div key={av.id} onClick={()=>setAvatar(av)} style={{
-            background:avatar?.id===av.id?av.color+"10":T.card,
-            border:`2px solid ${avatar?.id===av.id?av.color:T.border}`,
-            borderRadius:12,padding:12,cursor:"pointer",transition:"all 0.2s"}}>
-            <img src={av.img} alt={av.name} style={{width:"100%",aspectRatio:"1",objectFit:"cover",borderRadius:8,marginBottom:8}}/>
-            <div style={{color:T.text,fontWeight:600,fontSize:13}}>{av.name}</div>
-            <div style={{color:T.textMuted,fontSize:11}}>{av.age} · {av.desc}</div>
-          </div>)}
-        </div>
-      </div>
-
-      {avatar&&<Card style={{marginBottom:16}}>
-        <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:12,flexWrap:"wrap"}}>
-          <img src={avatar.img} alt="" style={{width:44,height:44,borderRadius:10,objectFit:"cover",border:`2px solid ${avatar.color}`}}/>
-          <div>
-            <div style={{color:T.text,fontWeight:600}}>{avatar.name} מדברת על {biz.name}</div>
-            <div style={{color:T.textMuted,fontSize:11}}>30-40 שניות · עברית טבעית</div>
-          </div>
-        </div>
-        <Btn sm grad="linear-gradient(135deg,#8B5CF6,#EC4899)" disabled={genLoading} onClick={genScript}>
-          {genLoading?<><Spinner size={12}/>כותב...</>:"כתוב סקריפט"}
-        </Btn>
-        {script&&<textarea value={script} onChange={e=>setScript(e.target.value)} style={{
-          width:"100%",minHeight:100,background:T.inputBg,border:`1px solid #8B5CF633`,
-          borderRadius:10,color:T.text,padding:12,fontSize:12,fontFamily:"inherit",
-          direction:"rtl",resize:"vertical",marginTop:12,boxSizing:"border-box"}}/>}
-      </Card>}
-
-      <div style={{display:"flex",gap:8}}>
-        <Btn bg={T.inputBg} color={T.textSec} onClick={()=>setStep(0)}>← חזור</Btn>
-        <Btn disabled={!avatar||script.length<20}
-          grad={avatar&&script.length>=20?"linear-gradient(135deg,#EC4899,#F59E0B)":undefined}
-          onClick={produce}>
-          הפק סרטון
-        </Btn>
-      </div>
-    </div>}
-
-    {step===2&&<div style={{animation:"fadeUp 0.3s ease"}}>
-      <div style={{display:"flex",gap:14,alignItems:"center",marginBottom:20,flexWrap:"wrap"}}>
-        {avatar&&<img src={avatar.img} alt="" style={{width:60,height:60,borderRadius:12,objectFit:"cover",border:"2px solid #EC4899"}}/>}
-        <div>
-          <h3 style={{margin:0,fontWeight:700,color:T.text}}>{loading?"מפיק סרטון UGC...":"סרטון מוכן!"}</h3>
-          <p style={{color:T.textMuted,fontSize:12,margin:"4px 0 0"}}>{avatar?.name} · {biz.name}</p>
-        </div>
-      </div>
-      <PipelineBar stages={UGC_STAGES} pipeline={pipeline}/>
-      {pipeline?.error&&<Card accent="#EF444433" style={{marginTop:16}}>
-        <div style={{color:"#EF4444",fontWeight:700,marginBottom:6}}>שגיאה</div>
-        <div style={{color:T.textSec,fontSize:12}}>{pipeline.error}</div>
-      </Card>}
-      {pipeline?.done&&<div style={{marginTop:16}}>
-        <Card accent="#10B98133">
-          <div style={{color:"#10B981",fontWeight:700,marginBottom:10}}>
-            {pipeline.videoUrl ? "סרטון UGC מוכן!" : "הופק בהצלחה"}
-          </div>
-          {pipeline.videoUrl && <div style={{marginBottom:12}}>
-            <video src={pipeline.videoUrl} controls style={{width:"100%",maxHeight:300,borderRadius:10,background:"#000"}}/>
+        <div style={{maxHeight:500,overflowY:"auto",display:"flex",flexDirection:"column",gap:8}}>
+          {events.map((ev, i) => {
+            // Handle both new "agent.message" and old "agent" event types
+            if (ev.type === "agent" || ev.type === "agent.message" || ev.type === "agent.thinking") {
+              const text = (ev.content || []).filter(c=>c.type==="text").map(c=>c.text).join("");
+              if (!text) return null;
+              const isThinking = ev.type === "agent.thinking";
+              return <div key={i} style={{padding:12,borderRadius:10,background:isThinking?"#64748B08":"#8B5CF608",border:`1px solid ${isThinking?"#64748B25":"#8B5CF625"}`}}>
+                <div style={{fontSize:10,color:isThinking?"#64748B":"#8B5CF6",fontWeight:700,marginBottom:4}}>{isThinking?"💭 THINKING":"🤖 AGENT"}</div>
+                <div style={{color:T.text,fontSize:13,lineHeight:1.6,whiteSpace:"pre-wrap",direction:"rtl"}}>{text}</div>
+              </div>;
+            }
+            if (ev.type === "user") {
+              const text = (ev.content || []).filter(c=>c.type==="text").map(c=>c.text).join("");
+              return <div key={i} style={{padding:10,borderRadius:10,background:"#10B98108",border:`1px solid #10B98125`}}>
+                <div style={{fontSize:10,color:"#10B981",fontWeight:700,marginBottom:4}}>👤 USER</div>
+                <div style={{color:T.textSec,fontSize:12,direction:"rtl"}}>{text}</div>
+              </div>;
+            }
+            if (ev.type === "agent_tool_use" || ev.type === "tool_use" || ev.type === "agent.tool_use") {
+              const name = ev.tool_name || ev.name || "tool";
+              return <div key={i} style={{padding:"8px 12px",borderRadius:8,background:"#F59E0B12",border:`1px solid #F59E0B25`,fontSize:11,color:"#B45309",direction:"ltr",fontFamily:"monospace"}}>
+                🔧 {name}{ev.input ? ` ${JSON.stringify(ev.input).slice(0,140)}` : ""}
+              </div>;
+            }
+            if (ev.type === "agent_tool_result" || ev.type === "tool_result" || ev.type === "agent.tool_result") {
+              const content = Array.isArray(ev.content) ? ev.content.map(c=>c.text||"").join("") : (typeof ev.content === "string" ? ev.content : JSON.stringify(ev.content||"").slice(0,300));
+              const isErr = ev.is_error;
+              return <div key={i} style={{padding:"8px 12px",borderRadius:8,background:isErr?"#EF444412":T.inputBg,border:`1px solid ${isErr?"#EF444425":T.border}`,fontSize:10,color:isErr?"#EF4444":T.textMuted,direction:"ltr",fontFamily:"monospace",whiteSpace:"pre-wrap",maxHeight:140,overflow:"auto"}}>
+                {isErr?"✗":"✓"} {content.slice(0,400)}
+              </div>;
+            }
+            if (ev.type === "status_running") {
+              return <div key={i} style={{fontSize:10,color:"#3B82F6",direction:"ltr",fontFamily:"monospace",padding:"4px 8px"}}>▶ session started</div>;
+            }
+            if (ev.type === "model_request_start") {
+              return <div key={i} style={{fontSize:10,color:T.textDim,direction:"ltr",fontFamily:"monospace",padding:"4px 8px"}}>⟳ model request...</div>;
+            }
+            if (ev.type === "model_request_end") {
+              const u = ev.usage || {};
+              return <div key={i} style={{fontSize:10,color:T.textDim,direction:"ltr",fontFamily:"monospace",padding:"4px 8px"}}>
+                ✓ model done — in:{u.input_tokens||0} out:{u.output_tokens||0} {u.cache_read_input_tokens?`cache:${u.cache_read_input_tokens}`:""}
+              </div>;
+            }
+            if (ev.type === "status_idle" || ev.type === "session.status_idle") {
+              return <div key={i} style={{padding:10,borderRadius:8,background:"#10B98112",color:"#10B981",fontSize:12,fontWeight:700,textAlign:"center"}}>
+                ✓ הסוכן סיים
+              </div>;
+            }
+            return <div key={i} style={{fontSize:10,color:T.textDim,direction:"ltr",fontFamily:"monospace",padding:"2px 8px"}}>{ev.type}</div>;
+          })}
+          {running && events.length===0 && <div style={{padding:20,textAlign:"center",color:T.textMuted,fontSize:12}}>
+            <Spinner size={14} color="#8B5CF6"/> מתחבר...
           </div>}
-          {[["ElevenLabs","קול עברי טבעי","~$0.03"],["D-ID","Avatar מדבר","~$0.05"],
-            ["Meta API",pipeline.postId?"Reel פורסם":"לא פורסם","חינם"]].map(([k,d,v])=>
-            <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:`1px solid ${T.borderLight}`}}>
-              <div><span style={{color:T.text,fontSize:12,fontWeight:600}}>{k}</span>
-                <span style={{color:T.textMuted,fontSize:11,marginRight:8}}> · {d}</span></div>
-              <span style={{color:"#10B981",fontSize:12,fontWeight:700}}>{v}</span>
-            </div>)}
-        </Card>
-        <div style={{display:"flex",gap:8,marginTop:12}}>
-          <Btn grad="linear-gradient(135deg,#8B5CF6,#EC4899)"
-            onClick={()=>{setStep(0);setPipeline(null);setScript("");setAvatar(null);}}>
-            + סרטון חדש
-          </Btn>
-          <Btn bg={T.inputBg} color={T.textSec} onClick={()=>{setStep(1);setPipeline(null);}}>ערוך</Btn>
         </div>
-      </div>}
-    </div>}
+      </Card>
+    )}
+
+    {editingPreset !== null && (
+      <div style={{marginTop:16}}>
+        <PresetEditor preset={editingPreset.id?editingPreset:null} onSave={savePreset} onCancel={()=>setEditingPreset(null)}/>
+      </div>
+    )}
+
+    <div style={{marginTop:16}}>
+      <ShortLinksCard/>
+    </div>
   </div>;
 }
 
@@ -2200,6 +2342,41 @@ function Businesses({ businesses, setBusinesses, posts }) {
                 style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,padding:"9px 12px",color:T.text,fontSize:12,fontFamily:"monospace",boxSizing:"border-box"}}/>
             </div>
 
+            {/* Visual Identity — used by Gemini/Veo image/video generation */}
+            <div style={{marginBottom:14,padding:12,background:"#8B5CF608",border:`1px solid #8B5CF633`,borderRadius:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,gap:8,flexWrap:"wrap"}}>
+                <div style={{color:"#8B5CF6",fontSize:11,fontWeight:700}}>🎨 זהות ויזואלית (ל-AI תמונות/סרטונים)</div>
+                <Btn sm bg="#8B5CF615" color="#8B5CF6" disabled={scanning[`vi_${biz.id}`]}
+                  onClick={async()=>{
+                    setScanning(p=>({...p,[`vi_${biz.id}`]:true}));
+                    try {
+                      const historyPosts = (posts||[]).filter(p=>p.business===biz.name).slice(0,10).map(p=>p.content).join("\n---\n");
+                      const r = await authFetch("/api/content/claude", {
+                        method:"POST", headers:{"Content-Type":"application/json"},
+                        body: JSON.stringify({
+                          prompt: `You are a brand visual consultant. Based on the business info below, write a concise VISUAL IDENTITY description in English that will guide AI image/video generation. Include: what the product/service physically LOOKS LIKE (actual objects, settings, people, activities — be concrete, not abstract), signature visual elements, color palette, photographic style (cinematic/editorial/documentary/bright lifestyle/etc.), mood, and 3-5 specific visual motifs that should repeat across all media. Output ONLY the description as a single paragraph of 80-150 words, no headings, no preamble.\n\nBusiness name: ${biz.name}\nWebsite: ${biz.url||"N/A"}\nDescription: ${biz.description||"N/A"}\n\nRecent post topics (for subject clues):\n${historyPosts||"(none)"}`,
+                          maxTokens: 700,
+                        }),
+                      });
+                      const d = await r.json();
+                      const vi = (d.text||"").trim();
+                      if (vi) {
+                        updateBiz(biz.id, { visual_identity: vi });
+                        try { await authFetch(`/api/businesses/${biz.id}`, { method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify({visual_identity: vi})}); } catch {}
+                      }
+                    } catch(e) { alert("שגיאה ב-auto-extract: "+e.message); }
+                    setScanning(p=>({...p,[`vi_${biz.id}`]:false}));
+                  }}>
+                  {scanning[`vi_${biz.id}`]?<><Spinner size={10}/> מחלץ...</>:"✨ חלץ אוטומטית"}
+                </Btn>
+              </div>
+              <textarea value={biz.visual_identity||""} onChange={e=>updateBiz(biz.id,{visual_identity:e.target.value})}
+                onBlur={async()=>{try{await authFetch(`/api/businesses/${biz.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({visual_identity:biz.visual_identity||""})});}catch{}}}
+                placeholder="תיאור איך המוצר/השירות נראה פיזית, סגנון צילום, צבעים, mood, מוטיבים חוזרים... (ישמש את Imagen/Veo ליצירת תמונות/סרטונים עקביים)"
+                style={{width:"100%",minHeight:80,background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,color:T.text,padding:12,fontSize:11,fontFamily:"inherit",direction:"ltr",resize:"vertical",boxSizing:"border-box",lineHeight:1.5}}/>
+              <div style={{color:T.textDim,fontSize:10,marginTop:6}}>💡 טקסט באנגלית. ככל שיותר ספציפי ("wooden bakery counter with fresh sourdough loaves, warm golden light, hands kneading dough") — התמונות יהיו יותר מדויקות</div>
+            </div>
+
             {/* Social connections per business */}
             <div style={{marginBottom:14}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
@@ -2408,7 +2585,7 @@ function Publish({ posts, setPosts, businesses }) {
         const pageId = tokens.META_PAGE_ID;
         const accessToken = tokens.META_ACCESS_TOKEN;
         if (!pageId || !accessToken) throw new Error("חסר Page ID או Access Token");
-        const videoUrl = post.video_url || post.pipeline?.videoUrl || post.ugc?.videoUrl;
+        const videoUrl = post.video_url || post.pipeline?.videoUrl;
         const imageUrl = post.image_url || post.pipeline?.imageUrl;
         let endpoint, body;
         if (videoUrl) {
@@ -2438,7 +2615,7 @@ function Publish({ posts, setPosts, businesses }) {
         const igUserId = tokens.META_IG_USER_ID;
         const accessToken = tokens.META_ACCESS_TOKEN;
         if (!igUserId || !accessToken) throw new Error("חסר IG User ID או Access Token");
-        const videoUrl = post.video_url || post.pipeline?.videoUrl || post.ugc?.videoUrl;
+        const videoUrl = post.video_url || post.pipeline?.videoUrl;
         const imageUrl = post.image_url || post.pipeline?.imageUrl;
         if (!imageUrl && !videoUrl) throw new Error("אינסטגרם דורש תמונה או וידאו — צור מדיה AI קודם");
 
@@ -2554,10 +2731,10 @@ function Publish({ posts, setPosts, businesses }) {
       {/* Posts to publish */}
       <Card>
         <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1}}>
-          פוסטים מאושרים — {selBiz.name} ({approved.length})
+          פוסטים לפרסום — {selBiz.name} ({approved.length})
         </div>
         {approved.length===0
-          ? <div style={{textAlign:"center",color:T.textDim,padding:30}}>אין פוסטים מאושרים ל-{selBiz.name} — אשר פוסטים בדף תוכן</div>
+          ? <div style={{textAlign:"center",color:T.textDim,padding:30}}>אין פוסטים לפרסום ל-{selBiz.name} — צור פוסטים בדף תוכן</div>
           : <div style={{display:"flex",flexDirection:"column",gap:10}}>
             {approved.map(post=>{
               const platMatch = PLATFORMS.find(p=>post.platform?.includes(p.label.split(" ")[0]));
@@ -2566,7 +2743,6 @@ function Publish({ posts, setPosts, businesses }) {
                   <Tag label={post.platform} color={platMatch?.color||"#888"}/>
                   <Tag label={post.type||"פוסט"} color={T.textMuted}/>
                   {post.pipeline?.done&&<Tag label="מדיה" color="#F59E0B"/>}
-                  {post.ugc?.done&&<Tag label="UGC" color="#EC4899"/>}
                 </div>
                 <p style={{color:T.textSec,fontSize:12,margin:"0 0 10px",direction:"rtl",lineHeight:1.6,
                   maxHeight:60,overflow:"hidden"}}>{post.content}</p>
@@ -2718,7 +2894,7 @@ function Schedule({ posts, setPosts, businesses }) {
       const hashtags = (post.hashtags||[]).map(h=>h.startsWith("#")?h:`#${h}`).join(" ");
       const contentHasHashtags = (post.hashtags||[]).some(h=>post.content.includes(h));
       const message = contentHasHashtags ? post.content : post.content + (hashtags ? "\n\n" + hashtags : "");
-      const videoUrl = post.video_url || post.pipeline?.videoUrl || post.ugc?.videoUrl;
+      const videoUrl = post.video_url || post.pipeline?.videoUrl;
       const imageUrl = post.image_url || post.pipeline?.imageUrl;
       let endpoint, body;
       if (videoUrl) {
@@ -2865,7 +3041,7 @@ function Analytics({ posts, businesses, analyticsData, setAnalyticsData }) {
   const selBiz = businesses?.find(b=>b.id===selBizId);
 
   const bizData = analyticsData?.[selBizId] || {};
-  const done = posts.filter(p=>p.pipeline?.done||p.ugc?.done).length;
+  const done = posts.filter(p=>p.pipeline?.done).length;
 
   async function fetchAnalytics() {
     if (!selBiz) return;
@@ -3006,7 +3182,7 @@ ${topContent}
       <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14}}>תובנות (לחץ "עדכן נתונים" לנתונים אמיתיים)</div>
       {[["יום הכי טוב","יום ג׳","#8B5CF6"],
         ["שעה מומלצת","20:00","#EC4899"],
-        ["סוג תוכן מוביל","סרטוני UGC","#10B981"]]
+        ["סוג תוכן מוביל","סרטוני Veo","#10B981"]]
         .map(([label,val,color])=><div key={label} style={{display:"flex",
           justifyContent:"space-between",alignItems:"center",padding:"10px 14px",
           background:T.inputBg,borderRadius:10,marginBottom:8}}>
@@ -3026,10 +3202,7 @@ ${topContent}
 // ═══════════════════════════════════════════════════════════════════
 const API_KEYS_CONFIG = [
   { id:"ANTHROPIC_API_KEY",      label:"Claude API Key",        service:"Anthropic",    color:"#8B5CF6", hint:"sk-ant-..." },
-  { id:"REPLICATE_API_TOKEN",    label:"Replicate Token",       service:"Flux Images",  color:"#F59E0B", hint:"r8_..." },
-  { id:"RUNWAYML_API_SECRET",    label:"Runway API Secret",     service:"Video Gen",    color:"#EC4899", hint:"..." },
-  { id:"ELEVENLABS_API_KEY",     label:"ElevenLabs Key",        service:"Hebrew TTS",   color:"#06B6D4", hint:"..." },
-  { id:"DID_API_KEY",            label:"D-ID API Key",          service:"Avatar Video", color:"#F59E0B", hint:"..." },
+  { id:"GEMINI_API_KEY",         label:"Gemini API Key",        service:"Images + Veo Video", color:"#4285F4", hint:"AIza..." },
   { id:"META_ACCESS_TOKEN",      label:"Meta Access Token",     service:"Facebook/IG",  color:"#1877F2", hint:"EAA..." },
   { id:"META_PAGE_ID",           label:"Facebook Page ID",      service:"Facebook",     color:"#1877F2", hint:"1234567890" },
   { id:"META_IG_USER_ID",        label:"Instagram Business ID", service:"Instagram",    color:"#E1306C", hint:"1234567890" },
@@ -3551,7 +3724,6 @@ export default function App({ session }) {
               fbPostId: p.fb_post_id || null,
               publishedAt: p.published_at || null,
               media: p.media || null,
-              ugc: p.ugc || null,
               pipeline: p.pipeline_status || null,
               image_url: p.image_url || null,
               video_url: p.video_url || null,
@@ -3608,22 +3780,35 @@ export default function App({ session }) {
 
   // ── Sync posts to Supabase when they change ──
   const postsSyncRef = useRef(false);
+  const syncingRef = useRef(false);
   useEffect(()=>{
     if (!dbReady) return;
     if (!postsSyncRef.current) { postsSyncRef.current = true; return; }
     const timer = setTimeout(()=>{
       // Only sync new posts that don't have a UUID id (meaning they were created locally)
       const localPosts = posts.filter(p => typeof p.id === 'number');
-      if (localPosts.length === 0) return;
+      if (localPosts.length === 0 || syncingRef.current) return;
+      syncingRef.current = true;
       authFetch("/api/content/sync", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body: JSON.stringify({ posts: localPosts })
       }).then(r=>r.json()).then(saved=>{
         if (Array.isArray(saved) && saved.length > 0) {
+          // Replace local numeric IDs with server UUIDs to prevent re-syncing
+          setPosts(prev => {
+            const updated = [...prev];
+            localPosts.forEach((lp, i) => {
+              if (saved[i]?.id) {
+                const idx = updated.findIndex(p => p.id === lp.id);
+                if (idx !== -1) updated[idx] = { ...updated[idx], id: saved[i].id };
+              }
+            });
+            return updated;
+          });
           console.log("[db] Synced", saved.length, "posts to Supabase");
         }
-      }).catch(()=>{});
+      }).catch(()=>{}).finally(()=>{ syncingRef.current = false; });
     }, 2000);
     return ()=>clearTimeout(timer);
   },[posts, dbReady]);
@@ -3707,8 +3892,8 @@ export default function App({ session }) {
     setFbAssigning(false);
   }
 
-  const running = posts.filter(p=>(p.pipeline&&!p.pipeline.done)||(p.ugc&&!p.ugc.done)).length;
-  const published = posts.filter(p=>p.pipeline?.done||p.ugc?.done).length;
+  const running = posts.filter(p=>(p.pipeline&&!p.pipeline.done)).length;
+  const published = posts.filter(p=>p.pipeline?.done).length;
 
   return (
     <div style={{display:"flex",minHeight:"100vh",background:T.bg,
@@ -3832,9 +4017,9 @@ export default function App({ session }) {
             </div>
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            <div style={{background:"#10B98110",border:"1px solid #10B98122",
-              color:"#10B981",borderRadius:10,padding:"5px 12px",fontSize:11,fontWeight:600}}>
-              {posts.filter(p=>p.approved).length} מאושרים
+            <div style={{background:"#1877F210",border:"1px solid #1877F222",
+              color:"#1877F2",borderRadius:10,padding:"5px 12px",fontSize:11,fontWeight:600}}>
+              {posts.filter(p=>p.published).length} פורסמו
             </div>
             <div style={{background:"#EC489910",border:"1px solid #EC489922",
               color:"#EC4899",borderRadius:10,padding:"5px 12px",fontSize:11,fontWeight:600}}>
@@ -3903,7 +4088,7 @@ export default function App({ session }) {
           {page==="sources"&&<Sources sources={sources} setSources={setSources}/>}
           {page==="content"&&<Content posts={posts} setPosts={setPosts} sources={sources} businesses={businesses} setBusinesses={setBusinesses} analyticsData={analyticsData}/>}
           {page==="media"&&<MediaAI/>}
-          {page==="ugc"&&<UGCStudio businesses={businesses}/>}
+          {page==="agents"&&<ManagedAgents businesses={businesses}/>}
           {page==="publish"&&<Publish posts={posts} setPosts={setPosts} businesses={businesses}/>}
           {page==="schedule"&&<Schedule posts={posts} setPosts={setPosts} businesses={businesses}/>}
           {page==="analytics"&&<Analytics posts={posts} businesses={businesses} analyticsData={analyticsData} setAnalyticsData={setAnalyticsData}/>}

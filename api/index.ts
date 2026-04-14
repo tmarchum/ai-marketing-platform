@@ -1004,8 +1004,9 @@ async function callClaude(prompt: string, apiKey: string, maxTokens = 1200): Pro
   return d.content?.[0]?.text || '';
 }
 
-// Helper: fetch website content directly (fast, no Apify needed)
-async function fetchWebsiteContent(url: string): Promise<string> {
+// Helper: fetch website content — try direct first, fallback to Apify for SPAs
+async function fetchWebsiteContent(url: string, apifyToken?: string): Promise<string> {
+  // Try direct fetch first (fast)
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
   try {
@@ -1014,15 +1015,28 @@ async function fetchWebsiteContent(url: string): Promise<string> {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MarketingBot/1.0)' },
     });
     const html = await r.text();
-    // Strip HTML tags, scripts, styles — extract text
     const text = html
       .replace(/<script[\s\S]*?<\/script>/gi, '')
       .replace(/<style[\s\S]*?<\/style>/gi, '')
       .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    return text.slice(0, 4000);
-  } finally { clearTimeout(timer); }
+    if (text.length > 100) return text.slice(0, 4000);
+  } catch {} finally { clearTimeout(timer); }
+
+  // Direct fetch got too little content (SPA) — use Apify headless browser
+  if (apifyToken) {
+    try {
+      const items = await runApify('apify~website-content-crawler', {
+        startUrls: [{ url }], maxCrawlPages: 3, maxCrawlDepth: 1,
+        crawlerType: 'playwright:firefox',
+      }, apifyToken);
+      const text = items.map((i: any) => i.text || i.body || '').filter(Boolean).join('\n\n').trim();
+      if (text.length > 50) return text.slice(0, 4000);
+    } catch {}
+  }
+  return '';
 }
 
 // Helper: fetch FB posts via Meta Graph API (fast, no Apify needed)
@@ -1060,21 +1074,22 @@ app.get('/api/cron/scan', async (req: any, res) => {
 
     const biz = businesses[0];
 
-    // Get Claude API key
+    // Get API keys
     const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
     const keyMap: Record<string, string> = {};
     for (const k of (keys || [])) keyMap[k.key_name] = k.key_value;
     const claudeKey = keyMap.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
+    const apifyToken = keyMap.APIFY_API_TOKEN || process.env.APIFY_TOKEN || process.env.APIFY_API_TOKEN || '';
     if (!claudeKey) return res.json({ error: 'Missing ANTHROPIC key', scanned: 0 });
 
     const steps: string[] = [];
     let websiteContent = '';
     let fbPosts: any[] = [];
 
-    // 1. Fetch website directly (no Apify — instant)
+    // 1. Fetch website (direct first, Apify fallback for SPAs)
     if (biz.url) {
       try {
-        websiteContent = await fetchWebsiteContent(biz.url.trim());
+        websiteContent = await fetchWebsiteContent(biz.url.trim(), apifyToken);
         steps.push('website: ' + websiteContent.length + ' chars');
       } catch (e: any) { steps.push('website: error ' + e.message); }
     }
@@ -1096,11 +1111,16 @@ app.get('/api/cron/scan', async (req: any, res) => {
     const ownPostsInfo = fbPosts.length > 0 ? `\nפוסטים אחרונים:\n${fbPosts.slice(0, 5).map(p => `- "${p.text.slice(0, 80)}..."`).join('\n')}` : '';
 
     const raw = await callClaude(`אתה מנתח שיווקי. נתח את העסק "${biz.name}" (${biz.description || ''}).${websiteInfo}${ownPostsInfo}
-החזר JSON: {"tone":"טון","audience":"קהל יעד","strengths":["..."],"contentIdeas":["..."],"topThemes":["..."],"bestHooks":["..."],"gaps":["..."],"recommendation":"המלצה"}
-JSON תקין בלבד.`, claudeKey);
-    const clean = raw.replace(/```json|```/g, '').trim();
-    const analysis = JSON.parse(clean.match(/\{[\s\S]*\}/)?.[0] || '{}');
-    steps.push('analysis: done');
+
+החזר JSON בלבד, בלי שום טקסט לפני או אחרי:
+{"tone":"טון המותג","audience":"קהל יעד","strengths":["חוזקה 1","חוזקה 2"],"contentIdeas":["רעיון 1","רעיון 2","רעיון 3"],"topThemes":["נושא 1","נושא 2"],"bestHooks":["הוק 1","הוק 2"],"gaps":["פער 1"],"recommendation":"המלצה כללית"}`, claudeKey);
+    let analysis: any = {};
+    try {
+      const clean = raw.replace(/```json\s?|```/g, '').trim();
+      const jsonMatch = clean.match(/\{[\s\S]*\}/);
+      if (jsonMatch) analysis = JSON.parse(jsonMatch[0]);
+    } catch (e: any) { steps.push('json parse error: ' + e.message + ' | raw: ' + raw.slice(0, 200)); }
+    steps.push('analysis: ' + (Object.keys(analysis).length > 0 ? Object.keys(analysis).join(',') : 'empty'));
 
     const updateData: any = {
       scan_result: analysis,
