@@ -66,7 +66,7 @@ app.post('/api/businesses', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   const row: Record<string, any> = {};
-  const fields = ['name','url','industry','target_audience','tone','goals','icon','color','description','social','scan_result','full_scan_data','competitor_analysis','competitors','schedule','business_profile'];
+  const fields = ['name','url','industry','target_audience','tone','goals','icon','color','description','social','scan_result','full_scan_data','competitor_analysis','competitors','schedule','business_profile','visual_identity'];
   for (const f of fields) if (req.body[f] !== undefined) row[f] = req.body[f];
   if (req.userId) row.user_id = req.userId;
   const { data, error } = await sb.from('businesses').insert(row).select().single();
@@ -238,6 +238,159 @@ app.post('/api/content/claude', async (req: any, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// CLAUDE MANAGED AGENTS — autonomous agents with sandboxed tools
+// Beta: managed-agents-2026-04-01
+// ══════════════════════════════════════════════════════════════
+
+const MA_BASE = 'https://api.anthropic.com/v1';
+const MA_HEADERS = (apiKey: string) => ({
+  'x-api-key': apiKey,
+  'anthropic-version': '2023-06-01',
+  'anthropic-beta': 'managed-agents-2026-04-01',
+  'content-type': 'application/json',
+});
+
+// Create agent
+app.post('/api/managed-agents/agents', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
+  if (!apiKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
+  try {
+    const r = await fetch(`${MA_BASE}/agents`, {
+      method: 'POST',
+      headers: MA_HEADERS(apiKey),
+      body: JSON.stringify(req.body),
+    });
+    const d = await r.json();
+    if (!r.ok) return res.status(r.status).json(d);
+    res.json(d);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List agents
+app.get('/api/managed-agents/agents', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
+  if (!apiKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
+  try {
+    const r = await fetch(`${MA_BASE}/agents`, { headers: MA_HEADERS(apiKey) });
+    const d = await r.json();
+    res.status(r.ok ? 200 : r.status).json(d);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create environment
+app.post('/api/managed-agents/environments', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
+  if (!apiKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
+  try {
+    const r = await fetch(`${MA_BASE}/environments`, {
+      method: 'POST',
+      headers: MA_HEADERS(apiKey),
+      body: JSON.stringify(req.body),
+    });
+    const d = await r.json();
+    if (!r.ok) return res.status(r.status).json(d);
+    res.json(d);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create session
+app.post('/api/managed-agents/sessions', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
+  if (!apiKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
+  try {
+    const r = await fetch(`${MA_BASE}/sessions`, {
+      method: 'POST',
+      headers: MA_HEADERS(apiKey),
+      body: JSON.stringify(req.body),
+    });
+    const d = await r.json();
+    if (!r.ok) return res.status(r.status).json(d);
+    res.json(d);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Send event to session
+app.post('/api/managed-agents/sessions/:id/events', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
+  if (!apiKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
+  try {
+    const r = await fetch(`${MA_BASE}/sessions/${req.params.id}/events?beta=true`, {
+      method: 'POST',
+      headers: MA_HEADERS(apiKey),
+      body: JSON.stringify(req.body),
+    });
+    const text = await r.text();
+    res.status(r.status).type('application/json').send(text || '{}');
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Stream session events (SSE proxy)
+app.get('/api/managed-agents/sessions/:id/stream', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
+  if (!apiKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
+  try {
+    const upstream = await fetch(`${MA_BASE}/sessions/${req.params.id}/stream?beta=true`, {
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'agent-api-2026-03-01',
+        Accept: 'text/event-stream',
+      },
+    });
+    if (!upstream.ok || !upstream.body) {
+      const errText = await upstream.text();
+      return res.status(upstream.status).json({ error: errText });
+    }
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    const reader = (upstream.body as any).getReader();
+    const decoder = new TextDecoder();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(decoder.decode(value, { stream: true }));
+      }
+    } catch {}
+    res.end();
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Convenience: get session
+app.get('/api/managed-agents/sessions/:id', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
+  if (!apiKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
+  try {
+    const r = await fetch(`${MA_BASE}/sessions/${req.params.id}`, { headers: MA_HEADERS(apiKey) });
+    const d = await r.json();
+    res.status(r.ok ? 200 : r.status).json(d);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 // GEMINI PROXY — text generation + image generation
 // ══════════════════════════════════════════════════════════════
 
@@ -268,261 +421,321 @@ app.post('/api/gemini/image', async (req: any, res) => {
   const sb = getSupabase();
   const apiKey = await getUserKey(sb, req.userId, 'GEMINI_API_KEY');
   if (!apiKey) return res.status(503).json({ error: 'GEMINI_API_KEY not set' });
-  const { prompt, aspectRatio = '1:1' } = req.body;
+  const { prompt } = req.body;
+
+  let lastError = '';
+  const TIMEOUT = 45_000; // 45s per model attempt
+
+  // Method 1: Gemini Flash with native image generation
+  const geminiImageModels = ['gemini-3-pro-image-preview', 'gemini-2.5-flash-image'];
+  for (const model of geminiImageModels) {
+    try {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), TIMEOUT);
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: ac.signal,
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseModalities: ['IMAGE'] },
+        }),
+      });
+      clearTimeout(timer);
+      const d = await r.json();
+      if (d.error) { lastError = `${model}: ${d.error.message}`; continue; }
+      const parts = d.candidates?.[0]?.content?.parts || [];
+      const imgPart = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
+      if (imgPart) {
+        return res.json({ imageBase64: imgPart.inlineData.data, contentType: imgPart.inlineData.mimeType });
+      }
+      lastError = `${model}: No image generated — may be filtered`;
+    } catch (err: any) {
+      lastError = `${model}: ${err.name === 'AbortError' ? 'timeout (45s)' : err.message}`;
+    }
+  }
+
+  // Method 2: Imagen 4.0 Fast (predict endpoint)
   try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), TIMEOUT);
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: ac.signal,
       body: JSON.stringify({
         instances: [{ prompt }],
-        parameters: { sampleCount: 1, aspectRatio, personGeneration: 'dont_allow' },
+        parameters: { sampleCount: 1, aspectRatio: '1:1' },
       }),
     });
+    clearTimeout(timer);
+    const d = await r.json();
+    if (!d.error) {
+      const imageBytes = d.predictions?.[0]?.bytesBase64Encoded;
+      if (imageBytes) return res.json({ imageBase64: imageBytes, contentType: 'image/png' });
+    }
+    lastError += ` | imagen-4.0-fast: ${d.error?.message || 'no image'}`;
+  } catch (err: any) {
+    lastError += ` | imagen-4.0-fast: ${err.name === 'AbortError' ? 'timeout (45s)' : err.message}`;
+  }
+
+  res.status(500).json({ error: lastError });
+});
+
+// ══════════════════════════════════════════════════════════════
+// GEMINI VEO — Video generation
+// ══════════════════════════════════════════════════════════════
+
+app.post('/api/gemini/video', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'GEMINI_API_KEY');
+  if (!apiKey) return res.status(503).json({ error: 'GEMINI_API_KEY not set' });
+  const { prompt, aspectRatio = '9:16', durationSeconds = 8 } = req.body;
+  // Clamp duration to supported values: 4, 6, 8
+  const dur = [4, 6, 8].includes(Number(durationSeconds)) ? Number(durationSeconds) : 8;
+  // Only 9:16 and 16:9 supported by Veo 3
+  const ar = ['9:16', '16:9'].includes(aspectRatio) ? aspectRatio : '9:16';
+  // Try Veo models in order — newer first
+  const veoModels = [
+    'veo-3.1-generate-preview',
+    'veo-3.1-lite-generate-preview',
+    'veo-3.0-generate-001',
+  ];
+  let lastError = '';
+  for (const model of veoModels) {
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          instances: [{ prompt }],
+          parameters: { aspectRatio: ar, durationSeconds: dur },
+        }),
+      });
+      const d = await r.json();
+      if (d.error) { lastError = `${model}: ${d.error.message || JSON.stringify(d.error)}`; continue; }
+      const opName = d.name;
+      if (!opName) { lastError = `${model}: no operation returned`; continue; }
+      return res.json({ operationName: opName, model });
+    } catch (err: any) {
+      lastError = `${model}: ${err.message}`;
+    }
+  }
+  res.status(500).json({ error: lastError || 'All Veo models failed' });
+});
+
+app.get('/api/gemini/video/:operationName', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'GEMINI_API_KEY');
+  if (!apiKey) return res.status(503).json({ error: 'GEMINI_API_KEY not set' });
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/${req.params.operationName}?key=${apiKey}`);
     const d = await r.json();
     if (d.error) throw new Error(d.error.message);
-    const imageBytes = d.predictions?.[0]?.bytesBase64Encoded;
-    if (!imageBytes) throw new Error('No image generated');
-    res.json({ imageBase64: imageBytes, contentType: 'image/png' });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
+    if (!d.done) return res.json({ done: false });
+    const video = d.response?.generateVideoResponse?.generatedSamples?.[0]?.video;
+    if (!video) return res.json({ done: true, error: 'No video generated' });
 
-// ══════════════════════════════════════════════════════════════
-// REPLICATE PROXY — image generation with Flux
-// ══════════════════════════════════════════════════════════════
-
-app.post('/api/replicate/predictions', async (req: any, res) => {
-  const sb = getSupabase();
-  const token = await getUserKey(sb, req.userId, 'REPLICATE_API_TOKEN');
-  if (!token) return res.status(503).json({ error: 'REPLICATE_API_TOKEN not set' });
-  try {
-    const { model, input } = req.body;
-    const modelPath = model || 'black-forest-labs/flux-1.1-pro';
-    const r = await fetch(`https://api.replicate.com/v1/models/${modelPath}/predictions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ input: input || {} }),
-    });
-    const data = await r.json();
-    res.json(data);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/replicate/predictions/:id', async (req: any, res) => {
-  const sb = getSupabase();
-  const token = await getUserKey(sb, req.userId, 'REPLICATE_API_TOKEN');
-  if (!token) return res.status(503).json({ error: 'REPLICATE_API_TOKEN not set' });
-  try {
-    const r = await fetch(`https://api.replicate.com/v1/predictions/${req.params.id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const data = await r.json();
-    res.json(data);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ══════════════════════════════════════════════════════════════
-// RUNWAY ML PROXY — video generation
-// ══════════════════════════════════════════════════════════════
-
-app.post('/api/runway/image-to-video', async (req: any, res) => {
-  const sb = getSupabase();
-  const token = await getUserKey(sb, req.userId, 'RUNWAYML_API_SECRET');
-  if (!token) return res.status(503).json({ error: 'RUNWAYML_API_SECRET not set' });
-  try {
-    const r = await fetch('https://api.dev.runwayml.com/v1/image_to_video', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'X-Runway-Version': '2024-11-06' },
-      body: JSON.stringify(req.body),
-    });
-    const data = await r.json();
-    res.json(data);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/runway/tasks/:id', async (req: any, res) => {
-  const sb = getSupabase();
-  const token = await getUserKey(sb, req.userId, 'RUNWAYML_API_SECRET');
-  if (!token) return res.status(503).json({ error: 'RUNWAYML_API_SECRET not set' });
-  try {
-    const r = await fetch(`https://api.dev.runwayml.com/v1/tasks/${req.params.id}`, {
-      headers: { Authorization: `Bearer ${token}`, 'X-Runway-Version': '2024-11-06' },
-    });
-    const data = await r.json();
-    res.json(data);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ══════════════════════════════════════════════════════════════
-// ELEVENLABS PROXY — Hebrew text-to-speech
-// ══════════════════════════════════════════════════════════════
-
-app.post('/api/elevenlabs/tts', async (req: any, res) => {
-  const sb = getSupabase();
-  const apiKey = await getUserKey(sb, req.userId, 'ELEVENLABS_API_KEY');
-  if (!apiKey) return res.status(503).json({ error: 'ELEVENLABS_API_KEY not set' });
-  try {
-    const { text, voiceId, languageCode } = req.body;
-    const voice = voiceId || 'EXAVITQu4vr4xnSDxMaL'; // Sarah - default voice
-    const bodyPayload: any = {
-      text: text || '',
-      model_id: 'eleven_v3',
-      voice_settings: { stability: 0.5, similarity_boost: 0.75 },
-    };
-    if (languageCode) bodyPayload.language_code = languageCode;
-    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'xi-api-key': apiKey },
-      body: JSON.stringify(bodyPayload),
-    });
-    if (!r.ok) {
-      const errText = await r.text().catch(() => '');
-      try {
-        const errJson = JSON.parse(errText);
-        return res.status(r.status).json({ error: errJson.detail?.message || errJson.message || `HTTP ${r.status}` });
-      } catch {
-        return res.status(r.status).json({ error: `HTTP ${r.status}: ${errText.substring(0, 100)}` });
+    // Download video from Google's protected URI and upload to Supabase Storage
+    let publicUrl = '';
+    if (video.uri) {
+      const videoR = await fetch(`${video.uri}&key=${apiKey}`);
+      if (!videoR.ok) throw new Error(`Failed to download video: ${videoR.status}`);
+      const videoBuffer = Buffer.from(await videoR.arrayBuffer());
+      const fileName = `media/${req.userId || 'anon'}/video_${Date.now()}.mp4`;
+      if (sb) {
+        await sb.storage.createBucket('media', { public: true }).catch(() => {});
+        const { error: upErr } = await sb.storage.from('media').upload(fileName, videoBuffer, { contentType: 'video/mp4', upsert: true });
+        if (upErr) throw new Error(`Upload failed: ${upErr.message}`);
+        const { data: urlData } = sb.storage.from('media').getPublicUrl(fileName);
+        publicUrl = urlData.publicUrl;
       }
-    }
-    const arrayBuf = await r.arrayBuffer();
-    if (arrayBuf.byteLength === 0) {
-      return res.status(500).json({ error: `ElevenLabs returned empty audio. Status=${r.status}, CT=${r.headers.get('content-type')}, key=${apiKey?.substring(0,8)}...` });
-    }
-    const base64 = Buffer.from(arrayBuf).toString('base64');
-    res.json({ audioBase64: base64, contentType: r.headers.get('content-type') || 'audio/mpeg' });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ══════════════════════════════════════════════════════════════
-// D-ID PROXY — talking avatar video
-// ══════════════════════════════════════════════════════════════
-
-app.post('/api/did/talks', async (req: any, res) => {
-  const sb = getSupabase();
-  const apiKey = await getUserKey(sb, req.userId, 'DID_API_KEY');
-  if (!apiKey) return res.status(503).json({ error: 'DID_API_KEY not set' });
-  try {
-    const authHeader = `Basic ${apiKey}`;
-    let body = req.body;
-
-    // If audio_url is a base64 data URL, upload to D-ID first
-    if (body.script?.audio_url?.startsWith('data:')) {
-      const matches = body.script.audio_url.match(/^data:([^;]+);base64,(.+)$/);
-      if (matches) {
-        const [, contentType, b64] = matches;
-        const audioBuffer = Buffer.from(b64, 'base64');
-        const formData = new FormData();
-        formData.append('audio', new Blob([audioBuffer], { type: contentType }), 'audio.mp3');
-        const uploadRes = await fetch('https://api.d-id.com/audios', {
-          method: 'POST',
-          headers: { Authorization: authHeader },
-          body: formData,
-        });
-        const uploadData = await uploadRes.json();
-        if (uploadData.url) {
-          body = { ...body, script: { ...body.script, audio_url: uploadData.url } };
-        } else if (uploadData.error || uploadData.kind) {
-          return res.json(uploadData); // Forward D-ID error
-        }
+    } else if (video.bytesBase64Encoded) {
+      const videoBuffer = Buffer.from(video.bytesBase64Encoded, 'base64');
+      const fileName = `media/${req.userId || 'anon'}/video_${Date.now()}.mp4`;
+      if (sb) {
+        await sb.storage.createBucket('media', { public: true }).catch(() => {});
+        const { error: upErr } = await sb.storage.from('media').upload(fileName, videoBuffer, { contentType: 'video/mp4', upsert: true });
+        if (upErr) throw new Error(`Upload failed: ${upErr.message}`);
+        const { data: urlData } = sb.storage.from('media').getPublicUrl(fileName);
+        publicUrl = urlData.publicUrl;
       }
     }
 
-    const r = await fetch('https://api.d-id.com/talks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: authHeader },
-      body: JSON.stringify(body),
-    });
-    const data = await r.json();
-    res.json(data);
+    if (!publicUrl) throw new Error('Could not create public video URL');
+    res.json({ done: true, videoUrl: publicUrl });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/api/did/talks/:id', async (req: any, res) => {
-  const sb = getSupabase();
-  const apiKey = await getUserKey(sb, req.userId, 'DID_API_KEY');
-  if (!apiKey) return res.status(503).json({ error: 'DID_API_KEY not set' });
+// ══════════════════════════════════════════════════════════════
+// UPLOAD — base64 image to Supabase Storage → public URL
+// ══════════════════════════════════════════════════════════════
+
+app.post('/api/upload/image', async (req: any, res) => {
   try {
-    const authHeader = `Basic ${apiKey}`;
-    const r = await fetch(`https://api.d-id.com/talks/${req.params.id}`, {
-      headers: { Authorization: authHeader },
+    const sb = getSupabase();
+    if (!sb) return res.status(503).json({ error: 'Supabase not configured' });
+    const { base64, contentType = 'image/png' } = req.body;
+    if (!base64) return res.status(400).json({ error: 'base64 is required' });
+
+    // Strip data URI prefix if present
+    const raw = base64.replace(/^data:[^;]+;base64,/, '');
+    const buffer = Buffer.from(raw, 'base64');
+    const ext = contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'png';
+    const fileName = `media/${req.userId || 'anon'}/${Date.now()}.${ext}`;
+
+    // Ensure bucket exists (ignore error if already exists)
+    await sb.storage.createBucket('media', { public: true }).catch(() => {});
+
+    const { error: uploadErr } = await sb.storage.from('media').upload(fileName, buffer, {
+      contentType,
+      upsert: true
     });
-    const data = await r.json();
-    res.json(data);
+    if (uploadErr) throw new Error(uploadErr.message);
+
+    const { data: urlData } = sb.storage.from('media').getPublicUrl(fileName);
+    res.json({ url: urlData.publicUrl });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// D-ID Clips API — presenters with movement and backgrounds
-app.post('/api/did/clips', async (req: any, res) => {
-  const sb = getSupabase();
-  const apiKey = await getUserKey(sb, req.userId, 'DID_API_KEY');
-  if (!apiKey) return res.status(503).json({ error: 'DID_API_KEY not set' });
-  try {
-    const authHeader = `Basic ${apiKey}`;
-    let body = req.body;
+// ══════════════════════════════════════════════════════════════
+// SHORT LINKS — self-hosted URL shortener (Supabase-backed)
+// ══════════════════════════════════════════════════════════════
 
-    // If audio_url is a base64 data URL, upload to D-ID first
-    if (body.script?.audio_url?.startsWith('data:')) {
-      const matches = body.script.audio_url.match(/^data:([^;]+);base64,(.+)$/);
-      if (matches) {
-        const [, contentType, b64] = matches;
-        const audioBuffer = Buffer.from(b64, 'base64');
-        const formData = new FormData();
-        formData.append('audio', new Blob([audioBuffer], { type: contentType }), 'audio.mp3');
-        const uploadRes = await fetch('https://api.d-id.com/audios', {
-          method: 'POST',
-          headers: { Authorization: authHeader },
-          body: formData,
-        });
-        const uploadData = await uploadRes.json();
-        if (uploadData.url) {
-          body = { ...body, script: { ...body.script, audio_url: uploadData.url } };
-        } else if (uploadData.error || uploadData.kind) {
-          return res.json(uploadData);
-        }
-      }
+async function ensureShortLinksTable(sb: any) {
+  // Best-effort: try a simple select; if fails, we'll rely on external migration
+  try {
+    await sb.from('short_links').select('code').limit(1);
+  } catch {}
+}
+
+function generateShortCode(len = 6): string {
+  const chars = 'abcdefghijkmnpqrstuvwxyz23456789';
+  let c = '';
+  for (let i = 0; i < len; i++) c += chars[Math.floor(Math.random() * chars.length)];
+  return c;
+}
+
+app.post('/api/shorten', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { url, business_id } = req.body;
+    if (!url || !/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Invalid URL' });
+    await ensureShortLinksTable(sb);
+    // Reuse existing short link for same URL+user if present
+    let existingQuery = sb.from('short_links').select('*').eq('url', url).limit(1);
+    if (req.userId) existingQuery = existingQuery.eq('user_id', req.userId);
+    const { data: existing } = await existingQuery;
+    if (existing && existing[0]) {
+      const shortUrl = `${req.protocol}://${req.get('host')}/s/${existing[0].code}`;
+      return res.json({ code: existing[0].code, shortUrl });
     }
-
-    const r = await fetch('https://api.d-id.com/clips', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: authHeader },
-      body: JSON.stringify(body),
-    });
-    const data = await r.json();
-    res.json(data);
+    // Create new with unique code
+    let code = '';
+    for (let tries = 0; tries < 5; tries++) {
+      code = generateShortCode();
+      const { data: existing2 } = await sb.from('short_links').select('code').eq('code', code).maybeSingle();
+      if (!existing2) break;
+    }
+    const row: any = { code, url, clicks: 0 };
+    if (req.userId) row.user_id = req.userId;
+    if (business_id) row.business_id = business_id;
+    const { error } = await sb.from('short_links').insert(row);
+    if (error) return res.status(500).json({ error: error.message });
+    const shortUrl = `${req.protocol}://${req.get('host')}/s/${code}`;
+    res.json({ code, shortUrl });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/api/did/clips/:id', async (req: any, res) => {
+// Public redirect — /s/:code → 302 to original URL
+app.get('/s/:code', async (req: any, res) => {
   const sb = getSupabase();
-  const apiKey = await getUserKey(sb, req.userId, 'DID_API_KEY');
-  if (!apiKey) return res.status(503).json({ error: 'DID_API_KEY not set' });
+  if (!sb) return res.status(503).send('DB not configured');
   try {
-    const authHeader = `Basic ${apiKey}`;
-    const r = await fetch(`https://api.d-id.com/clips/${req.params.id}`, {
-      headers: { Authorization: authHeader },
-    });
-    const data = await r.json();
-    res.json(data);
+    const { data } = await sb.from('short_links').select('url, clicks').eq('code', req.params.code).maybeSingle();
+    if (!data?.url) return res.status(404).send('Not found');
+    // Increment clicks (fire and forget)
+    sb.from('short_links').update({ clicks: (data.clicks || 0) + 1 }).eq('code', req.params.code).then(() => {}, () => {});
+    res.redirect(302, data.url);
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).send(err.message);
   }
+});
+
+// List user's short links
+app.get('/api/shorten', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json([]);
+  let q = sb.from('short_links').select('*').order('created_at', { ascending: false });
+  if (req.userId) q = q.eq('user_id', req.userId);
+  const { data } = await q;
+  res.json(data || []);
+});
+
+app.delete('/api/shorten/:code', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  let q = sb.from('short_links').delete().eq('code', req.params.code);
+  if (req.userId) q = q.eq('user_id', req.userId);
+  const { error } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// ══════════════════════════════════════════════════════════════
+// AGENT PRESETS — manageable preset configs for Managed Agents
+// ══════════════════════════════════════════════════════════════
+
+app.get('/api/agent-presets', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json([]);
+  let q = sb.from('agent_presets').select('*').order('created_at', { ascending: false });
+  if (req.userId) q = q.eq('user_id', req.userId);
+  const { data, error } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+app.post('/api/agent-presets', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const row: any = {};
+  const fields = ['name','icon','description','system_prompt','default_task','agent_id'];
+  for (const f of fields) if (req.body[f] !== undefined) row[f] = req.body[f];
+  if (req.userId) row.user_id = req.userId;
+  const { data, error } = await sb.from('agent_presets').insert(row).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.put('/api/agent-presets/:id', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const updates: any = { updated_at: new Date().toISOString() };
+  const fields = ['name','icon','description','system_prompt','default_task','agent_id'];
+  for (const f of fields) if (req.body[f] !== undefined) updates[f] = req.body[f];
+  let q = sb.from('agent_presets').update(updates).eq('id', req.params.id);
+  if (req.userId) q = q.eq('user_id', req.userId);
+  const { data, error } = await q.select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.delete('/api/agent-presets/:id', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  let q = sb.from('agent_presets').delete().eq('id', req.params.id);
+  if (req.userId) q = q.eq('user_id', req.userId);
+  const { error } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -587,9 +800,6 @@ app.post('/api/admin/test-key', async (req: any, res) => {
   if (!keyValue) return res.json({ ok: false, error: 'ריק' });
   const testers: Record<string, (v: string) => Promise<void>> = {
     ANTHROPIC_API_KEY: async (v) => { const r = await fetch('https://api.anthropic.com/v1/models', { headers: { 'x-api-key': v, 'anthropic-version': '2023-06-01' } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
-    REPLICATE_API_TOKEN: async (v) => { const r = await fetch('https://api.replicate.com/v1/account', { headers: { Authorization: `Bearer ${v}` } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
-    ELEVENLABS_API_KEY: async (v) => { const r = await fetch('https://api.elevenlabs.io/v1/user', { headers: { 'xi-api-key': v } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
-    DID_API_KEY: async (v) => { const r = await fetch('https://api.d-id.com/credits', { headers: { Authorization: `Basic ${v}` } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
     META_ACCESS_TOKEN: async (v) => { const r = await fetch(`https://graph.facebook.com/v25.0/me?access_token=${v}`); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
     GEMINI_API_KEY: async (v) => { const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${v}`); if (!r.ok) throw new Error(`HTTP ${r.status}`); },
   };
@@ -677,6 +887,217 @@ app.get('/api/fb-metrics/:pageId', async (req, res) => {
       engagementAvailable,
       totalPosts: posts.length,
     });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// CRON — Daily metrics collection (called by Vercel Cron)
+// ══════════════════════════════════════════════════════════════
+
+app.get('/api/cron/metrics', async (req: any, res) => {
+  // Optional auth: Vercel cron sends Authorization header
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    // Get all businesses with FB tokens
+    const { data: businesses } = await sb.from('businesses').select('id, name, social');
+    if (!businesses?.length) return res.json({ message: 'No businesses', saved: 0 });
+
+    const today = new Date().toISOString().split('T')[0];
+    let saved = 0;
+
+    const errors: string[] = [];
+    for (const biz of businesses) {
+      const pageId = biz.social?.facebook?.tokens?.META_PAGE_ID;
+      const accessToken = biz.social?.facebook?.tokens?.META_ACCESS_TOKEN;
+      if (!pageId || !accessToken) { errors.push(`${biz.name}: no FB tokens`); continue; }
+
+      try {
+        // Try with engagement fields first
+        let r = await fetch(
+          `https://graph.facebook.com/v25.0/${pageId}/published_posts?fields=id,message,created_time,full_picture,permalink_url,likes.summary(true),comments.summary(true),shares&limit=50&access_token=${accessToken}`
+        );
+        let d = await r.json();
+        // Fallback: without engagement fields
+        if (d.error) {
+          errors.push(`${biz.name} engagement: ${d.error.message}`);
+          r = await fetch(
+            `https://graph.facebook.com/v25.0/${pageId}/published_posts?fields=id,message,created_time,full_picture,permalink_url&limit=50&access_token=${accessToken}`
+          );
+          d = await r.json();
+        }
+        if (d.error || !d.data) { errors.push(`${biz.name}: ${d.error?.message || 'no data'}`); continue; }
+
+        for (const p of d.data) {
+          const row = {
+            post_id: p.id,
+            business_name: biz.name,
+            date: today,
+            likes: p.likes?.summary?.total_count ?? null,
+            comments: p.comments?.summary?.total_count ?? null,
+            shares: p.shares?.count ?? null,
+            permalink_url: p.permalink_url || `https://facebook.com/${p.id}`,
+            full_picture: p.full_picture || null,
+            message: (p.message || '').substring(0, 200),
+            source: 'facebook',
+          };
+          await sb.from('post_metrics').upsert(row, { onConflict: 'post_id,date' });
+          saved++;
+        }
+      } catch (e: any) { errors.push(`${biz.name}: ${e.message}`); }
+    }
+
+    res.json({ message: `Metrics collected for ${today}`, saved, errors: errors.length ? errors : undefined });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET metrics history for a post or business
+app.get('/api/metrics', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json([]);
+  let q = sb.from('post_metrics').select('*').order('date', { ascending: false });
+  if (req.query.post_id) q = q.eq('post_id', req.query.post_id);
+  if (req.query.business) q = q.eq('business_name', req.query.business);
+  if (req.query.days) q = q.gte('date', new Date(Date.now() - Number(req.query.days) * 86400000).toISOString().split('T')[0]);
+  q = q.limit(500);
+  const { data } = await q;
+  res.json(data || []);
+});
+
+// ══════════════════════════════════════════════════════════════
+// CRON — Daily business + competitor rescan
+// ══════════════════════════════════════════════════════════════
+
+// Helper: run Apify actor and wait for results
+async function runApify(actorId: string, input: any, apifyToken: string): Promise<any[]> {
+  const runR = await fetch(`https://api.apify.com/v2/acts/${actorId}/runs?token=${apifyToken}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  });
+  const run = await runR.json();
+  if (run.error || !run.data?.id) return [];
+  const runId = run.data.id;
+  for (let i = 0; i < 40; i++) {
+    await new Promise(r => setTimeout(r, 3000));
+    const sr = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${apifyToken}`);
+    const sd = await sr.json();
+    if (sd.data?.status === 'SUCCEEDED') {
+      const dr = await fetch(`https://api.apify.com/v2/datasets/${run.data.defaultDatasetId}/items?token=${apifyToken}&limit=30`);
+      return await dr.json();
+    }
+    if (sd.data?.status !== 'RUNNING' && sd.data?.status !== 'READY') return [];
+  }
+  return [];
+}
+
+// Helper: call Claude
+async function callClaude(prompt: string, apiKey: string, maxTokens = 1200): Promise<string> {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }),
+  });
+  const d = await r.json();
+  return d.content?.[0]?.text || '';
+}
+
+app.get('/api/cron/scan', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { data: businesses } = await sb.from('businesses').select('*');
+    if (!businesses?.length) return res.json({ message: 'No businesses', scanned: 0 });
+
+    // Get API keys (from first user or env)
+    const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
+    const keyMap: Record<string, string> = {};
+    for (const k of (keys || [])) keyMap[k.key_name] = k.key_value;
+    const apifyToken = keyMap.APIFY_API_TOKEN || process.env.APIFY_TOKEN || process.env.APIFY_API_TOKEN || '';
+    const claudeKey = keyMap.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
+    if (!apifyToken || !claudeKey) return res.json({ error: 'Missing APIFY or ANTHROPIC key', scanned: 0 });
+
+    const results: any[] = [];
+
+    for (const biz of businesses) {
+      const bizResult: any = { name: biz.name, steps: [] };
+      let websiteContent = '';
+      let fbPosts: any[] = [];
+      let competitorPosts: any[] = [];
+
+      // 1. Scrape website
+      if (biz.url) {
+        try {
+          const items = await runApify('apify~website-content-crawler', { startUrls: [{ url: biz.url }], maxCrawlPages: 5, maxCrawlDepth: 1 }, apifyToken);
+          websiteContent = items.map((i: any) => i.text || i.body || '').filter(Boolean).join('\n\n').slice(0, 3000);
+          bizResult.steps.push('website: ' + websiteContent.length + ' chars');
+        } catch (e: any) { bizResult.steps.push('website: error ' + e.message); }
+      }
+
+      // 2. Scrape own FB page
+      const pageId = biz.social?.facebook?.tokens?.META_PAGE_ID;
+      if (pageId) {
+        try {
+          const items = await runApify('apify~facebook-posts-scraper', { startUrls: [{ url: `https://www.facebook.com/${pageId}` }], resultsLimit: 15, viewOption: 'CHRONOLOGICAL' }, apifyToken);
+          fbPosts = items.map((p: any) => ({ text: p.text || p.message || '', likes: p.likes || p.reactionsCount || 0, comments: p.comments || p.commentsCount || 0 })).filter((p: any) => p.text);
+          bizResult.steps.push('fb: ' + fbPosts.length + ' posts');
+        } catch (e: any) { bizResult.steps.push('fb: error ' + e.message); }
+      }
+
+      // 3. Scrape competitors
+      const competitors = biz.competitors || [];
+      for (const comp of competitors.slice(0, 3)) {
+        const compUrl = comp.url || comp.fbUrl;
+        if (!compUrl) continue;
+        try {
+          const items = await runApify('apify~facebook-posts-scraper', { startUrls: [{ url: compUrl }], resultsLimit: 10, viewOption: 'CHRONOLOGICAL' }, apifyToken);
+          const posts = items.map((p: any) => ({ text: p.text || p.message || '', likes: p.likes || p.reactionsCount || 0, comments: p.comments || p.commentsCount || 0 })).filter((p: any) => p.text);
+          competitorPosts.push({ name: comp.name, posts });
+          bizResult.steps.push(`comp ${comp.name}: ${posts.length} posts`);
+        } catch {}
+      }
+
+      // 4. Claude analysis
+      const websiteInfo = websiteContent ? `\nתוכן מהאתר:\n${websiteContent.slice(0, 800)}` : '';
+      const ownPostsInfo = fbPosts.length > 0 ? `\nפוסטים אחרונים:\n${fbPosts.slice(0, 5).map(p => `- "${p.text.slice(0, 50)}..." → ${p.likes} לייקים`).join('\n')}` : '';
+      const compInfo = competitorPosts.length > 0 ? `\nפוסטים מתחרים:\n${competitorPosts.map(c => `${c.name}: ${c.posts.slice(0, 3).map((p: any) => `"${p.text.slice(0, 40)}..." (${p.likes})`).join(', ')}`).join('\n')}` : '';
+
+      try {
+        const raw = await callClaude(`אתה מנתח שיווקי. נתח את העסק "${biz.name}" (${biz.description || ''}).${websiteInfo}${ownPostsInfo}${compInfo}
+החזר JSON: {"tone":"טון","audience":"קהל יעד","strengths":["..."],"contentIdeas":["..."],"competitorInsights":"תובנה","topThemes":["..."],"bestHooks":["..."],"gaps":["..."],"recommendation":"המלצה"}
+JSON תקין בלבד.`, claudeKey);
+        const clean = raw.replace(/```json|```/g, '').trim();
+        const analysis = JSON.parse(clean.match(/\{[\s\S]*\}/)?.[0] || '{}');
+
+        const updateData: any = {
+          scan_result: analysis,
+          full_scan_data: { websiteContent: websiteContent.slice(0, 2000), fbPosts: fbPosts.slice(0, 10), competitorPosts, analysis },
+        };
+
+        // 5. Auto-generate visual_identity if empty
+        if (!biz.visual_identity && (websiteContent || fbPosts.length > 0)) {
+          try {
+            const viRaw = await callClaude(`You are a brand visual consultant. Write a concise VISUAL IDENTITY description in English for AI image/video generation. Include: what the product/service physically LOOKS LIKE, signature visual elements, color palette, photographic style, mood, and 3-5 specific visual motifs. Output ONLY a single paragraph of 80-150 words.
+
+Business: ${biz.name}
+Website: ${biz.url || 'N/A'}
+Description: ${biz.description || 'N/A'}
+Recent posts: ${fbPosts.slice(0, 5).map(p => p.text.slice(0, 60)).join(' | ')}`, claudeKey, 500);
+            if (viRaw.trim()) updateData.visual_identity = viRaw.trim();
+            bizResult.steps.push('visual_identity: generated');
+          } catch {}
+        }
+
+        await sb.from('businesses').update(updateData).eq('id', biz.id);
+        bizResult.steps.push('analysis: saved');
+      } catch (e: any) { bizResult.steps.push('analysis: error ' + e.message); }
+
+      results.push(bizResult);
+    }
+
+    res.json({ message: 'Scan complete', results });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
