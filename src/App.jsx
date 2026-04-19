@@ -2223,6 +2223,123 @@ function ManagedAgents({ businesses }) {
 }
 
 // BUSINESSES
+// Knowledge Base section for a business
+function KnowledgeBaseSection({ biz }) {
+  const [docs, setDocs] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newContent, setNewContent] = useState("");
+  const [newCategory, setNewCategory] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
+
+  async function loadDocs() {
+    try {
+      const r = await authFetch(`/api/documents?business_id=${biz.id}`);
+      if (r.ok) setDocs(await r.json());
+    } catch{}
+  }
+
+  useEffect(()=>{ loadDocs(); }, [biz.id]);
+
+  async function saveText() {
+    if (!newTitle || !newContent) { alert("חסר כותרת או תוכן"); return; }
+    setUploading(true);
+    try {
+      const r = await authFetch("/api/documents", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ business_id: biz.id, title: newTitle, content: newContent, category: newCategory || null, file_type: "text" })
+      });
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || "שגיאה");
+      setNewTitle(""); setNewContent(""); setNewCategory("");
+      setShowAdd(false);
+      loadDocs();
+    } catch(e) { alert("שגיאה: " + e.message); }
+    setUploading(false);
+  }
+
+  async function uploadPdf(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { alert("קובץ גדול מדי (מקסימום 10MB)"); return; }
+    setUploading(true);
+    try {
+      const reader = new FileReader();
+      const base64 = await new Promise((resolve, reject) => {
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const r = await authFetch("/api/documents", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ business_id: biz.id, title: file.name.replace(/\.pdf$/i, ""), pdf_base64: base64, file_type: "pdf", category: newCategory || null })
+      });
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || "שגיאה");
+      setNewCategory("");
+      loadDocs();
+    } catch(e) { alert("שגיאה: " + e.message); }
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function deleteDoc(id) {
+    if (!confirm("למחוק את המסמך?")) return;
+    try {
+      await authFetch(`/api/documents/${id}`, { method:"DELETE" });
+      setDocs(prev => prev.filter(d => d.id !== id));
+    } catch(e) { alert("שגיאה: " + e.message); }
+  }
+
+  const totalSize = docs.reduce((s,d) => s + (d.size_bytes||0), 0);
+
+  return <div style={{background:"#3B82F608",border:`1px solid #3B82F633`,borderRadius:10,padding:12,marginBottom:14}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8,flexWrap:"wrap"}}>
+      <div style={{color:"#3B82F6",fontSize:11,fontWeight:700}}>📚 בסיס ידע — {docs.length} מסמכים ({(totalSize/1024).toFixed(1)} KB)</div>
+      <Btn sm bg="#3B82F615" color="#3B82F6" onClick={()=>setShowAdd(s=>!s)}>
+        {showAdd ? "סגור" : "+ הוסף מסמך"}
+      </Btn>
+    </div>
+    <div style={{color:T.textDim,fontSize:10,marginBottom:10,lineHeight:1.5}}>
+      💡 העלה מחירונים, FAQs, תיאורי שירותים, תקנון וכד'. Claude ישתמש במידע הזה כשיצור פוסטים או יענה לתגובות — <b>מידע מדויק במקום המצאות.</b>
+    </div>
+
+    {showAdd && <div style={{background:T.inputBg,border:`1px solid ${T.border}`,borderRadius:10,padding:12,marginBottom:10}}>
+      <input type="text" placeholder="כותרת (למשל: מחירון 2026)" value={newTitle} onChange={e=>setNewTitle(e.target.value)}
+        style={{width:"100%",background:T.bg,border:`1px solid ${T.inputBorder}`,borderRadius:8,color:T.text,padding:"8px 10px",fontSize:12,fontFamily:"inherit",marginBottom:8,boxSizing:"border-box",direction:"rtl"}}/>
+      <input type="text" placeholder="קטגוריה אופציונלית (מחירים / FAQ / שירותים / ...)" value={newCategory} onChange={e=>setNewCategory(e.target.value)}
+        style={{width:"100%",background:T.bg,border:`1px solid ${T.inputBorder}`,borderRadius:8,color:T.text,padding:"8px 10px",fontSize:12,fontFamily:"inherit",marginBottom:8,boxSizing:"border-box",direction:"rtl"}}/>
+      <textarea placeholder="תוכן (עברית או אנגלית)..." value={newContent} onChange={e=>setNewContent(e.target.value)}
+        style={{width:"100%",minHeight:120,background:T.bg,border:`1px solid ${T.inputBorder}`,borderRadius:8,color:T.text,padding:10,fontSize:12,fontFamily:"inherit",direction:"rtl",resize:"vertical",boxSizing:"border-box",lineHeight:1.5,marginBottom:8}}/>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+        <Btn sm disabled={uploading} grad="linear-gradient(135deg,#3B82F6,#8B5CF6)" onClick={saveText}>
+          {uploading ? <><Spinner size={10}/>שומר...</> : "שמור טקסט"}
+        </Btn>
+        <div style={{color:T.textDim,fontSize:11}}>או</div>
+        <input type="file" ref={fileInputRef} accept=".pdf" onChange={uploadPdf} style={{display:"none"}}/>
+        <Btn sm bg="#3B82F615" color="#3B82F6" disabled={uploading} onClick={()=>fileInputRef.current?.click()}>
+          📄 העלה PDF
+        </Btn>
+      </div>
+    </div>}
+
+    {docs.length > 0 && <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      {docs.map(d => <div key={d.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",background:T.inputBg,borderRadius:8,border:`1px solid ${T.borderLight}`}}>
+        <span style={{fontSize:14}}>{d.file_type === "pdf" ? "📄" : "📝"}</span>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{color:T.text,fontSize:12,fontWeight:600,direction:"rtl",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.title}</div>
+          <div style={{color:T.textDim,fontSize:10}}>
+            {d.category ? `${d.category} · ` : ""}{(d.size_bytes/1024).toFixed(1)} KB · {new Date(d.created_at).toLocaleDateString("he-IL")}
+          </div>
+        </div>
+        <button onClick={()=>deleteDoc(d.id)} style={{background:"transparent",border:"none",color:"#EF4444",fontSize:14,cursor:"pointer",padding:"4px 8px"}}>🗑️</button>
+      </div>)}
+    </div>}
+  </div>;
+}
+
 function Businesses({ businesses, setBusinesses, posts }) {
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -2620,6 +2737,9 @@ function Businesses({ businesses, setBusinesses, posts }) {
                 </div>
               </>}
             </div>
+
+            {/* Knowledge Base */}
+            <KnowledgeBaseSection biz={biz} />
 
             {/* Social connections per business */}
             <div style={{marginBottom:14}}>

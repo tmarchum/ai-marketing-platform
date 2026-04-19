@@ -1053,6 +1053,9 @@ app.post('/api/calendars/generate', async (req: any, res) => {
     const scanAnalysis = biz.scan_result && Object.keys(biz.scan_result).length > 0
       ? `\nתובנות ממותג: ${JSON.stringify(biz.scan_result).slice(0, 800)}`
       : '';
+    // Knowledge Base — business documents (mentions prices, services, FAQs, etc.)
+    const kbContent = await getBizKnowledgeBase(sb, business_id, 15_000);
+    const kbContext = kbContent ? `\n\n📚 ידע על העסק (מסמכים שהועלו — השתמש בפרטים קונקרטיים מתוכם!):${kbContent}` : '';
     const recentTitles = recentPosts?.length
       ? recentPosts.slice(0, 10).map(p => `- ${(p.content || '').split('\n')[0].slice(0, 80)}`).join('\n')
       : '(אין היסטוריה)';
@@ -1065,7 +1068,7 @@ app.post('/api/calendars/generate', async (req: any, res) => {
 פרטי העסק:
 - שם: ${biz.name}
 - תיאור: ${biz.description || 'N/A'}
-- אתר: ${biz.url || 'N/A'}${toneContext}${audienceContext}${viContext}${scanAnalysis}
+- אתר: ${biz.url || 'N/A'}${toneContext}${audienceContext}${viContext}${scanAnalysis}${kbContext}
 
 פוסטים אחרונים (אל תחזור על אותו נושא!):
 ${recentTitles}
@@ -1456,29 +1459,142 @@ Output ONLY the video prompt:`;
 });
 
 // ══════════════════════════════════════════════════════════════
+// KNOWLEDGE BASE — Per-business documents
+// ══════════════════════════════════════════════════════════════
+
+// Upload a text document (or extract from PDF base64)
+app.post('/api/documents', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { business_id, title, content, file_type, category, pdf_base64 } = req.body;
+    if (!business_id || !title) return res.status(400).json({ error: 'business_id and title required' });
+
+    let finalContent = content || '';
+    let finalType = file_type || 'text';
+
+    // PDF extraction
+    if (pdf_base64) {
+      try {
+        const pdfParse = (await import('pdf-parse')).default;
+        const buf = Buffer.from(pdf_base64.replace(/^data:[^;]+;base64,/, ''), 'base64');
+        const parsed = await pdfParse(buf);
+        finalContent = parsed.text || '';
+        finalType = 'pdf';
+      } catch (e: any) {
+        return res.status(400).json({ error: 'PDF extraction failed: ' + e.message });
+      }
+    }
+
+    if (!finalContent || finalContent.length < 10) {
+      return res.status(400).json({ error: 'Content is empty or too short' });
+    }
+
+    // Cap content at 60K chars to avoid blowing up prompts
+    const truncated = finalContent.slice(0, 60_000);
+
+    const row: any = {
+      business_id,
+      title,
+      content: truncated,
+      file_type: finalType,
+      size_bytes: Buffer.byteLength(truncated, 'utf8'),
+      category: category || null,
+    };
+    if (req.userId) row.user_id = req.userId;
+
+    const { data, error } = await sb.from('business_documents').insert(row).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, document: { id: data.id, title: data.title, size_bytes: data.size_bytes, file_type: data.file_type } });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List documents for a business
+app.get('/api/documents', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json([]);
+  const { business_id } = req.query;
+  if (!business_id) return res.status(400).json({ error: 'business_id required' });
+  const { data } = await sb
+    .from('business_documents')
+    .select('id, title, file_type, size_bytes, category, created_at')
+    .eq('business_id', business_id)
+    .order('created_at', { ascending: false });
+  res.json(data || []);
+});
+
+// Delete a document
+app.delete('/api/documents/:id', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const { error } = await sb.from('business_documents').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// Helper: get KB context for a business (to include in prompts)
+async function getBizKnowledgeBase(sb: any, businessId: string, maxChars = 20000): Promise<string> {
+  const { data: docs } = await sb
+    .from('business_documents')
+    .select('title, content, category')
+    .eq('business_id', businessId)
+    .order('created_at', { ascending: false });
+  if (!docs?.length) return '';
+  let combined = '';
+  for (const d of docs) {
+    const chunk = `\n---\n📄 ${d.title}${d.category ? ` [${d.category}]` : ''}:\n${d.content}\n`;
+    if ((combined + chunk).length > maxChars) break;
+    combined += chunk;
+  }
+  return combined;
+}
+
+// ══════════════════════════════════════════════════════════════
 // CRON — Weekly summary email report
 // ══════════════════════════════════════════════════════════════
 
 async function sendEmail(to: string, subject: string, html: string): Promise<{ ok: boolean; error?: string }> {
-  const resendKey = process.env.RESEND_API_KEY;
-  if (!resendKey) return { ok: false, error: 'RESEND_API_KEY not set' };
-  try {
-    const r = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: process.env.RESEND_FROM || 'Marketing AI <onboarding@resend.dev>',
-        to: [to],
-        subject,
-        html,
-      }),
-    });
-    const d = await r.json();
-    if (r.ok && d.id) return { ok: true };
-    return { ok: false, error: d.message || `HTTP ${r.status}` };
-  } catch (e: any) {
-    return { ok: false, error: e.message };
+  // Option 1: Gmail SMTP (simpler for end users — just needs App Password)
+  const gmailUser = process.env.GMAIL_USER;
+  const gmailPass = process.env.GMAIL_APP_PASSWORD;
+  if (gmailUser && gmailPass) {
+    try {
+      const nodemailer = (await import('nodemailer')).default;
+      const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: { user: gmailUser, pass: gmailPass },
+      });
+      await transporter.sendMail({
+        from: `"Marketing AI" <${gmailUser}>`,
+        to, subject, html,
+      });
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: 'Gmail: ' + e.message };
+    }
   }
+
+  // Option 2: Resend (fallback)
+  const resendKey = process.env.RESEND_API_KEY;
+  if (resendKey) {
+    try {
+      const r = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: process.env.RESEND_FROM || 'Marketing AI <onboarding@resend.dev>',
+          to: [to], subject, html,
+        }),
+      });
+      const d = await r.json();
+      if (r.ok && d.id) return { ok: true };
+      return { ok: false, error: d.message || `HTTP ${r.status}` };
+    } catch (e: any) { return { ok: false, error: e.message }; }
+  }
+
+  return { ok: false, error: 'No email provider configured (need GMAIL_USER+GMAIL_APP_PASSWORD or RESEND_API_KEY)' };
 }
 
 app.get('/api/cron/weekly-report', async (req: any, res) => {
@@ -1883,9 +1999,13 @@ JSON:`;
               biz.schedule?.auto_reply_personality ? `הנחיות מיוחדות למענה: ${biz.schedule.auto_reply_personality}` : '',
             ].filter(Boolean).join('\n');
 
-            const prompt = `אתה מנהל קהילה בעמוד העסק הזה. ענה לתגובה בעברית, בצורה חמה, אישית ותמציתית (עד 2 משפטים). אם השאלה כוללת בירור לגבי מחיר/זמינות — הצע ליצור קשר. אל תשתמש באימוג'ים מוגזמים (מקסימום 1). דבר בצורה טבעית — לא יותר מדי רשמית. אל תכלול האשטגים.
+            // KB context — for accurate answers on prices, services, etc.
+            const kbForReply = await getBizKnowledgeBase(sb, biz.id, 8_000);
+            const kbReplyContext = kbForReply ? `\n\n📚 מידע אמיתי על העסק (השתמש בנתונים מדויקים מכאן, אל תמציא!):${kbForReply}` : '';
 
-${bizContext}
+            const prompt = `אתה מנהל קהילה בעמוד העסק הזה. ענה לתגובה בעברית, בצורה חמה, אישית ותמציתית (עד 2 משפטים). אם השאלה כוללת בירור לגבי מחיר/זמינות — השתמש במידע מהמסמכים למטה אם יש, אחרת הצע ליצור קשר. אל תשתמש באימוג'ים מוגזמים (מקסימום 1). דבר בצורה טבעית — לא יותר מדי רשמית. אל תכלול האשטגים.
+
+${bizContext}${kbReplyContext}
 
 תוכן הפוסט המקורי: "${(post.message || '').slice(0, 200)}"
 
