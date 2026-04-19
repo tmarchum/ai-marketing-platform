@@ -1455,6 +1455,212 @@ Output ONLY the video prompt:`;
   }
 });
 
+// ══════════════════════════════════════════════════════════════
+// CRON — Weekly summary email report
+// ══════════════════════════════════════════════════════════════
+
+async function sendEmail(to: string, subject: string, html: string): Promise<{ ok: boolean; error?: string }> {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return { ok: false, error: 'RESEND_API_KEY not set' };
+  try {
+    const r = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: process.env.RESEND_FROM || 'Marketing AI <onboarding@resend.dev>',
+        to: [to],
+        subject,
+        html,
+      }),
+    });
+    const d = await r.json();
+    if (r.ok && d.id) return { ok: true };
+    return { ok: false, error: d.message || `HTTP ${r.status}` };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+app.get('/api/cron/weekly-report', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const testOnly = req.query.test === '1';
+    const toEmail = req.query.to || process.env.REPORT_EMAIL || '';
+    if (!toEmail) return res.status(400).json({ error: 'REPORT_EMAIL not set (or provide ?to=)' });
+
+    const weekAgo = new Date(Date.now() - 7 * 86400000);
+    const weekAgoIso = weekAgo.toISOString();
+
+    // Aggregate data
+    const { data: businesses } = await sb.from('businesses').select('id, name, color, icon, schedule');
+    const bizList = businesses || [];
+
+    const { data: published } = await sb
+      .from('content_posts')
+      .select('id, business_name, content, published_at, fb_post_id, image_url, video_url')
+      .gte('published_at', weekAgoIso)
+      .order('published_at', { ascending: false });
+
+    const { data: scheduled } = await sb
+      .from('content_posts')
+      .select('id, business_name, content, scheduled_at')
+      .not('scheduled_at', 'is', null)
+      .is('published_at', null)
+      .gte('scheduled_at', new Date().toISOString())
+      .lte('scheduled_at', new Date(Date.now() + 7 * 86400000).toISOString());
+
+    const { data: attention } = await sb
+      .from('comment_replies')
+      .select('id, business_name, commenter_name, original_text, sentiment_label, created_at, fb_post_id')
+      .eq('needs_attention', true)
+      .gte('created_at', weekAgoIso);
+
+    const { data: replied } = await sb
+      .from('comment_replies')
+      .select('id, business_name')
+      .eq('status', 'replied')
+      .gte('created_at', weekAgoIso);
+
+    // Metrics from post_metrics table
+    const postIds = (published || []).map(p => p.fb_post_id).filter(Boolean);
+    let totalLikes = 0, totalComments = 0, totalShares = 0;
+    if (postIds.length > 0) {
+      const { data: metrics } = await sb
+        .from('post_metrics')
+        .select('post_id, likes, comments, shares, date')
+        .in('post_id', postIds)
+        .gte('date', weekAgo.toISOString().split('T')[0])
+        .order('date', { ascending: false });
+      // Sum the most recent metric per post
+      const seen = new Set<string>();
+      for (const m of (metrics || [])) {
+        if (seen.has(m.post_id)) continue;
+        seen.add(m.post_id);
+        totalLikes += m.likes || 0;
+        totalComments += m.comments || 0;
+        totalShares += m.shares || 0;
+      }
+    }
+
+    // Top post
+    const topPost = (published || [])[0];
+
+    // Build HTML
+    const bizSummary = bizList.map((b: any) => {
+      const bizPubs = (published || []).filter(p => p.business_name === b.name);
+      const bizAttn = (attention || []).filter(a => a.business_name === b.name);
+      return { name: b.name, icon: b.icon || '🏢', color: b.color || '#3B82F6', published: bizPubs.length, attention: bizAttn.length };
+    });
+
+    const html = `<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>דוח שבועי</title>
+</head>
+<body style="font-family: -apple-system, 'Segoe UI', Arial, sans-serif; background:#f5f5f7; margin:0; padding:20px; color:#1d1d1f;">
+<div style="max-width:640px; margin:0 auto; background:#fff; border-radius:16px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+  <div style="background:linear-gradient(135deg,#8B5CF6,#3B82F6); padding:32px 28px; color:#fff;">
+    <h1 style="margin:0 0 6px; font-size:22px; font-weight:700;">📊 הדוח השבועי שלך</h1>
+    <div style="opacity:0.9; font-size:13px;">${new Date(weekAgo).toLocaleDateString('he-IL',{day:'numeric',month:'short'})} — ${new Date().toLocaleDateString('he-IL',{day:'numeric',month:'short'})}</div>
+  </div>
+
+  <div style="padding:24px 28px;">
+    <!-- Stats grid -->
+    <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-bottom:24px;">
+      <div style="background:#f5f3ff; border-radius:10px; padding:14px;">
+        <div style="color:#8B5CF6; font-size:24px; font-weight:700;">${published?.length || 0}</div>
+        <div style="color:#666; font-size:12px;">📡 פוסטים שפורסמו</div>
+      </div>
+      <div style="background:#eff6ff; border-radius:10px; padding:14px;">
+        <div style="color:#3B82F6; font-size:24px; font-weight:700;">${scheduled?.length || 0}</div>
+        <div style="color:#666; font-size:12px;">⏰ מתוזמנים לשבוע הבא</div>
+      </div>
+      <div style="background:#ecfdf5; border-radius:10px; padding:14px;">
+        <div style="color:#10B981; font-size:24px; font-weight:700;">${replied?.length || 0}</div>
+        <div style="color:#666; font-size:12px;">💬 מענים אוטומטיים</div>
+      </div>
+      <div style="background:${attention?.length ? '#fef2f2' : '#f9fafb'}; border-radius:10px; padding:14px;">
+        <div style="color:${attention?.length ? '#EF4444' : '#666'}; font-size:24px; font-weight:700;">${attention?.length || 0}</div>
+        <div style="color:#666; font-size:12px;">🚨 דורש התייחסות</div>
+      </div>
+    </div>
+
+    <!-- Engagement -->
+    ${(totalLikes + totalComments + totalShares > 0) ? `
+    <div style="background:#f9fafb; border-radius:10px; padding:16px; margin-bottom:20px;">
+      <div style="font-size:13px; font-weight:600; margin-bottom:10px; color:#333;">💥 מעורבות השבוע</div>
+      <div style="display:flex; gap:16px; flex-wrap:wrap;">
+        <div style="flex:1; min-width:80px;"><div style="color:#1877F2; font-size:18px; font-weight:700;">👍 ${totalLikes}</div><div style="color:#666; font-size:10px;">לייקים</div></div>
+        <div style="flex:1; min-width:80px;"><div style="color:#10B981; font-size:18px; font-weight:700;">💬 ${totalComments}</div><div style="color:#666; font-size:10px;">תגובות</div></div>
+        <div style="flex:1; min-width:80px;"><div style="color:#F59E0B; font-size:18px; font-weight:700;">🔄 ${totalShares}</div><div style="color:#666; font-size:10px;">שיתופים</div></div>
+      </div>
+    </div>` : ''}
+
+    <!-- Attention needed -->
+    ${attention?.length ? `
+    <div style="background:#fef2f2; border:2px solid #fecaca; border-radius:10px; padding:16px; margin-bottom:20px;">
+      <div style="color:#EF4444; font-size:14px; font-weight:700; margin-bottom:10px;">🚨 ${attention.length} תגובות דורשות את תשומת ליבך</div>
+      ${attention.slice(0, 5).map(a => `
+        <div style="background:#fff; border-radius:8px; padding:10px 12px; margin-bottom:6px;">
+          <div style="font-size:11px; color:#666; margin-bottom:3px;">${a.business_name} · ${a.commenter_name || 'משתמש'} · <span style="color:#EF4444;">${a.sentiment_label}</span></div>
+          <div style="font-size:13px; direction:rtl;">${(a.original_text || '').slice(0, 120)}</div>
+          ${a.fb_post_id ? `<a href="https://facebook.com/${a.fb_post_id}" style="color:#1877F2; font-size:11px; text-decoration:none;">צפה בפייסבוק ↗</a>` : ''}
+        </div>
+      `).join('')}
+    </div>` : ''}
+
+    <!-- Businesses -->
+    <div style="margin-bottom:20px;">
+      <div style="font-size:13px; font-weight:600; margin-bottom:10px; color:#333;">🏢 לפי עסק</div>
+      ${bizSummary.map(b => `
+        <div style="background:#f9fafb; border-right:4px solid ${b.color}; border-radius:8px; padding:10px 12px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+          <div style="font-size:13px; font-weight:600;">${b.icon} ${b.name}</div>
+          <div style="font-size:11px; color:#666;">${b.published} פוסטים${b.attention ? ` · <span style="color:#EF4444;">${b.attention} התראות</span>` : ''}</div>
+        </div>
+      `).join('')}
+    </div>
+
+    <!-- Top post -->
+    ${topPost ? `
+    <div style="margin-bottom:20px;">
+      <div style="font-size:13px; font-weight:600; margin-bottom:10px; color:#333;">⭐ פוסט אחרון שפורסם</div>
+      <div style="background:#f9fafb; border-radius:10px; padding:14px; display:flex; gap:12px;">
+        ${topPost.image_url ? `<img src="${topPost.image_url}" style="width:80px; height:80px; object-fit:cover; border-radius:8px; flex-shrink:0;">` : ''}
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:11px; color:#666; margin-bottom:4px;">${topPost.business_name} · ${new Date(topPost.published_at).toLocaleString('he-IL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</div>
+          <div style="font-size:13px; direction:rtl; line-height:1.5;">${(topPost.content || '').split('\n')[0].slice(0, 150)}</div>
+          ${topPost.fb_post_id ? `<a href="https://facebook.com/${topPost.fb_post_id}" style="color:#1877F2; font-size:11px; text-decoration:none; display:inline-block; margin-top:6px;">צפה בפייסבוק ↗</a>` : ''}
+        </div>
+      </div>
+    </div>` : ''}
+
+    <div style="text-align:center; padding-top:20px; border-top:1px solid #eee;">
+      <a href="https://dashboard-steel-delta-52.vercel.app" style="display:inline-block; background:linear-gradient(135deg,#8B5CF6,#3B82F6); color:#fff; padding:12px 24px; border-radius:10px; text-decoration:none; font-weight:600; font-size:13px;">פתח את הדשבורד ←</a>
+    </div>
+  </div>
+
+  <div style="background:#f5f5f7; padding:16px 28px; font-size:11px; color:#999; text-align:center;">
+    🤖 דוח אוטומטי שנוצר על ידי Claude · כל יום ראשון בבוקר
+  </div>
+</div>
+</body>
+</html>`;
+
+    if (testOnly) {
+      return res.json({ preview: true, to: toEmail, html_length: html.length, stats: { published: published?.length || 0, scheduled: scheduled?.length || 0, replied: replied?.length || 0, attention: attention?.length || 0 } });
+    }
+
+    const sendResult = await sendEmail(toEmail, `📊 דוח שבועי — ${new Date().toLocaleDateString('he-IL')}`, html);
+    if (!sendResult.ok) return res.status(500).json({ error: sendResult.error });
+
+    res.json({ ok: true, sent_to: toEmail, stats: { published: published?.length || 0, scheduled: scheduled?.length || 0, replied: replied?.length || 0, attention: attention?.length || 0 } });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Batch endpoint: find all scheduled posts missing media and return their IDs
 app.get('/api/posts/pending-media', async (req: any, res) => {
   const sb = getSupabase();
