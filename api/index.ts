@@ -1045,6 +1045,194 @@ app.get('/api/cron/publish', async (req: any, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════
+// CRON — Auto-reply to comments on published posts
+// ══════════════════════════════════════════════════════════════
+
+app.get('/api/cron/replies', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    // Get Claude key
+    const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
+    const keyMap: Record<string, string> = {};
+    for (const k of (keys || [])) keyMap[k.key_name] = k.key_value;
+    const claudeKey = keyMap.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
+    if (!claudeKey) return res.json({ error: 'Missing ANTHROPIC key' });
+
+    // Get businesses with auto_reply enabled
+    const { data: businesses } = await sb.from('businesses').select('*');
+    const eligibleBiz = (businesses || []).filter((b: any) =>
+      b.schedule?.auto_reply_enabled &&
+      b.social?.facebook?.tokens?.META_PAGE_ID &&
+      b.social?.facebook?.tokens?.META_ACCESS_TOKEN
+    );
+    if (!eligibleBiz.length) return res.json({ message: 'No businesses with auto_reply enabled', replied: 0 });
+
+    const results: any[] = [];
+    let totalReplied = 0;
+    const MAX_PER_RUN = 10; // safety limit
+
+    for (const biz of eligibleBiz) {
+      if (totalReplied >= MAX_PER_RUN) break;
+      const r: any = { business: biz.name, replied: 0, checked: 0, errors: [] };
+      const pageId = biz.social.facebook.tokens.META_PAGE_ID;
+      const accessToken = biz.social.facebook.tokens.META_ACCESS_TOKEN;
+
+      try {
+        // 1. Get posts from last 7 days
+        const sevenDaysAgo = Math.floor((Date.now() - 7 * 86400000) / 1000);
+        const postsR = await fetch(
+          `https://graph.facebook.com/v25.0/${pageId}/published_posts?fields=id,message,created_time&since=${sevenDaysAgo}&limit=30&access_token=${accessToken}`
+        );
+        const postsD = await postsR.json();
+        if (postsD.error) { r.errors.push('posts: ' + postsD.error.message); results.push(r); continue; }
+        const recentPosts = postsD.data || [];
+
+        // 2. For each post, get comments
+        for (const post of recentPosts) {
+          if (totalReplied >= MAX_PER_RUN) break;
+          const commentsR = await fetch(
+            `https://graph.facebook.com/v25.0/${post.id}/comments?fields=id,message,from,created_time&filter=stream&order=reverse_chronological&limit=20&access_token=${accessToken}`
+          );
+          const commentsD = await commentsR.json();
+          if (commentsD.error) { r.errors.push(`comments on ${post.id}: ${commentsD.error.message}`); continue; }
+
+          for (const comment of (commentsD.data || [])) {
+            if (totalReplied >= MAX_PER_RUN) break;
+            r.checked++;
+
+            // Skip: own comments, empty, very short
+            if (!comment.message || comment.message.length < 3) continue;
+            if (comment.from?.id === pageId) continue;
+
+            // Skip: already replied (check DB)
+            const { data: existing } = await sb
+              .from('comment_replies')
+              .select('id')
+              .eq('fb_comment_id', comment.id)
+              .limit(1)
+              .maybeSingle();
+            if (existing) continue;
+
+            // 3. Generate reply with Claude
+            const bizContext = [
+              biz.name ? `שם העסק: ${biz.name}` : '',
+              biz.description ? `תיאור: ${biz.description}` : '',
+              biz.tone ? `טון: ${biz.tone}` : '',
+              biz.schedule?.auto_reply_personality ? `הנחיות מיוחדות למענה: ${biz.schedule.auto_reply_personality}` : '',
+            ].filter(Boolean).join('\n');
+
+            const prompt = `אתה מנהל קהילה בעמוד העסק הזה. ענה לתגובה בעברית, בצורה חמה, אישית ותמציתית (עד 2 משפטים). אם השאלה כוללת בירור לגבי מחיר/זמינות — הצע ליצור קשר. אל תשתמש באימוג'ים מוגזמים (מקסימום 1). דבר בצורה טבעית — לא יותר מדי רשמית. אל תכלול האשטגים.
+
+${bizContext}
+
+תוכן הפוסט המקורי: "${(post.message || '').slice(0, 200)}"
+
+התגובה של ${comment.from?.name || 'משתמש'}: "${comment.message}"
+
+החזר רק את טקסט המענה, בלי שום טקסט נוסף:`;
+
+            let replyText = '';
+            try {
+              replyText = await callClaude(prompt, claudeKey, 300);
+              replyText = replyText.trim().replace(/^["']|["']$/g, '');
+            } catch (e: any) {
+              r.errors.push(`claude ${comment.id}: ${e.message}`);
+              continue;
+            }
+
+            if (!replyText || replyText.length < 2) continue;
+
+            // 4. Post reply to FB
+            try {
+              const postR = await fetch(
+                `https://graph.facebook.com/v25.0/${comment.id}/comments`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ message: replyText, access_token: accessToken }),
+                }
+              );
+              const postD = await postR.json();
+              if (postD.error) {
+                // Save as failed so we don't retry
+                await sb.from('comment_replies').insert({
+                  fb_comment_id: comment.id,
+                  fb_post_id: post.id,
+                  business_name: biz.name,
+                  commenter_name: comment.from?.name || null,
+                  commenter_id: comment.from?.id || null,
+                  original_text: comment.message,
+                  reply_text: replyText,
+                  status: 'failed',
+                  skip_reason: postD.error.message,
+                });
+                r.errors.push(`reply ${comment.id}: ${postD.error.message}`);
+                continue;
+              }
+
+              // 5. Save success
+              await sb.from('comment_replies').insert({
+                fb_comment_id: comment.id,
+                fb_post_id: post.id,
+                business_name: biz.name,
+                commenter_name: comment.from?.name || null,
+                commenter_id: comment.from?.id || null,
+                original_text: comment.message,
+                reply_text: replyText,
+                reply_fb_id: postD.id,
+                status: 'replied',
+              });
+              r.replied++;
+              totalReplied++;
+            } catch (e: any) {
+              r.errors.push(`post ${comment.id}: ${e.message}`);
+            }
+          }
+        }
+      } catch (e: any) { r.errors.push('fatal: ' + e.message); }
+      if (r.errors.length === 0) delete r.errors;
+      results.push(r);
+    }
+
+    res.json({ message: `Replied to ${totalReplied} comments`, replied: totalReplied, results });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Query recent replies for dashboard display
+app.get('/api/replies', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json([]);
+  let q = sb.from('comment_replies').select('*').order('created_at', { ascending: false }).limit(100);
+  if (req.query.business) q = q.eq('business_name', req.query.business);
+  if (req.query.days) q = q.gte('created_at', new Date(Date.now() - Number(req.query.days) * 86400000).toISOString());
+  const { data } = await q;
+  res.json(data || []);
+});
+
+// Delete/retract a reply (removes from FB + marks as deleted in DB)
+app.delete('/api/replies/:id', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const { data: reply } = await sb.from('comment_replies').select('*').eq('id', req.params.id).single();
+  if (!reply) return res.status(404).json({ error: 'Not found' });
+  // Try to delete from FB (optional)
+  if (reply.reply_fb_id) {
+    const { data: businesses } = await sb.from('businesses').select('*').eq('name', reply.business_name).single();
+    const accessToken = businesses?.social?.facebook?.tokens?.META_ACCESS_TOKEN;
+    if (accessToken) {
+      try {
+        await fetch(`https://graph.facebook.com/v25.0/${reply.reply_fb_id}?access_token=${accessToken}`, { method: 'DELETE' });
+      } catch {}
+    }
+  }
+  await sb.from('comment_replies').update({ status: 'deleted' }).eq('id', req.params.id);
+  res.json({ ok: true });
+});
+
 // GET metrics history for a post or business
 app.get('/api/metrics', async (req: any, res) => {
   const sb = getSupabase();
@@ -1262,7 +1450,7 @@ const PROD_URL = 'https://dashboard-steel-delta-52.vercel.app';
 app.get('/api/auth/facebook', (req: any, res) => {
   if (!FB_APP_ID) return res.status(503).json({ error: 'FB_APP_ID not configured' });
   const redirectUri = `${PROD_URL}/api/auth/facebook/callback`;
-  const scopes = 'pages_manage_posts,pages_read_engagement,pages_show_list,pages_read_user_content';
+  const scopes = 'pages_manage_posts,pages_manage_engagement,pages_read_engagement,pages_show_list,pages_read_user_content';
   // Pass user_id in state so we know who to assign tokens to
   const state = req.userId || 'anon';
   const fbUrl = `https://www.facebook.com/v25.0/dialog/oauth?client_id=${FB_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scopes}&state=${state}&response_type=code`;

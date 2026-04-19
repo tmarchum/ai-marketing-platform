@@ -2587,6 +2587,40 @@ function Businesses({ businesses, setBusinesses, posts }) {
               </>}
             </div>
 
+            {/* Auto-reply to comments */}
+            <div style={{background:"#10B98108",border:`1px solid #10B98133`,borderRadius:10,padding:12,marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8,flexWrap:"wrap"}}>
+                <div style={{color:"#10B981",fontSize:11,fontWeight:700}}>💬 מענה אוטומטי לתגובות</div>
+                <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                  <input type="checkbox" checked={!!biz.schedule?.auto_reply_enabled}
+                    onChange={async e=>{
+                      const sched = {...(biz.schedule||{}), auto_reply_enabled: e.target.checked};
+                      updateBiz(biz.id, {schedule: sched});
+                      try { await authFetch(`/api/businesses/${biz.id}`, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({schedule: sched})}); } catch {}
+                    }}/>
+                  <span style={{color:T.textSec,fontSize:11,fontWeight:600}}>{biz.schedule?.auto_reply_enabled ? "פעיל" : "כבוי"}</span>
+                </label>
+              </div>
+              {biz.schedule?.auto_reply_enabled && <>
+                <div style={{marginBottom:10}}>
+                  <div style={{color:T.textSec,fontSize:11,fontWeight:600,marginBottom:6}}>הנחיות למענה (אופציונלי):</div>
+                  <textarea
+                    value={biz.schedule?.auto_reply_personality||""}
+                    onChange={e=>{
+                      const sched = {...(biz.schedule||{}), auto_reply_personality: e.target.value};
+                      updateBiz(biz.id,{schedule:sched});
+                    }}
+                    onBlur={async()=>{try{await authFetch(`/api/businesses/${biz.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({schedule:biz.schedule})});}catch{}}}
+                    placeholder="למשל: תמיד מזמין ליצור קשר בוואטסאפ 050-1234567, אל תדבר על מחירים, השתמש באמוג'י 🎬 לפעמים..."
+                    style={{width:"100%",minHeight:60,background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,color:T.text,padding:10,fontSize:11,fontFamily:"inherit",direction:"rtl",resize:"vertical",boxSizing:"border-box",lineHeight:1.5}}/>
+                </div>
+                <div style={{color:T.textDim,fontSize:10,lineHeight:1.5}}>
+                  💡 Claude יענה על תגובות בפוסטים של {biz.name} בטון המותג, כל 10 דקות.
+                  <br/>⚠️ דורש הרשאת <code style={{background:T.inputBg,padding:"1px 4px",borderRadius:3,fontSize:9}}>pages_manage_engagement</code> — חבר מחדש את הפייסבוק אם המענה לא עובד.
+                </div>
+              </>}
+            </div>
+
             {/* Social connections per business */}
             <div style={{marginBottom:14}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
@@ -3055,6 +3089,41 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
   const [publishingId, setPublishingId] = useState(null);
   const [triggering, setTriggering] = useState(false);
   const [triggerResult, setTriggerResult] = useState(null);
+  const [replies, setReplies] = useState([]);
+  const [triggeringReplies, setTriggeringReplies] = useState(false);
+  const [replyResult, setReplyResult] = useState(null);
+
+  // Load recent auto-replies
+  useEffect(()=>{
+    (async()=>{
+      try {
+        const r = await authFetch("/api/replies?days=7");
+        if (r.ok) setReplies(await r.json());
+      } catch{}
+    })();
+  }, []);
+
+  async function triggerRepliesCron() {
+    setTriggeringReplies(true);
+    setReplyResult(null);
+    try {
+      const r = await authFetch("/api/cron/replies");
+      const d = await r.json();
+      setReplyResult(d);
+      // Reload replies
+      try { const rr = await authFetch("/api/replies?days=7"); if (rr.ok) setReplies(await rr.json()); } catch{}
+    } catch(e) { setReplyResult({ error: e.message }); }
+    setTriggeringReplies(false);
+    setTimeout(() => setReplyResult(null), 6000);
+  }
+
+  async function deleteReply(reply) {
+    if (!confirm("למחוק את התגובה מהמערכת ומפייסבוק?")) return;
+    try {
+      await authFetch(`/api/replies/${reply.id}`, { method: "DELETE" });
+      setReplies(prev => prev.filter(r => r.id !== reply.id));
+    } catch(e) { alert("שגיאה: " + e.message); }
+  }
 
   // Filter categories
   const scheduled = posts.filter(p => p.scheduled_at && !p.published)
@@ -3345,7 +3414,58 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
       </div>
     </Card>}
 
-    {scheduled.length === 0 && readyUnscheduled.length === 0 && publishedLast7.length === 0 && <Card>
+    {/* Auto-replies */}
+    <Card style={{marginBottom:20}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1}}>
+          💬 מענים אוטומטיים לתגובות ({replies.filter(r => r.status === "replied").length} השבוע)
+        </div>
+        <Btn sm bg="#10B98115" color="#10B981" onClick={triggerRepliesCron} disabled={triggeringReplies}>
+          {triggeringReplies ? <><Spinner size={10}/>בודק תגובות...</> : "🔍 בדוק תגובות עכשיו"}
+        </Btn>
+      </div>
+      {replyResult && <div style={{padding:"10px 12px",background:replyResult.error?"#EF444410":"#10B98110",border:`1px solid ${replyResult.error?"#EF444433":"#10B98133"}`,borderRadius:8,marginBottom:12,color:replyResult.error?"#EF4444":"#10B981",fontSize:11,fontWeight:600}}>
+        {replyResult.error ? "שגיאה: "+replyResult.error : (replyResult.message || "")}
+      </div>}
+      {replies.length === 0
+        ? <div style={{color:T.textDim,fontSize:12,textAlign:"center",padding:20,lineHeight:1.6}}>
+            {(businesses||[]).some(b => b.schedule?.auto_reply_enabled)
+              ? <>אין עדיין מענים אוטומטיים. המערכת בודקת כל 10 דקות.<br/>או לחץ "🔍 בדוק עכשיו" כדי לרוץ מיד.</>
+              : <>הפעל "מענה אוטומטי" באחד העסקים כדי להתחיל. {setPage && <button onClick={()=>setPage("businesses")} style={{background:"transparent",border:"none",color:"#10B981",fontWeight:600,fontSize:12,cursor:"pointer",fontFamily:"inherit",textDecoration:"underline"}}>לעמוד עסקים ↗</button>}</>}
+          </div>
+        : <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {replies.filter(r => r.status !== "deleted").slice(0, 10).map(reply => {
+              const biz = businesses.find(b => b.name === reply.business_name);
+              const date = reply.created_at ? new Date(reply.created_at) : null;
+              const isFailed = reply.status === "failed";
+              return <div key={reply.id} style={{background:isFailed?"#EF444408":T.inputBg,border:`1px solid ${isFailed?"#EF444433":T.borderLight}`,borderRadius:10,padding:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,gap:6,flexWrap:"wrap"}}>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                    <Tag label={reply.business_name} color={biz?.color || T.textMuted}/>
+                    {isFailed && <Tag label="נכשל" color="#EF4444"/>}
+                    {reply.commenter_name && <span style={{color:T.textSec,fontSize:11,fontWeight:600}}>👤 {reply.commenter_name}</span>}
+                  </div>
+                  <span style={{color:T.textDim,fontSize:10}}>{date?.toLocaleString("he-IL",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</span>
+                </div>
+                <div style={{background:T.bg,borderRadius:8,padding:"8px 10px",marginBottom:6,borderRight:`3px solid ${T.border}`}}>
+                  <div style={{color:T.textDim,fontSize:9,fontWeight:600,marginBottom:3}}>תגובה מקורית:</div>
+                  <div style={{color:T.textSec,fontSize:12,direction:"rtl",lineHeight:1.4}}>{reply.original_text}</div>
+                </div>
+                <div style={{background:"#10B98108",borderRadius:8,padding:"8px 10px",borderRight:`3px solid #10B981`}}>
+                  <div style={{color:"#10B981",fontSize:9,fontWeight:600,marginBottom:3}}>🤖 המענה שלנו:</div>
+                  <div style={{color:T.text,fontSize:12,direction:"rtl",lineHeight:1.4}}>{reply.reply_text}</div>
+                  {isFailed && reply.skip_reason && <div style={{color:"#EF4444",fontSize:10,marginTop:4}}>⚠️ {reply.skip_reason}</div>}
+                </div>
+                {!isFailed && <div style={{display:"flex",justifyContent:"flex-end",marginTop:6,gap:6}}>
+                  <button onClick={()=>deleteReply(reply)} style={{background:"transparent",border:"none",color:"#EF4444",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>🗑️ מחק מענה</button>
+                </div>}
+              </div>;
+            })}
+          </div>
+      }
+    </Card>
+
+    {scheduled.length === 0 && readyUnscheduled.length === 0 && publishedLast7.length === 0 && replies.length === 0 && <Card>
       <div style={{ textAlign:"center",color:T.textDim,padding:30 }}>
         <div style={{ fontSize:32,marginBottom:8 }}>📭</div>
         <div style={{ color:T.textSec,fontSize:13,fontWeight:600,marginBottom:4 }}>אין עדיין פוסטים</div>
