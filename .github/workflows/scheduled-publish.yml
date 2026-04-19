@@ -1,0 +1,23 @@
+name: Scheduled Post Publisher
+
+on:
+  schedule:
+    # Runs every 10 minutes
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # Allows manual trigger
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger publish cron
+        run: |
+          response=$(curl -s -w "\n%{http_code}" --max-time 60 "https://dashboard-steel-delta-52.vercel.app/api/cron/publish")
+          body=$(echo "$response" | head -n -1)
+          code=$(echo "$response" | tail -n 1)
+          echo "HTTP $code"
+          echo "Response: $body"
+          if [ "$code" != "200" ]; then
+            echo "::error::Cron endpoint returned $code"
+            exit 1
+          fi
