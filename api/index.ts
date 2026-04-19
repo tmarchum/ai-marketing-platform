@@ -1201,6 +1201,158 @@ app.post('/api/calendars/approve', async (req: any, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// AUTO MEDIA GEN — Generate image for a specific post
+// ══════════════════════════════════════════════════════════════
+
+app.post('/api/posts/:id/generate-media', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const postId = req.params.id;
+    // Get post + business
+    const { data: post, error: postErr } = await sb.from('content_posts').select('*').eq('id', postId).single();
+    if (postErr || !post) return res.status(404).json({ error: 'Post not found' });
+
+    const { data: biz } = await sb.from('businesses').select('*').eq('name', post.business_name).single();
+
+    // Skip if already has media
+    if (post.image_url || post.video_url) {
+      return res.json({ ok: true, skipped: true, reason: 'already has media', url: post.image_url || post.video_url });
+    }
+
+    const claudeKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
+    const geminiKey = await getUserKey(sb, req.userId, 'GEMINI_API_KEY');
+    if (!geminiKey) return res.status(503).json({ error: 'GEMINI_API_KEY not set' });
+
+    // 1. Enhance prompt with Claude (using visual identity)
+    const topic = post.image_prompt || (post.content || '').slice(0, 200);
+    const vi = biz?.visual_identity || '';
+    const enhancedPrompt = claudeKey
+      ? await (async () => {
+          const claudeMessage = `You are directing an AI image model. Generate a detailed, cinematic, photographic description in English for this post:
+
+Topic/concept: ${topic}
+
+Brand visual identity:
+"""
+${vi || 'A professional, clean, modern brand.'}
+"""
+
+Requirements:
+- Extract the SPECIFIC visual subject from the topic (e.g. "outdoor cinema night for kids birthday" NOT "marketing image")
+- Describe concrete objects, people, setting, lighting, mood
+- Match the brand visual identity (colors, style, motifs)
+- NO text or typography in image
+- Single paragraph, 60-100 words
+
+Output ONLY the image prompt, nothing else:`;
+          try { return (await callClaude(claudeMessage, claudeKey, 500)).trim(); }
+          catch { return topic; }
+        })()
+      : topic;
+
+    // 2. Generate image via Gemini
+    const TIMEOUT = 50_000;
+    let imageBase64: string | null = null;
+    let contentType = 'image/png';
+    let lastError = '';
+
+    const imageModels = ['gemini-3-pro-image-preview', 'gemini-2.5-flash-image'];
+    for (const model of imageModels) {
+      if (imageBase64) break;
+      try {
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), TIMEOUT);
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: ac.signal,
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: enhancedPrompt }] }],
+            generationConfig: { responseModalities: ['IMAGE'] },
+          }),
+        });
+        clearTimeout(timer);
+        const d = await r.json();
+        if (d.error) { lastError = `${model}: ${d.error.message}`; continue; }
+        const parts = d.candidates?.[0]?.content?.parts || [];
+        const imgPart = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
+        if (imgPart) {
+          imageBase64 = imgPart.inlineData.data;
+          contentType = imgPart.inlineData.mimeType;
+        } else {
+          lastError = `${model}: no image in response`;
+        }
+      } catch (err: any) {
+        lastError = `${model}: ${err.name === 'AbortError' ? 'timeout' : err.message}`;
+      }
+    }
+
+    // Fallback: Imagen 4.0
+    if (!imageBase64) {
+      try {
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), TIMEOUT);
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${geminiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: ac.signal,
+          body: JSON.stringify({
+            instances: [{ prompt: enhancedPrompt }],
+            parameters: { sampleCount: 1, aspectRatio: '1:1' },
+          }),
+        });
+        clearTimeout(timer);
+        const d = await r.json();
+        const bytes = d.predictions?.[0]?.bytesBase64Encoded;
+        if (bytes) { imageBase64 = bytes; contentType = 'image/png'; }
+        else lastError += ` | imagen: ${d.error?.message || 'no image'}`;
+      } catch (err: any) { lastError += ` | imagen: ${err.message}`; }
+    }
+
+    if (!imageBase64) {
+      return res.status(500).json({ error: 'Image generation failed', details: lastError });
+    }
+
+    // 3. Upload to Supabase Storage
+    const buffer = Buffer.from(imageBase64, 'base64');
+    const ext = contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'png';
+    const fileName = `media/${post.user_id || 'anon'}/${Date.now()}-${postId}.${ext}`;
+    await sb.storage.createBucket('media', { public: true }).catch(() => {});
+    const { error: upErr } = await sb.storage.from('media').upload(fileName, buffer, { contentType, upsert: true });
+    if (upErr) return res.status(500).json({ error: 'Upload failed: ' + upErr.message });
+    const { data: urlData } = sb.storage.from('media').getPublicUrl(fileName);
+    const imageUrl = urlData.publicUrl;
+
+    // 4. Update post with image_url + enhanced prompt
+    await sb.from('content_posts').update({
+      image_url: imageUrl,
+      image_prompt: enhancedPrompt,
+    }).eq('id', postId);
+
+    res.json({ ok: true, url: imageUrl, prompt: enhancedPrompt });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Batch endpoint: find all scheduled posts missing media and return their IDs
+app.get('/api/posts/pending-media', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json({ posts: [] });
+  const { data } = await sb
+    .from('content_posts')
+    .select('id, business_name, content, scheduled_at, image_prompt')
+    .not('scheduled_at', 'is', null)
+    .is('published_at', null)
+    .is('image_url', null)
+    .is('video_url', null)
+    .order('scheduled_at', { ascending: true })
+    .limit(50);
+  res.json({ posts: data || [] });
+});
+
+// ══════════════════════════════════════════════════════════════
 // CRON — Auto-publish scheduled posts
 // ══════════════════════════════════════════════════════════════
 

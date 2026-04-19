@@ -3119,9 +3119,15 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
     setCalGenerating(false);
   }
 
+  const [mediaProgress, setMediaProgress] = useState(null); // {total, done, failed, current}
+  const [autoGenMedia, setAutoGenMedia] = useState(true);
+
   async function approveCalendar() {
     if (!calResult?.posts?.length) return;
-    if (!confirm(`צור ${calResult.posts.length} פוסטים ב-DB? (תצטרך לייצר מדיה לכל אחד)`)) return;
+    const msg = autoGenMedia
+      ? `צור ${calResult.posts.length} פוסטים + מדיה אוטומטית? (~${calResult.posts.length * 45} שניות)`
+      : `צור ${calResult.posts.length} פוסטים ב-DB? (תצטרך לייצר מדיה לכל אחד ידנית)`;
+    if (!confirm(msg)) return;
     setCalApproving(true);
     try {
       const r = await authFetch("/api/calendars/approve", {
@@ -3130,12 +3136,64 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
       });
       const d = await r.json();
       if (!r.ok || d.error) throw new Error(d.error || "שגיאה");
-      alert(`✅ ${d.message}! עבור לעמוד "תוכן" כדי לייצר מדיה.`);
+      const createdIds = (d.created || []).filter(c => c.id).map(c => c.id);
+
+      if (autoGenMedia && createdIds.length > 0) {
+        // Generate media for each post sequentially (shows progress)
+        setMediaProgress({ total: createdIds.length, done: 0, failed: 0, current: null });
+        for (let i = 0; i < createdIds.length; i++) {
+          const id = createdIds[i];
+          const postTheme = d.created[i]?.theme || "";
+          setMediaProgress(p => ({ ...p, current: postTheme }));
+          try {
+            const mr = await authFetch(`/api/posts/${id}/generate-media`, { method: "POST" });
+            const md = await mr.json();
+            if (md.ok) {
+              setMediaProgress(p => ({ ...p, done: p.done + 1 }));
+            } else {
+              setMediaProgress(p => ({ ...p, failed: p.failed + 1 }));
+            }
+          } catch {
+            setMediaProgress(p => ({ ...p, failed: p.failed + 1 }));
+          }
+        }
+        setTimeout(() => setMediaProgress(null), 4000);
+      }
+
+      alert(`✅ ${d.message}!${autoGenMedia ? "\nמדיה: נוצרה אוטומטית" : "\nעבור לעמוד \"תוכן\" כדי לייצר מדיה."}`);
       setCalResult(null);
       // Trigger page reload to refresh posts
       window.location.reload();
     } catch(e) { alert("שגיאה: " + e.message); }
     setCalApproving(false);
+  }
+
+  // Batch media generation for all pending posts
+  const [batchGen, setBatchGen] = useState(false);
+  async function generateAllPendingMedia() {
+    if (!confirm("ייצר תמונות לכל הפוסטים המתוזמנים ללא מדיה? זה ייקח כמה דקות.")) return;
+    setBatchGen(true);
+    try {
+      const r = await authFetch("/api/posts/pending-media");
+      const d = await r.json();
+      const pending = d.posts || [];
+      if (!pending.length) { alert("אין פוסטים ממתינים"); setBatchGen(false); return; }
+      setMediaProgress({ total: pending.length, done: 0, failed: 0, current: null });
+      for (let i = 0; i < pending.length; i++) {
+        const p = pending[i];
+        setMediaProgress(pr => ({ ...pr, current: (p.content || "").slice(0, 40) }));
+        try {
+          const mr = await authFetch(`/api/posts/${p.id}/generate-media`, { method: "POST" });
+          const md = await mr.json();
+          if (md.ok) setMediaProgress(pr => ({ ...pr, done: pr.done + 1 }));
+          else setMediaProgress(pr => ({ ...pr, failed: pr.failed + 1 }));
+        } catch { setMediaProgress(pr => ({ ...pr, failed: pr.failed + 1 })); }
+      }
+      alert(`✅ הסתיים!`);
+      window.location.reload();
+    } catch(e) { alert("שגיאה: " + e.message); }
+    setBatchGen(false);
+    setTimeout(() => setMediaProgress(null), 4000);
   }
 
   function removeCalendarPost(idx) {
@@ -3265,6 +3323,37 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
   return <div style={{ animation: "fadeUp 0.3s ease" }}>
     <SectionTitle sub="סקירה כללית של תזמוני פרסום — מחושב מהדאטהבייס, מתעדכן אוטומטית">📅 לוח פרסומים</SectionTitle>
 
+    {/* Media generation progress bar (global) */}
+    {mediaProgress && <Card style={{marginBottom:20,background:"#8B5CF608",border:"1px solid #8B5CF633"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:6}}>
+        <div style={{color:"#8B5CF6",fontSize:12,fontWeight:700}}>🎨 יצירת מדיה — {mediaProgress.done}/{mediaProgress.total}</div>
+        <div style={{color:T.textDim,fontSize:11}}>
+          ✅ {mediaProgress.done} · {mediaProgress.failed > 0 ? `❌ ${mediaProgress.failed}` : ""}
+        </div>
+      </div>
+      <div style={{height:8,background:T.inputBg,borderRadius:4,overflow:"hidden"}}>
+        <div style={{height:"100%",width:`${((mediaProgress.done + mediaProgress.failed) / mediaProgress.total) * 100}%`,background:"linear-gradient(90deg,#8B5CF6,#3B82F6)",transition:"width 0.3s"}}/>
+      </div>
+      {mediaProgress.current && <div style={{color:T.textMuted,fontSize:11,marginTop:6,direction:"rtl",lineHeight:1.4}}>
+        <Spinner size={10}/> {mediaProgress.current}...
+      </div>}
+    </Card>}
+
+    {/* Batch media gen button */}
+    {!mediaProgress && posts.filter(p => p.scheduled_at && !p.published && !p.image_url && !p.video_url).length > 0 && <Card style={{marginBottom:20}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <div>
+          <div style={{color:T.text,fontSize:13,fontWeight:700,marginBottom:2}}>
+            🎨 {posts.filter(p => p.scheduled_at && !p.published && !p.image_url && !p.video_url).length} פוסטים ממתינים למדיה
+          </div>
+          <div style={{color:T.textDim,fontSize:11}}>צור תמונות אוטומטית לכל הפוסטים המתוזמנים</div>
+        </div>
+        <Btn disabled={batchGen} grad="linear-gradient(135deg,#8B5CF6,#3B82F6)" onClick={generateAllPendingMedia}>
+          {batchGen ? <><Spinner size={12}/>מייצר...</> : "⚡ ייצר מדיה לכולם"}
+        </Btn>
+      </div>
+    </Card>}
+
     {/* Content Calendar AI */}
     <Card style={{marginBottom:20,background:"linear-gradient(135deg,#8B5CF608,#3B82F608)",border:"1px solid #8B5CF633"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
@@ -3320,10 +3409,14 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
           <div style={{color:T.textMuted,fontSize:12,fontWeight:700}}>
             תצוגה מקדימה: {calResult.posts?.length || 0} פוסטים
           </div>
+          <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",background:T.inputBg,padding:"6px 10px",borderRadius:8,border:`1px solid ${T.border}`}}>
+            <input type="checkbox" checked={autoGenMedia} onChange={e=>setAutoGenMedia(e.target.checked)}/>
+            <span style={{color:T.textSec,fontSize:11,fontWeight:600}}>🎨 צור מדיה אוטומטית</span>
+          </label>
           <Btn disabled={calApproving||!calResult.posts?.length}
             grad={calApproving?undefined:"linear-gradient(135deg,#10B981,#3B82F6)"}
             onClick={approveCalendar}>
-            {calApproving ? <><Spinner size={12}/>יוצר...</> : `✅ צור את כל ${calResult.posts?.length || 0} הפוסטים ב-DB`}
+            {calApproving ? <><Spinner size={12}/>יוצר...</> : `✅ צור ${calResult.posts?.length || 0} פוסטים${autoGenMedia?" + מדיה":""}`}
           </Btn>
         </div>
 
