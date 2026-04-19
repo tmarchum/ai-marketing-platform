@@ -859,6 +859,64 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
 
   const [mediaChoice, setMediaChoice] = useState(null);
   const [videoOpts, setVideoOpts] = useState(null); // {aspect, duration} or null
+  const [scheduling, setScheduling] = useState(false);
+  const [scheduleVal, setScheduleVal] = useState(() => {
+    if (post.scheduled_at) {
+      try { return new Date(post.scheduled_at).toISOString().slice(0,16); } catch { return ""; }
+    }
+    // Default: 1 hour from now
+    const d = new Date(Date.now() + 60*60*1000);
+    d.setSeconds(0, 0);
+    return d.toISOString().slice(0,16);
+  });
+
+  async function savePostField(fields) {
+    // Update local + persist to DB
+    onUpdate(p => ({ ...p, ...fields }));
+    if (typeof post.id === 'string' && post.id.length > 20) {
+      try {
+        await authFetch(`/api/content/${post.id}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(fields)
+        });
+      } catch {}
+    }
+  }
+
+  async function saveSchedule() {
+    if (!scheduleVal) return;
+    const iso = new Date(scheduleVal).toISOString();
+    const fields = { scheduled_at: iso };
+
+    // If media is base64 in pipeline, upload to storage so the cron can publish it
+    const pipelineImg = post.pipeline?.imageUrl;
+    const pipelineVid = post.pipeline?.videoUrl;
+
+    if (pipelineImg && pipelineImg.startsWith("data:") && !post.image_url) {
+      try {
+        const upR = await authFetch("/api/upload/image", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ base64: pipelineImg, contentType: pipelineImg.match(/data:([^;]+)/)?.[1] || "image/png" })
+        });
+        const upD = await upR.json();
+        if (upD.url) fields.image_url = upD.url;
+      } catch (e) { alert("שגיאה בהעלאת תמונה: " + e.message); return; }
+    }
+    if (pipelineVid && !pipelineVid.startsWith("data:") && !post.video_url) {
+      fields.video_url = pipelineVid;
+    }
+    if (pipelineImg && !pipelineImg.startsWith("data:") && !post.image_url) {
+      fields.image_url = pipelineImg;
+    }
+
+    await savePostField(fields);
+    setScheduling(false);
+    alert("✅ הפוסט יתפרסם אוטומטית ב-" + new Date(iso).toLocaleString("he-IL"));
+  }
+  async function clearSchedule() {
+    await savePostField({ scheduled_at: null });
+    setScheduling(false);
+  }
   async function startMedia(type, opts) {
     setMediaChoice(null);
     setVideoOpts(null);
@@ -892,6 +950,7 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
       <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
         <Tag label={post.platform} color={pl.color}/>
         {post.published && <Tag label="📡 פורסם" color="#1877F2"/>}
+        {!post.published && post.scheduled_at && <Tag label={`⏰ ${new Date(post.scheduled_at).toLocaleString("he-IL",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}`} color="#F59E0B"/>}
         <Tag label={post.business} color={T.textMuted}/>
         {post.pipeline&&<PipelineBar stages={MEDIA_STAGES} pipeline={post.pipeline} compact/>}
       </div>
@@ -975,6 +1034,9 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
         : <>
           <Btn sm bg={T.inputBg} color={T.textSec} onClick={()=>setExp(p=>!p)}>{exp?"▲":"▼"} מדיה</Btn>
           {post.pipeline?.readyToPublish && <Btn sm bg="#1877F215" color="#1877F2" onClick={doPublish}>📡 פרסם עכשיו</Btn>}
+          {post.pipeline?.readyToPublish && !post.published && <Btn sm bg="#F59E0B15" color="#F59E0B" onClick={()=>setScheduling(s=>!s)}>
+            ⏰ {post.scheduled_at?"שנה תזמון":"תזמן פרסום"}
+          </Btn>}
           {(post.pipeline?.readyToPublish || post.pipeline?.error || post.pipeline?.done) && <>
             <Btn sm bg="#8B5CF615" color="#8B5CF6" title="צור גרסה חדשה עם אותם הגדרות"
               onClick={()=>{
@@ -986,6 +1048,15 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
             <Btn sm bg={T.inputBg} color={T.textMuted} title="נקה והתחל מחדש"
               onClick={()=>onUpdate({...post, pipeline: null})}>✨ אפשרות אחרת</Btn>
           </>}
+          {scheduling && <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",background:"#F59E0B08",borderRadius:10,padding:"10px 12px",border:`1px solid #F59E0B40`,marginTop:6,width:"100%"}}>
+            <span style={{fontSize:11,color:T.textMuted,fontWeight:600}}>📅 מתי לפרסם:</span>
+            <input type="datetime-local" value={scheduleVal} onChange={e=>setScheduleVal(e.target.value)}
+              style={{background:T.bg,border:`1px solid ${T.border}`,borderRadius:6,color:T.text,fontSize:12,fontFamily:"inherit",padding:"6px 8px"}}/>
+            <Btn sm bg="#F59E0B" color="#fff" onClick={saveSchedule}>שמור תזמון</Btn>
+            {post.scheduled_at && <Btn sm bg="#EF444415" color="#EF4444" onClick={clearSchedule}>בטל תזמון</Btn>}
+            <Btn sm bg={T.inputBg} color={T.textMuted} onClick={()=>setScheduling(false)}>סגור</Btn>
+            <div style={{width:"100%",color:T.textDim,fontSize:10,marginTop:4}}>הפוסט יתפרסם אוטומטית ללא אישור נוסף בזמן שנבחר</div>
+          </div>}
         </>
       }
       {onRegenerate && <Btn sm bg="#8B5CF610" color="#8B5CF6" onClick={onRegenerate}>🔄 צור פוסט אחר</Btn>}

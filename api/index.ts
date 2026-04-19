@@ -955,6 +955,96 @@ app.get('/api/cron/metrics', async (req: any, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════
+// CRON — Auto-publish scheduled posts
+// ══════════════════════════════════════════════════════════════
+
+app.get('/api/cron/publish', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const now = new Date().toISOString();
+    // Get all posts scheduled for now or earlier that aren't published yet
+    const { data: due, error } = await sb
+      .from('content_posts')
+      .select('*')
+      .not('scheduled_at', 'is', null)
+      .lte('scheduled_at', now)
+      .is('published_at', null)
+      .limit(20);
+    if (error) return res.status(500).json({ error: error.message });
+    if (!due?.length) return res.json({ message: 'No posts due', published: 0 });
+
+    // Get businesses for FB tokens
+    const { data: businesses } = await sb.from('businesses').select('*');
+    const bizByName = Object.fromEntries((businesses || []).map((b: any) => [b.name, b]));
+
+    const results: any[] = [];
+    for (const post of due) {
+      const r: any = { id: post.id, business: post.business_name };
+      try {
+        const biz = bizByName[post.business_name];
+        const fbTokens = biz?.social?.facebook?.tokens;
+        if (!fbTokens?.META_PAGE_ID || !fbTokens?.META_ACCESS_TOKEN) {
+          r.error = 'no FB tokens';
+          results.push(r);
+          continue;
+        }
+        const pageId = fbTokens.META_PAGE_ID;
+        const accessToken = fbTokens.META_ACCESS_TOKEN;
+        const hashtags = (post.hashtags || []).map((h: string) => h.startsWith('#') ? h : `#${h}`).join(' ');
+        const message = (post.content || '') + (hashtags ? '\n\n' + hashtags : '');
+        const mediaUrl = post.video_url || post.image_url;
+        const isVideo = !!post.video_url;
+
+        let endpoint: string;
+        let body: any;
+        if (mediaUrl) {
+          endpoint = isVideo
+            ? `https://graph.facebook.com/v25.0/${pageId}/videos`
+            : `https://graph.facebook.com/v25.0/${pageId}/photos`;
+          body = isVideo
+            ? { file_url: mediaUrl, description: message, access_token: accessToken }
+            : { url: mediaUrl, message, access_token: accessToken };
+        } else {
+          // Text-only post
+          endpoint = `https://graph.facebook.com/v25.0/${pageId}/feed`;
+          body = { message, access_token: accessToken };
+        }
+
+        const fbR = await fetch(endpoint, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const fbD = await fbR.json();
+        if (fbD.error) {
+          r.error = fbD.error.message;
+          // Mark as failed to avoid retry loop
+          await sb.from('content_posts').update({ status: 'failed', performance: { publish_error: fbD.error.message, failed_at: now } }).eq('id', post.id);
+          results.push(r);
+          continue;
+        }
+        const fbPostId = fbD.post_id || fbD.id;
+        await sb.from('content_posts').update({
+          status: 'published',
+          fb_post_id: fbPostId,
+          published_at: now,
+        }).eq('id', post.id);
+        r.ok = true;
+        r.fb_post_id = fbPostId;
+      } catch (e: any) {
+        r.error = e.message;
+      }
+      results.push(r);
+    }
+
+    const published = results.filter(x => x.ok).length;
+    res.json({ message: `Published ${published}/${due.length}`, published, results });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET metrics history for a post or business
 app.get('/api/metrics', async (req: any, res) => {
   const sb = getSupabase();
