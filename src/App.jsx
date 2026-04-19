@@ -754,6 +754,33 @@ async function runGeminiVideoPipeline(post, businesses, onUpdate, opts={}) {
 }
 
 // Publish media to Facebook — called only after user approves
+// Compute next schedule slot for a business, skipping slots already taken by other scheduled posts
+function computeNextScheduleSlot(biz, existingPosts) {
+  if (!biz?.schedule?.enabled) return null;
+  const days = biz.schedule.days || [];
+  const times = biz.schedule.times || [];
+  if (!days.length || !times.length) return null;
+  const now = new Date();
+  const takenSlots = new Set(
+    (existingPosts||[])
+      .filter(p => p.business === biz.name && p.scheduled_at && !p.published)
+      .map(p => new Date(p.scheduled_at).toISOString())
+  );
+  // Look up to 60 days ahead for an available slot
+  for (let d = 0; d < 60; d++) {
+    const day = new Date(now); day.setDate(day.getDate() + d);
+    if (!days.includes(day.getDay())) continue;
+    for (const time of times) {
+      const [h, m] = time.split(":").map(Number);
+      const slot = new Date(day); slot.setHours(h, m, 0, 0);
+      if (slot < now) continue; // skip past times today
+      if (takenSlots.has(slot.toISOString())) continue;
+      return slot.toISOString();
+    }
+  }
+  return null;
+}
+
 async function publishMediaToFB(post, businesses, pipeline, onUpdate) {
   const s = { ...(pipeline.stages || {}), publish: "running" };
   onUpdate({ ...pipeline, stages:{...s}, current:"publish" });
@@ -850,16 +877,19 @@ function PipelineBar({ stages, pipeline, compact }) {
 // ═══════════════════════════════════════════════════════════════════
 // POST CARD
 // ═══════════════════════════════════════════════════════════════════
-function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses, postMetrics }) {
+function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses, allPosts, postMetrics }) {
   const [exp, setExp] = useState(false);
   const [editing, setEditing] = useState(false);
   const [txt, setTxt] = useState(post.content);
   const pl = PLATFORMS.find(p=>post.platform.includes(p.label.split(" ")[0]))||PLATFORMS[0];
   const metrics = postMetrics; // {likes, comments, shares} or null
+  const biz = (businesses||[]).find(b=>b.name===post.business);
+  const bizHasSchedule = !!biz?.schedule?.enabled && (biz.schedule?.days?.length>0) && (biz.schedule?.times?.length>0);
 
   const [mediaChoice, setMediaChoice] = useState(null);
   const [videoOpts, setVideoOpts] = useState(null); // {aspect, duration} or null
   const [scheduling, setScheduling] = useState(false);
+  const [autoSchedulingNow, setAutoSchedulingNow] = useState(false);
   const [scheduleVal, setScheduleVal] = useState(() => {
     if (post.scheduled_at) {
       try { return new Date(post.scheduled_at).toISOString().slice(0,16); } catch { return ""; }
@@ -869,6 +899,41 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
     d.setSeconds(0, 0);
     return d.toISOString().slice(0,16);
   });
+
+  // Auto-schedule effect: when media becomes ready and business has a schedule, auto-assign next slot
+  useEffect(()=>{
+    if (!post.pipeline?.readyToPublish) return;
+    if (post.published || post.scheduled_at) return;
+    if (!bizHasSchedule) return;
+    if (autoSchedulingNow) return;
+    const slotIso = computeNextScheduleSlot(biz, allPosts);
+    if (!slotIso) return;
+    (async()=>{
+      setAutoSchedulingNow(true);
+      try {
+        const fields = { scheduled_at: slotIso };
+        // Upload base64 media if needed
+        const pipImg = post.pipeline?.imageUrl;
+        const pipVid = post.pipeline?.videoUrl;
+        if (pipImg && pipImg.startsWith("data:") && !post.image_url) {
+          try {
+            const upR = await authFetch("/api/upload/image",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({base64:pipImg, contentType: pipImg.match(/data:([^;]+)/)?.[1] || "image/png"})});
+            const upD = await upR.json();
+            if (upD.url) fields.image_url = upD.url;
+          } catch {}
+        } else if (pipImg && !pipImg.startsWith("data:") && !post.image_url) {
+          fields.image_url = pipImg;
+        }
+        if (pipVid && !pipVid.startsWith("data:") && !post.video_url) {
+          fields.video_url = pipVid;
+        }
+        onUpdate(p=>({...p, ...fields}));
+        if (typeof post.id === 'string' && post.id.length > 20) {
+          try { await authFetch(`/api/content/${post.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(fields)}); } catch {}
+        }
+      } finally { setAutoSchedulingNow(false); }
+    })();
+  }, [post.pipeline?.readyToPublish, post.id, bizHasSchedule]);
 
   async function savePostField(fields) {
     // Update local + persist to DB
@@ -950,7 +1015,8 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
       <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
         <Tag label={post.platform} color={pl.color}/>
         {post.published && <Tag label="📡 פורסם" color="#1877F2"/>}
-        {!post.published && post.scheduled_at && <Tag label={`⏰ ${new Date(post.scheduled_at).toLocaleString("he-IL",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}`} color="#F59E0B"/>}
+        {!post.published && post.scheduled_at && <Tag label={`⏰ ${new Date(post.scheduled_at).toLocaleString("he-IL",{weekday:"short",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}`} color="#F59E0B"/>}
+        {autoSchedulingNow && <Tag label="⏳ מתזמן..." color="#F59E0B"/>}
         <Tag label={post.business} color={T.textMuted}/>
         {post.pipeline&&<PipelineBar stages={MEDIA_STAGES} pipeline={post.pipeline} compact/>}
       </div>
@@ -1033,9 +1099,9 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
         </>
         : <>
           <Btn sm bg={T.inputBg} color={T.textSec} onClick={()=>setExp(p=>!p)}>{exp?"▲":"▼"} מדיה</Btn>
-          {post.pipeline?.readyToPublish && <Btn sm bg="#1877F215" color="#1877F2" onClick={doPublish}>📡 פרסם עכשיו</Btn>}
+          {post.pipeline?.readyToPublish && !post.scheduled_at && <Btn sm bg="#1877F215" color="#1877F2" onClick={doPublish}>📡 פרסם עכשיו</Btn>}
           {post.pipeline?.readyToPublish && !post.published && <Btn sm bg="#F59E0B15" color="#F59E0B" onClick={()=>setScheduling(s=>!s)}>
-            ⏰ {post.scheduled_at?"שנה תזמון":"תזמן פרסום"}
+            ⏰ {post.scheduled_at?"שנה תזמון":"תזמן ידני"}
           </Btn>}
           {(post.pipeline?.readyToPublish || post.pipeline?.error || post.pipeline?.done) && <>
             <Btn sm bg="#8B5CF615" color="#8B5CF6" title="צור גרסה חדשה עם אותם הגדרות"
@@ -1632,7 +1698,7 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
     <div style={{display:"flex",flexDirection:"column",gap:14}}>
       {existingBizPosts.length===0
         ? <Card><div style={{textAlign:"center",color:T.textDim,padding:30}}>אין פוסטים ל-{selBiz?.name} — לחץ "צור פוסטים"</div></Card>
-        : existingBizPosts.map(post=><PostCard key={post.id} post={post} businesses={BUSINESSES}
+        : existingBizPosts.map(post=><PostCard key={post.id} post={post} businesses={BUSINESSES} allPosts={posts}
           postMetrics={post.fbPostId ? postMetricsMap[post.fbPostId] : null}
           onUpdate={upd=>setPosts(prev=>prev.map(p=>p.id===post.id?(typeof upd==="function"?upd(p):upd):p))}
           onDelete={id=>{setPosts(prev=>prev.filter(p=>p.id!==id));authFetch(`/api/content/${id}`,{method:"DELETE"}).catch(()=>{})}}
@@ -2446,6 +2512,79 @@ function Businesses({ businesses, setBusinesses, posts }) {
                 placeholder="תיאור איך המוצר/השירות נראה פיזית, סגנון צילום, צבעים, mood, מוטיבים חוזרים... (ישמש את Imagen/Veo ליצירת תמונות/סרטונים עקביים)"
                 style={{width:"100%",minHeight:80,background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,color:T.text,padding:12,fontSize:11,fontFamily:"inherit",direction:"ltr",resize:"vertical",boxSizing:"border-box",lineHeight:1.5}}/>
               <div style={{color:T.textDim,fontSize:10,marginTop:6}}>💡 טקסט באנגלית. ככל שיותר ספציפי ("wooden bakery counter with fresh sourdough loaves, warm golden light, hands kneading dough") — התמונות יהיו יותר מדויקות</div>
+            </div>
+
+            {/* Publish schedule per business */}
+            <div style={{background:"#F59E0B08",border:`1px solid #F59E0B33`,borderRadius:10,padding:12,marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8,flexWrap:"wrap"}}>
+                <div style={{color:"#F59E0B",fontSize:11,fontWeight:700}}>⏰ תזמון פרסום אוטומטי</div>
+                <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                  <input type="checkbox" checked={!!biz.schedule?.enabled}
+                    onChange={async e=>{
+                      const sched = {...(biz.schedule||{}), enabled: e.target.checked, days: biz.schedule?.days||[0,2,4], times: biz.schedule?.times||["10:00"]};
+                      updateBiz(biz.id, {schedule: sched});
+                      try { await authFetch(`/api/businesses/${biz.id}`, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({schedule: sched})}); } catch {}
+                    }}/>
+                  <span style={{color:T.textSec,fontSize:11,fontWeight:600}}>{biz.schedule?.enabled ? "פעיל" : "כבוי"}</span>
+                </label>
+              </div>
+              {biz.schedule?.enabled && <>
+                <div style={{marginBottom:10}}>
+                  <div style={{color:T.textSec,fontSize:11,fontWeight:600,marginBottom:6}}>ימים בשבוע:</div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    {["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"].map((dayName,idx)=>{
+                      const selected = (biz.schedule?.days||[]).includes(idx);
+                      return <button key={idx}
+                        onClick={async()=>{
+                          const days = biz.schedule?.days || [];
+                          const newDays = selected ? days.filter(d=>d!==idx) : [...days, idx].sort();
+                          const sched = {...(biz.schedule||{}), days: newDays};
+                          updateBiz(biz.id,{schedule:sched});
+                          try { await authFetch(`/api/businesses/${biz.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({schedule:sched})}); } catch {}
+                        }}
+                        style={{padding:"6px 12px",borderRadius:8,border:`1px solid ${selected?"#F59E0B":T.border}`,background:selected?"#F59E0B":T.inputBg,color:selected?"#fff":T.textSec,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{dayName}</button>;
+                    })}
+                  </div>
+                </div>
+                <div style={{marginBottom:6}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                    <div style={{color:T.textSec,fontSize:11,fontWeight:600}}>שעות פרסום (באותם ימים):</div>
+                    <Btn sm bg="#F59E0B15" color="#F59E0B"
+                      onClick={async()=>{
+                        const times = [...(biz.schedule?.times||[]), "12:00"];
+                        const sched = {...(biz.schedule||{}), times};
+                        updateBiz(biz.id,{schedule:sched});
+                        try { await authFetch(`/api/businesses/${biz.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({schedule:sched})}); } catch {}
+                      }}>+ הוסף שעה</Btn>
+                  </div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    {(biz.schedule?.times||[]).map((time,idx)=>
+                      <div key={idx} style={{display:"flex",gap:4,alignItems:"center",background:T.inputBg,borderRadius:8,padding:"4px 8px",border:`1px solid ${T.border}`}}>
+                        <input type="time" value={time}
+                          onChange={async e=>{
+                            const times = [...(biz.schedule?.times||[])];
+                            times[idx] = e.target.value;
+                            const sched = {...(biz.schedule||{}), times};
+                            updateBiz(biz.id,{schedule:sched});
+                          }}
+                          onBlur={async()=>{
+                            try { await authFetch(`/api/businesses/${biz.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({schedule:biz.schedule})}); } catch {}
+                          }}
+                          style={{background:"transparent",border:"none",color:T.text,fontSize:12,fontFamily:"inherit",fontWeight:600}}/>
+                        <button onClick={async()=>{
+                          const times = (biz.schedule?.times||[]).filter((_,i)=>i!==idx);
+                          const sched = {...(biz.schedule||{}), times};
+                          updateBiz(biz.id,{schedule:sched});
+                          try { await authFetch(`/api/businesses/${biz.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({schedule:sched})}); } catch {}
+                        }} style={{background:"transparent",border:"none",color:"#EF4444",cursor:"pointer",fontSize:14,padding:0}}>×</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div style={{color:T.textDim,fontSize:10,marginTop:8,lineHeight:1.5}}>
+                  💡 כשתיצור פוסט + מדיה ל-{biz.name}, הוא יתוזמן אוטומטית למשבצת הפנויה הבאה ויפורסם ללא אישור.
+                </div>
+              </>}
             </div>
 
             {/* Social connections per business */}
