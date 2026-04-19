@@ -1083,8 +1083,12 @@ ${eventsText}
 - 💡 תובנה/מחשבה
 - 🌟 הישג/מעמד חדש
 
+לכל פוסט בחר media_type בהתאם לנושא:
+- "video" — לכ-20-30% מהפוסטים, במיוחד ל: אחורי הקלעים, תהליך, דמו, אירועים חיים, תנועה/אקשן. סרטונים קצרים 8 שניות, אנכיים.
+- "image" — ברירת מחדל, לתוכן סטטי (ציטוטים, הצגה, עדויות, חגים, טיפים ויזואליים).
+
 החזר JSON בלבד, ללא שום טקסט לפני או אחרי:
-{"posts":[{"day":1,"theme":"theme short","type":"תוכן חינוכי","angle":"הזווית/הנקודה","caption_short":"משפט פתיחה מושך","hook":"הוק ראשון","visual_concept":"מה יופיע בתמונה/סרטון","rationale":"למה עכשיו"}, ...]}
+{"posts":[{"day":1,"theme":"theme short","type":"תוכן חינוכי","media_type":"image","angle":"הזווית/הנקודה","caption_short":"משפט פתיחה מושך","hook":"הוק ראשון","visual_concept":"מה יופיע בתמונה/סרטון","rationale":"למה עכשיו"}, ...]}
 
 day — מספר היום בחודש (1-28). שמור על מרווחים הגיוניים (לא 2 פוסטים באותו יום). השתמש בימי שני-חמישי יותר מימי שישי-שבת.`;
 
@@ -1186,7 +1190,10 @@ app.post('/api/calendars/approve', async (req: any, res) => {
         scheduled_at: scheduledAt,
         status: 'draft',
         image_prompt: cp.visual_concept || null,
-        performance: { calendar_meta: { theme: cp.theme, rationale: cp.rationale, type: cp.type } },
+        motion_prompt: cp.media_type === 'video' ? (cp.visual_concept || null) : null,
+        performance: {
+          calendar_meta: { theme: cp.theme, rationale: cp.rationale, type: cp.type, media_type: cp.media_type || 'image' }
+        },
       };
       if (req.userId) row.user_id = req.userId;
       const { data: newPost, error } = await sb.from('content_posts').insert(row).select().single();
@@ -1331,6 +1338,118 @@ Output ONLY the image prompt, nothing else:`;
     }).eq('id', postId);
 
     res.json({ ok: true, url: imageUrl, prompt: enhancedPrompt });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Generate video for a specific post (Veo)
+app.post('/api/posts/:id/generate-video', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const postId = req.params.id;
+    const { data: post, error: postErr } = await sb.from('content_posts').select('*').eq('id', postId).single();
+    if (postErr || !post) return res.status(404).json({ error: 'Post not found' });
+    const { data: biz } = await sb.from('businesses').select('*').eq('name', post.business_name).single();
+
+    if (post.video_url) return res.json({ ok: true, skipped: true, url: post.video_url });
+
+    const claudeKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
+    const geminiKey = await getUserKey(sb, req.userId, 'GEMINI_API_KEY');
+    if (!geminiKey) return res.status(503).json({ error: 'GEMINI_API_KEY not set' });
+
+    const topic = post.motion_prompt || post.image_prompt || (post.content || '').slice(0, 200);
+    const vi = biz?.visual_identity || '';
+
+    // Enhance prompt for video (describes motion + scene)
+    let enhancedPrompt = topic;
+    if (claudeKey) {
+      try {
+        const claudeMessage = `Direct an 8-second vertical 9:16 Veo video. Describe: the scene, 1-2 specific subjects, camera motion (slow push-in / handheld / static), lighting, mood, and ONE key action that happens. No text overlays, no typography. 60-100 words.
+
+Topic: ${topic}
+
+Brand visual identity:
+"""
+${vi || 'Professional modern brand'}
+"""
+
+Output ONLY the video prompt:`;
+        enhancedPrompt = (await callClaude(claudeMessage, claudeKey, 500)).trim();
+      } catch {}
+    }
+
+    const aspectRatio = '9:16';
+    const durationSeconds = 8;
+    const veoModels = ['veo-3.1-generate-preview', 'veo-3.1-lite-generate-preview', 'veo-3.0-generate-001'];
+
+    let videoUrl: string | null = null;
+    let lastError = '';
+    const TIMEOUT = 55_000;
+
+    for (const model of veoModels) {
+      if (videoUrl) break;
+      try {
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), TIMEOUT);
+        // Submit generation
+        const startR = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning?key=${geminiKey}`,
+          {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            signal: ac.signal,
+            body: JSON.stringify({
+              instances: [{ prompt: enhancedPrompt }],
+              parameters: { aspectRatio, durationSeconds, sampleCount: 1 },
+            }),
+          }
+        );
+        clearTimeout(timer);
+        const startD = await startR.json();
+        if (startD.error) { lastError = `${model} start: ${startD.error.message}`; continue; }
+        const opName = startD.name;
+        if (!opName) { lastError = `${model}: no operation`; continue; }
+
+        // Poll for completion
+        const pollDeadline = Date.now() + 250_000; // ~4 min budget
+        while (Date.now() < pollDeadline) {
+          await new Promise(r => setTimeout(r, 5000));
+          const pR = await fetch(`https://generativelanguage.googleapis.com/v1beta/${opName}?key=${geminiKey}`);
+          const pD = await pR.json();
+          if (pD.error) { lastError = `${model} poll: ${pD.error.message}`; break; }
+          if (pD.done) {
+            const video = pD.response?.generateVideoResponse?.generatedSamples?.[0]?.video;
+            const videoUri = video?.uri;
+            if (videoUri) {
+              // Download video → upload to storage
+              const vR = await fetch(`${videoUri}&key=${geminiKey}`);
+              const buffer = Buffer.from(await vR.arrayBuffer());
+              const fileName = `media/${post.user_id || 'anon'}/${Date.now()}-${postId}.mp4`;
+              await sb.storage.createBucket('media', { public: true }).catch(() => {});
+              const { error: upErr } = await sb.storage.from('media').upload(fileName, buffer, { contentType: 'video/mp4', upsert: true });
+              if (upErr) { lastError = `${model} upload: ${upErr.message}`; break; }
+              const { data: urlData } = sb.storage.from('media').getPublicUrl(fileName);
+              videoUrl = urlData.publicUrl;
+            } else {
+              lastError = `${model}: no video in response`;
+            }
+            break;
+          }
+        }
+      } catch (err: any) {
+        lastError = `${model}: ${err.name === 'AbortError' ? 'timeout' : err.message}`;
+      }
+    }
+
+    if (!videoUrl) return res.status(500).json({ error: 'Video generation failed', details: lastError });
+
+    await sb.from('content_posts').update({
+      video_url: videoUrl,
+      motion_prompt: enhancedPrompt,
+    }).eq('id', postId);
+
+    res.json({ ok: true, url: videoUrl, prompt: enhancedPrompt });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

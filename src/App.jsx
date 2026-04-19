@@ -3140,19 +3140,25 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
 
       if (autoGenMedia && createdIds.length > 0) {
         // Generate media for each post sequentially (shows progress)
-        setMediaProgress({ total: createdIds.length, done: 0, failed: 0, current: null });
-        for (let i = 0; i < createdIds.length; i++) {
-          const id = createdIds[i];
-          const postTheme = d.created[i]?.theme || "";
-          setMediaProgress(p => ({ ...p, current: postTheme }));
+        // First generate all images (fast), then videos (slow)
+        const postsWithMeta = createdIds.map((id, i) => ({
+          id,
+          theme: d.created[i]?.theme || "",
+          isVideo: calResult.posts[i]?.media_type === "video",
+        }));
+        const images = postsWithMeta.filter(p => !p.isVideo);
+        const videos = postsWithMeta.filter(p => p.isVideo);
+        const ordered = [...images, ...videos]; // images first
+
+        setMediaProgress({ total: ordered.length, done: 0, failed: 0, current: null, videos: videos.length });
+        for (const item of ordered) {
+          setMediaProgress(p => ({ ...p, current: (item.isVideo ? "🎬 " : "🖼️ ") + item.theme }));
+          const endpoint = item.isVideo ? `/api/posts/${item.id}/generate-video` : `/api/posts/${item.id}/generate-media`;
           try {
-            const mr = await authFetch(`/api/posts/${id}/generate-media`, { method: "POST" });
+            const mr = await authFetch(endpoint, { method: "POST" });
             const md = await mr.json();
-            if (md.ok) {
-              setMediaProgress(p => ({ ...p, done: p.done + 1 }));
-            } else {
-              setMediaProgress(p => ({ ...p, failed: p.failed + 1 }));
-            }
+            if (md.ok) setMediaProgress(p => ({ ...p, done: p.done + 1 }));
+            else setMediaProgress(p => ({ ...p, failed: p.failed + 1 }));
           } catch {
             setMediaProgress(p => ({ ...p, failed: p.failed + 1 }));
           }
@@ -3437,6 +3443,15 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
               <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
                 <Tag label={dateStr} color="#8B5CF6"/>
                 <Tag label={p.type} color="#3B82F6"/>
+                {p.media_type === "video"
+                  ? <Tag label="🎬 סרטון" color="#34A853"/>
+                  : <Tag label="🖼️ תמונה" color="#4285F4"/>}
+                <button onClick={()=>{
+                  setCalResult(prev => ({ ...prev, posts: prev.posts.map((x,j)=>j===i?{...x, media_type: x.media_type==="video"?"image":"video"}:x) }));
+                }} title="החלף מדיה"
+                  style={{background:"transparent",border:"none",color:T.textDim,fontSize:11,cursor:"pointer",padding:0,fontFamily:"inherit",textDecoration:"underline"}}>
+                  החלף
+                </button>
               </div>
               <div style={{color:T.text,fontSize:13,fontWeight:700,marginBottom:6,direction:"rtl",lineHeight:1.4}}>
                 {p.theme}
