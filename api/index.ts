@@ -1512,6 +1512,44 @@ app.get('/api/cron/replies', async (req: any, res) => {
               .maybeSingle();
             if (existing) continue;
 
+            // 2.5. Sentiment + intent classification (one Claude call, cheap)
+            let sentiment: any = { score: 0, label: 'neutral', needs_human: false, reason: '' };
+            try {
+              const sentPrompt = `סווג את התגובה הבאה. החזר JSON בלבד, ללא טקסט נוסף:
+{"score": (-1 עד 1), "label": "positive"|"neutral"|"negative"|"complaint"|"question", "needs_human": true/false, "reason": "הסבר קצר"}
+
+needs_human = true אם: תלונה, דרישת ריפאנד, שאלה קריטית על מחיר/זמינות, איום משפטי, תגובה שלילית חריפה, שאלה שחייבת מענה אנושי ולא אוטומטי.
+
+תגובה: "${comment.message}"
+
+JSON:`;
+              const sentRaw = await callClaude(sentPrompt, claudeKey, 200);
+              let clean = sentRaw.replace(/```json\n?|```/g, '').trim();
+              const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
+              if (fb >= 0 && lb > fb) clean = clean.slice(fb, lb + 1);
+              sentiment = JSON.parse(clean);
+            } catch {}
+
+            // Skip auto-reply if sentiment analysis flags it for human
+            if (sentiment.needs_human || sentiment.score < -0.3 || sentiment.label === 'complaint') {
+              await sb.from('comment_replies').insert({
+                fb_comment_id: comment.id,
+                fb_post_id: post.id,
+                business_name: biz.name,
+                commenter_name: comment.from?.name || null,
+                commenter_id: comment.from?.id || null,
+                original_text: comment.message,
+                reply_text: null,
+                status: 'pending_review',
+                skip_reason: sentiment.reason || 'needs human attention',
+                sentiment_score: sentiment.score,
+                sentiment_label: sentiment.label,
+                needs_attention: true,
+              });
+              r.checked++;
+              continue;
+            }
+
             // 3. Generate reply with Claude
             const bizContext = [
               biz.name ? `שם העסק: ${biz.name}` : '',
@@ -1580,6 +1618,9 @@ ${bizContext}
                 reply_text: replyText,
                 reply_fb_id: postD.id,
                 status: 'replied',
+                sentiment_score: sentiment.score,
+                sentiment_label: sentiment.label,
+                needs_attention: false,
               });
               r.replied++;
               totalReplied++;
@@ -1608,6 +1649,15 @@ app.get('/api/replies', async (req: any, res) => {
   if (req.query.days) q = q.gte('created_at', new Date(Date.now() - Number(req.query.days) * 86400000).toISOString());
   const { data } = await q;
   res.json(data || []);
+});
+
+// Mark a flagged comment as handled (so it stops appearing in alerts)
+app.post('/api/replies/:id/handle', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const { error } = await sb.from('comment_replies').update({ needs_attention: false, status: 'handled' }).eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
 });
 
 // Delete/retract a reply (removes from FB + marks as deleted in DB)

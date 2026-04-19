@@ -3232,6 +3232,13 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
     } catch(e) { alert("שגיאה: " + e.message); }
   }
 
+  async function markHandled(reply) {
+    try {
+      await authFetch(`/api/replies/${reply.id}/handle`, { method: "POST" });
+      setReplies(prev => prev.map(r => r.id === reply.id ? {...r, needs_attention: false, status: "handled"} : r));
+    } catch(e) { alert("שגיאה: " + e.message); }
+  }
+
   // Filter categories
   const scheduled = posts.filter(p => p.scheduled_at && !p.published)
     .sort((a,b) => new Date(a.scheduled_at) - new Date(b.scheduled_at));
@@ -3459,6 +3466,7 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
         { label:"מתוזמנים", value: scheduled.length, color:"#F59E0B", icon:"⏰" },
         { label:"מוכנים — ללא תזמון", value: readyUnscheduled.length, color:"#8B5CF6", icon:"📝" },
         { label:"פורסמו השבוע", value: publishedLast7.length, color:"#10B981", icon:"📡" },
+        { label:"דורש התייחסות", value: replies.filter(r => r.needs_attention).length, color:"#EF4444", icon:"🚨" },
         { label:"עסקים פעילים", value: bizWithSchedule.length, color:"#3B82F6", icon:"🏢" },
       ].map(s => <Card key={s.label} style={{ padding:"14px 16px" }}>
         <div style={{ display:"flex",alignItems:"center",gap:10 }}>
@@ -3646,6 +3654,50 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
               style={{ color:"#1877F2",fontSize:10,fontWeight:600,textDecoration:"none",flexShrink:0 }}>
               צפה ↗
             </a>}
+          </div>;
+        })}
+      </div>
+    </Card>}
+
+    {/* Attention needed — complaints / negative comments */}
+    {replies.filter(r => r.needs_attention).length > 0 && <Card style={{marginBottom:20,background:"#EF444408",border:"2px solid #EF444433"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+        <div style={{color:"#EF4444",fontSize:13,fontWeight:700,letterSpacing:0.5}}>
+          🚨 תגובות שדורשות את תשומת ליבך ({replies.filter(r => r.needs_attention).length})
+        </div>
+      </div>
+      <div style={{color:T.textMuted,fontSize:11,marginBottom:12,lineHeight:1.5}}>
+        המערכת זיהתה תגובות שליליות, תלונות או שאלות קריטיות. <b>לא נענה להן אוטומטית.</b> ענה אישית לפני שהלקוח ירגיש מוזנח.
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {replies.filter(r => r.needs_attention).map(reply => {
+          const biz = businesses.find(b => b.name === reply.business_name);
+          const date = reply.created_at ? new Date(reply.created_at) : null;
+          const sentColor = reply.sentiment_label === "complaint" ? "#EF4444" : reply.sentiment_label === "negative" ? "#F59E0B" : "#8B5CF6";
+          return <div key={reply.id} style={{background:T.card,border:`1px solid ${sentColor}44`,borderRadius:10,padding:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,gap:6,flexWrap:"wrap"}}>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                <Tag label={reply.business_name} color={biz?.color || T.textMuted}/>
+                <Tag label={reply.sentiment_label || "לא מסווג"} color={sentColor}/>
+                {reply.sentiment_score != null && <span style={{color:T.textDim,fontSize:10}}>ציון: {Number(reply.sentiment_score).toFixed(2)}</span>}
+                {reply.commenter_name && <span style={{color:T.textSec,fontSize:11,fontWeight:600}}>👤 {reply.commenter_name}</span>}
+              </div>
+              <span style={{color:T.textDim,fontSize:10}}>{date?.toLocaleString("he-IL",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</span>
+            </div>
+            <div style={{background:T.inputBg,borderRadius:8,padding:"10px 12px",marginBottom:8,borderRight:`3px solid ${sentColor}`}}>
+              <div style={{color:T.textDim,fontSize:9,fontWeight:600,marginBottom:3}}>תגובה מקורית:</div>
+              <div style={{color:T.text,fontSize:13,direction:"rtl",lineHeight:1.5}}>{reply.original_text}</div>
+            </div>
+            {reply.skip_reason && <div style={{color:T.textMuted,fontSize:10,marginBottom:8,direction:"rtl"}}>
+              🤖 סיבת הדילוג: <span style={{color:sentColor,fontWeight:600}}>{reply.skip_reason}</span>
+            </div>}
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {reply.fb_post_id && <a href={`https://facebook.com/${reply.fb_post_id}`} target="_blank" rel="noreferrer"
+                style={{background:"#1877F215",color:"#1877F2",padding:"6px 12px",borderRadius:8,fontSize:11,fontWeight:600,textDecoration:"none"}}>
+                📝 ענה בפייסבוק ↗
+              </a>}
+              <Btn sm bg="#10B98115" color="#10B981" onClick={()=>markHandled(reply)}>✓ טופל</Btn>
+            </div>
           </div>;
         })}
       </div>
