@@ -3049,60 +3049,31 @@ function Publish({ posts, setPosts, businesses }) {
 }
 
 // SCHEDULE
-function Schedule({ posts, setPosts, businesses }) {
-  const DAYS = ["א׳","ב׳","ג׳","ד׳","ה׳","ו׳","ש׳"];
-  const [days, setDays] = useState(()=>{
-    try { return JSON.parse(localStorage.getItem("schedule_days")||"[1,3]"); } catch { return [1,3]; }
-  });
-  const [time, setTime] = useState(()=>localStorage.getItem("schedule_time")||"20:00");
-  const [saved, setSaved] = useState(false);
-  const [scheduledPosts, setScheduledPosts] = useState(()=>{
-    try { return JSON.parse(localStorage.getItem("scheduled_posts")||"[]"); } catch { return []; }
-  });
-  const [publishing, setPublishing] = useState({});
-  const approved = posts.filter(p=>p.approved && !p.published);
+function Schedule({ posts, setPosts, businesses, setPage }) {
+  const DAY_NAMES = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"];
+  const DAY_SHORT = ["א׳","ב׳","ג׳","ד׳","ה׳","ו׳","ש׳"];
+  const [publishingId, setPublishingId] = useState(null);
+  const [triggering, setTriggering] = useState(false);
+  const [triggerResult, setTriggerResult] = useState(null);
 
-  function saveSchedule() {
-    localStorage.setItem("schedule_days", JSON.stringify(days));
-    localStorage.setItem("schedule_time", time);
-    // Generate upcoming schedule dates
-    const upcoming = [];
-    const now = new Date();
-    for (let w = 0; w < 4; w++) { // next 4 weeks
-      for (const day of days.sort((a,b)=>a-b)) {
-        const d = new Date(now);
-        d.setDate(d.getDate() + ((7 + day - d.getDay()) % 7) + (w * 7));
-        if (d <= now) d.setDate(d.getDate() + 7);
-        const [h, m] = time.split(":");
-        d.setHours(parseInt(h), parseInt(m), 0, 0);
-        if (d > now) upcoming.push(d.toISOString());
-      }
-    }
-    // Assign approved posts to schedule slots
-    const scheduled = approved.slice(0, upcoming.length).map((post, i) => ({
-      postId: post.id,
-      scheduledAt: upcoming[i],
-      platform: post.platform,
-      business: post.business,
-      content: post.content.split("\n")[0]
-    }));
-    setScheduledPosts(scheduled);
-    localStorage.setItem("scheduled_posts", JSON.stringify(scheduled));
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  }
+  // Filter categories
+  const scheduled = posts.filter(p => p.scheduled_at && !p.published)
+    .sort((a,b) => new Date(a.scheduled_at) - new Date(b.scheduled_at));
+  const readyUnscheduled = posts.filter(p => !p.published && !p.scheduled_at && (p.image_url || p.video_url || p.pipeline?.readyToPublish));
+  const publishedLast7 = posts.filter(p => p.published && p.publishedAt &&
+    (Date.now() - new Date(p.publishedAt).getTime() < 7*86400000))
+    .sort((a,b) => new Date(b.publishedAt) - new Date(a.publishedAt));
 
   async function publishNow(post) {
-    const key = post.id;
-    setPublishing(p=>({...p,[key]:true}));
+    setPublishingId(post.id);
     try {
-      const biz = businesses.find(b=>b.name===post.business);
+      const biz = businesses.find(b => b.name === post.business);
       const fbTokens = biz?.social?.facebook?.tokens;
-      if (!fbTokens?.META_PAGE_ID || !fbTokens?.META_ACCESS_TOKEN) throw new Error("חסר טוקנים");
+      if (!fbTokens?.META_PAGE_ID || !fbTokens?.META_ACCESS_TOKEN) throw new Error("חסר טוקן פייסבוק");
       const pageId = fbTokens.META_PAGE_ID;
       const accessToken = fbTokens.META_ACCESS_TOKEN;
-      const hashtags = (post.hashtags||[]).map(h=>h.startsWith("#")?h:`#${h}`).join(" ");
-      const contentHasHashtags = (post.hashtags||[]).some(h=>post.content.includes(h));
+      const hashtags = (post.hashtags || []).map(h => h.startsWith("#") ? h : `#${h}`).join(" ");
+      const contentHasHashtags = (post.hashtags || []).some(h => post.content.includes(h));
       const message = contentHasHashtags ? post.content : post.content + (hashtags ? "\n\n" + hashtags : "");
       const videoUrl = post.video_url || post.pipeline?.videoUrl;
       const imageUrl = post.image_url || post.pipeline?.imageUrl;
@@ -3117,128 +3088,270 @@ function Schedule({ posts, setPosts, businesses }) {
         endpoint = `https://graph.facebook.com/v25.0/${pageId}/feed`;
         body = { message, access_token: accessToken };
       }
-      const r = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
+      const r = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const d = await r.json();
       if (d.id || d.post_id) {
-        setPosts?.(prev=>prev.map(p=>p.id===post.id?{...p, fbPostId:d.post_id||d.id, publishedAt:new Date().toISOString(), published:true}:p));
-        setScheduledPosts(prev=>prev.filter(s=>s.postId!==post.id));
-        localStorage.setItem("scheduled_posts", JSON.stringify(scheduledPosts.filter(s=>s.postId!==post.id)));
+        const fbId = d.post_id || d.id;
+        const now = new Date().toISOString();
+        setPosts?.(prev => prev.map(p => p.id === post.id ? { ...p, fbPostId: fbId, publishedAt: now, published: true, scheduled_at: null } : p));
+        if (typeof post.id === 'string' && post.id.length > 20) {
+          try {
+            await authFetch(`/api/content/${post.id}`, {
+              method: "PUT", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status: "published", published_at: now, fb_post_id: fbId, scheduled_at: null })
+            });
+          } catch {}
+        }
       } else {
         throw new Error(d.error?.message || "שגיאה בפרסום");
       }
-    } catch(e) {
-      alert("שגיאה: " + e.message);
-    }
-    setPublishing(p=>({...p,[key]:false}));
+    } catch (e) { alert("שגיאה: " + e.message); }
+    setPublishingId(null);
   }
 
-  return <div style={{animation:"fadeUp 0.3s ease"}}>
-    <SectionTitle sub="תזמון פרסום אוטומטי — בחר ימים, שעה וגם פרסם ידנית">לוח פרסומים</SectionTitle>
-    <Card style={{marginBottom:20}}>
-      <div style={{marginBottom:16}}>
-        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:10}}>ימי פרסום</div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          {DAYS.map((d,i)=><button key={d} onClick={()=>setDays(p=>p.includes(i)?p.filter(x=>x!==i):[...p,i])} style={{
-            width:42,height:42,background:days.includes(i)?"#8B5CF610":T.inputBg,
-            border:`1px solid ${days.includes(i)?"#8B5CF6":T.inputBorder}`,
-            color:days.includes(i)?"#8B5CF6":T.textMuted,borderRadius:10,
-            cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"inherit"}}>{d}</button>)}
+  async function cancelSchedule(post) {
+    setPosts?.(prev => prev.map(p => p.id === post.id ? { ...p, scheduled_at: null } : p));
+    if (typeof post.id === 'string' && post.id.length > 20) {
+      try {
+        await authFetch(`/api/content/${post.id}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ scheduled_at: null })
+        });
+      } catch {}
+    }
+  }
+
+  async function triggerCronNow() {
+    setTriggering(true);
+    setTriggerResult(null);
+    try {
+      const r = await authFetch("/api/cron/publish");
+      const d = await r.json();
+      setTriggerResult(d);
+    } catch (e) { setTriggerResult({ error: e.message }); }
+    setTriggering(false);
+    setTimeout(() => setTriggerResult(null), 5000);
+  }
+
+  // Group scheduled posts by date
+  const scheduledByDate = {};
+  scheduled.forEach(p => {
+    const key = new Date(p.scheduled_at).toLocaleDateString("he-IL", { weekday:"long", day:"2-digit", month:"2-digit" });
+    if (!scheduledByDate[key]) scheduledByDate[key] = [];
+    scheduledByDate[key].push(p);
+  });
+
+  const bizWithSchedule = (businesses || []).filter(b => b.schedule?.enabled && (b.schedule?.days?.length > 0) && (b.schedule?.times?.length > 0));
+  const bizWithoutSchedule = (businesses || []).filter(b => !b.schedule?.enabled || !(b.schedule?.days?.length > 0) || !(b.schedule?.times?.length > 0));
+
+  return <div style={{ animation: "fadeUp 0.3s ease" }}>
+    <SectionTitle sub="סקירה כללית של תזמוני פרסום — מחושב מהדאטהבייס, מתעדכן אוטומטית">📅 לוח פרסומים</SectionTitle>
+
+    {/* Stats */}
+    <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:12, marginBottom:20 }}>
+      {[
+        { label:"מתוזמנים", value: scheduled.length, color:"#F59E0B", icon:"⏰" },
+        { label:"מוכנים — ללא תזמון", value: readyUnscheduled.length, color:"#8B5CF6", icon:"📝" },
+        { label:"פורסמו השבוע", value: publishedLast7.length, color:"#10B981", icon:"📡" },
+        { label:"עסקים פעילים", value: bizWithSchedule.length, color:"#3B82F6", icon:"🏢" },
+      ].map(s => <Card key={s.label} style={{ padding:"14px 16px" }}>
+        <div style={{ display:"flex",alignItems:"center",gap:10 }}>
+          <div style={{ fontSize:20 }}>{s.icon}</div>
+          <div>
+            <div style={{ color:s.color, fontSize:22, fontWeight:700, lineHeight:1 }}>{s.value}</div>
+            <div style={{ color:T.textDim, fontSize:10, marginTop:3 }}>{s.label}</div>
+          </div>
         </div>
-      </div>
-      <div style={{marginBottom:16}}>
-        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:10}}>שעה</div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          {["12:00","18:00","20:00","21:00"].map(t=><button key={t} onClick={()=>setTime(t)} style={{
-            background:time===t?"#8B5CF610":T.inputBg,border:`1px solid ${time===t?"#8B5CF6":T.inputBorder}`,
-            color:time===t?"#8B5CF6":T.textMuted,borderRadius:10,padding:"7px 16px",
-            cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>{t}</button>)}
-        </div>
-      </div>
-      <div style={{display:"flex",gap:8,alignItems:"center"}}>
-        <Btn grad="linear-gradient(135deg,#8B5CF6,#3B82F6)" onClick={saveSchedule}>
-          שמור תזמון
+      </Card>)}
+    </div>
+
+    {/* Per-business schedule config */}
+    <Card style={{ marginBottom:20 }}>
+      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8 }}>
+        <div style={{ color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1 }}>⏰ תזמון לפי עסק</div>
+        <Btn sm bg="#F59E0B15" color="#F59E0B" onClick={triggerCronNow} disabled={triggering}>
+          {triggering ? <><Spinner size={10}/>בודק...</> : "🚀 הפעל פרסום עכשיו"}
         </Btn>
-        {saved&&<span style={{color:"#10B981",fontSize:12,fontWeight:600}}>✓ נשמר</span>}
       </div>
+      {triggerResult && <div style={{ padding:"10px 12px", background:triggerResult.error?"#EF444410":"#10B98110", border:`1px solid ${triggerResult.error?"#EF444433":"#10B98133"}`, borderRadius:8, marginBottom:12, color:triggerResult.error?"#EF4444":"#10B981", fontSize:11, fontWeight:600 }}>
+        {triggerResult.error ? "שגיאה: "+triggerResult.error : (triggerResult.message || "הפעלה הסתיימה") + (triggerResult.published != null ? " • פורסמו: "+triggerResult.published : "")}
+      </div>}
+      {bizWithSchedule.length === 0 && bizWithoutSchedule.length === 0
+        ? <div style={{ color:T.textDim,fontSize:12,textAlign:"center",padding:20 }}>אין עסקים. הוסף עסק בעמוד "עסקים".</div>
+        : <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:10 }}>
+            {[...bizWithSchedule, ...bizWithoutSchedule].map(biz => {
+              const enabled = biz.schedule?.enabled && biz.schedule?.days?.length > 0 && biz.schedule?.times?.length > 0;
+              return <div key={biz.id} style={{ background:enabled?"#F59E0B08":T.inputBg, border:`1px solid ${enabled?"#F59E0B33":T.border}`, borderRadius:10, padding:12 }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:enabled?8:0,gap:6 }}>
+                  <div style={{ color:T.text,fontSize:13,fontWeight:700,display:"flex",alignItems:"center",gap:6 }}>
+                    <span>{biz.icon || "🏢"}</span>{biz.name}
+                  </div>
+                  {enabled
+                    ? <Tag label="פעיל" color="#10B981"/>
+                    : <Tag label="ללא תזמון" color={T.textDim}/>}
+                </div>
+                {enabled && <>
+                  <div style={{ display:"flex",gap:3,flexWrap:"wrap",marginBottom:6 }}>
+                    {DAY_SHORT.map((d, i) => <span key={i} style={{
+                      width:22,height:22,borderRadius:"50%",fontSize:10,fontWeight:700,
+                      display:"flex",alignItems:"center",justifyContent:"center",
+                      background: biz.schedule.days.includes(i) ? "#F59E0B" : T.border,
+                      color: biz.schedule.days.includes(i) ? "#fff" : T.textDim
+                    }}>{d}</span>)}
+                  </div>
+                  <div style={{ color:T.textSec,fontSize:11,marginBottom:4 }}>
+                    🕐 {biz.schedule.times.join(" · ")}
+                  </div>
+                  <div style={{ color:T.textDim,fontSize:10 }}>
+                    {(biz.schedule.days.length * biz.schedule.times.length)} משבצות בשבוע
+                  </div>
+                </>}
+                {setPage && <button onClick={() => setPage("businesses")} style={{
+                  background:"transparent",border:"none",color:"#F59E0B",fontSize:10,fontWeight:600,cursor:"pointer",padding:"6px 0 0",fontFamily:"inherit"
+                }}>{enabled ? "ערוך תזמון ↗" : "הגדר תזמון ↗"}</button>}
+              </div>;
+            })}
+          </div>
+      }
     </Card>
 
-    {/* Scheduled posts */}
-    {scheduledPosts.length > 0 && <Card style={{marginBottom:20}}>
-      <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1}}>
-        פרסומים מתוזמנים ({scheduledPosts.length})
+    {/* Scheduled posts grouped by date */}
+    {scheduled.length > 0 && <Card style={{ marginBottom:20 }}>
+      <div style={{ color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1 }}>
+        ⏰ פוסטים מתוזמנים ({scheduled.length})
       </div>
-      <div style={{display:"flex",flexDirection:"column",gap:10}}>
-        {scheduledPosts.map((sp, idx) => {
-          const post = posts.find(p=>p.id===sp.postId);
-          const schedDate = new Date(sp.scheduledAt);
-          const dateStr = schedDate.toLocaleDateString("he-IL",{weekday:"short",month:"short",day:"numeric"});
-          const timeStr = schedDate.toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"});
-          const isPast = schedDate < new Date();
-          const pl = PLATFORMS.find(p=>sp.platform?.includes(p.label.split(" ")[0]))||PLATFORMS[0];
-          return <div key={idx} style={{display:"flex",alignItems:"center",gap:12,padding:14,
-            background:isPast?"#F59E0B08":T.inputBg,borderRadius:12,
-            border:`1px solid ${isPast?"#F59E0B33":T.borderLight}`,flexWrap:"wrap"}}>
-            <div style={{width:44,textAlign:"center",flexShrink:0}}>
-              <div style={{color:isPast?"#F59E0B":T.accent,fontSize:11,fontWeight:700}}>{dateStr}</div>
-              <div style={{color:T.text,fontSize:16,fontWeight:700}}>{timeStr}</div>
-            </div>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{display:"flex",gap:6,marginBottom:4,flexWrap:"wrap"}}>
-                <Tag label={sp.platform||"פייסבוק"} color={pl.color}/>
-                <Tag label={sp.business} color={T.textMuted}/>
-                {isPast&&<Tag label="מאחר" color="#F59E0B"/>}
+      <div style={{ display:"flex",flexDirection:"column",gap:16 }}>
+        {Object.entries(scheduledByDate).map(([dateKey, postsOnDate]) => <div key={dateKey}>
+          <div style={{ color:"#F59E0B",fontSize:12,fontWeight:700,marginBottom:8,paddingBottom:6,borderBottom:`1px solid ${T.border}` }}>
+            {dateKey}
+          </div>
+          <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
+            {postsOnDate.map(post => {
+              const schedDate = new Date(post.scheduled_at);
+              const timeStr = schedDate.toLocaleTimeString("he-IL", { hour:"2-digit", minute:"2-digit" });
+              const isPast = schedDate < new Date();
+              const pl = PLATFORMS.find(p => post.platform?.includes(p.label.split(" ")[0])) || PLATFORMS[0];
+              const biz = businesses.find(b => b.name === post.business);
+              return <div key={post.id} style={{
+                display:"flex",alignItems:"center",gap:12,padding:12,
+                background:isPast?"#F59E0B08":T.inputBg,borderRadius:10,
+                border:`1px solid ${isPast?"#F59E0B33":T.borderLight}`,flexWrap:"wrap"
+              }}>
+                <div style={{ width:54,textAlign:"center",flexShrink:0 }}>
+                  <div style={{ color:T.text,fontSize:18,fontWeight:700,lineHeight:1 }}>{timeStr}</div>
+                  {isPast && <div style={{ color:"#F59E0B",fontSize:9,fontWeight:700,marginTop:4 }}>מאחר</div>}
+                </div>
+                {(post.image_url || post.video_url) && <div style={{ width:44,height:44,borderRadius:8,overflow:"hidden",flexShrink:0,background:"#000" }}>
+                  {post.video_url
+                    ? <video src={post.video_url} style={{ width:"100%",height:"100%",objectFit:"cover" }}/>
+                    : <img src={post.image_url} alt="" style={{ width:"100%",height:"100%",objectFit:"cover" }}/>}
+                </div>}
+                <div style={{ flex:1,minWidth:0 }}>
+                  <div style={{ display:"flex",gap:6,marginBottom:4,flexWrap:"wrap" }}>
+                    <Tag label={post.platform || "פייסבוק"} color={pl.color}/>
+                    <Tag label={post.business} color={biz?.color || T.textMuted}/>
+                    {post.video_url && <Tag label="🎬 סרטון" color="#34A853"/>}
+                    {!post.video_url && post.image_url && <Tag label="🖼️ תמונה" color="#4285F4"/>}
+                  </div>
+                  <p style={{ color:T.textSec,fontSize:12,margin:0,direction:"rtl",
+                    overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>
+                    {(post.content || "").split("\n")[0]}
+                  </p>
+                </div>
+                <div style={{ display:"flex",gap:6,flexShrink:0 }}>
+                  <Btn sm disabled={publishingId === post.id}
+                    grad={isPast ? "linear-gradient(135deg,#F59E0B,#EF4444)" : "linear-gradient(135deg,#10B981,#3B82F6)"}
+                    onClick={() => publishNow(post)}>
+                    {publishingId === post.id ? <Spinner size={10}/> : isPast ? "פרסם עכשיו" : "פרסם מוקדם"}
+                  </Btn>
+                  <Btn sm bg="#EF444415" color="#EF4444" onClick={() => cancelSchedule(post)}>בטל</Btn>
+                </div>
+              </div>;
+            })}
+          </div>
+        </div>)}
+      </div>
+    </Card>}
+
+    {/* Ready but unscheduled */}
+    {readyUnscheduled.length > 0 && <Card style={{ marginBottom:20 }}>
+      <div style={{ color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1 }}>
+        📝 מוכנים — ללא תזמון ({readyUnscheduled.length})
+      </div>
+      <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
+        {readyUnscheduled.map(post => {
+          const pl = PLATFORMS.find(p => post.platform?.includes(p.label.split(" ")[0])) || PLATFORMS[0];
+          const biz = businesses.find(b => b.name === post.business);
+          const bizHasSchedule = biz?.schedule?.enabled;
+          return <div key={post.id} style={{
+            display:"flex",alignItems:"center",gap:12,padding:12,
+            background:T.inputBg,borderRadius:10,border:`1px solid ${T.borderLight}`,flexWrap:"wrap"
+          }}>
+            {(post.image_url || post.video_url) && <div style={{ width:44,height:44,borderRadius:8,overflow:"hidden",flexShrink:0,background:"#000" }}>
+              {post.video_url
+                ? <video src={post.video_url} style={{ width:"100%",height:"100%",objectFit:"cover" }}/>
+                : <img src={post.image_url} alt="" style={{ width:"100%",height:"100%",objectFit:"cover" }}/>}
+            </div>}
+            <div style={{ flex:1,minWidth:0 }}>
+              <div style={{ display:"flex",gap:6,marginBottom:4,flexWrap:"wrap" }}>
+                <Tag label={post.platform || "פייסבוק"} color={pl.color}/>
+                <Tag label={post.business} color={biz?.color || T.textMuted}/>
+                {!bizHasSchedule && <Tag label="עסק ללא תזמון" color="#EF4444"/>}
               </div>
-              <p style={{color:T.textSec,fontSize:12,margin:0,direction:"rtl",
-                overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sp.content}</p>
+              <p style={{ color:T.textSec,fontSize:12,margin:0,direction:"rtl",
+                overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>
+                {(post.content || "").split("\n")[0]}
+              </p>
             </div>
-            {post && <Btn sm disabled={publishing[post.id]}
-              grad={isPast?"linear-gradient(135deg,#F59E0B,#EF4444)":"linear-gradient(135deg,#10B981,#3B82F6)"}
-              onClick={()=>publishNow(post)}>
-              {publishing[post.id]?<Spinner size={10}/>:isPast?"פרסם עכשיו":"פרסם"}
-            </Btn>}
+            <Btn sm disabled={publishingId === post.id} grad="linear-gradient(135deg,#10B981,#3B82F6)"
+              onClick={() => publishNow(post)}>
+              {publishingId === post.id ? <Spinner size={10}/> : "פרסם עכשיו"}
+            </Btn>
           </div>;
         })}
       </div>
     </Card>}
 
-    {/* Approved posts waiting to be scheduled */}
-    {approved.length===0
-      ? <Card><div style={{textAlign:"center",color:T.textDim,padding:30}}>אשר פוסטים בעמוד תוכן כדי לתזמן אותם</div></Card>
-      : <Card>
-          <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1}}>
-            ממתינים לתזמון ({approved.length})
-          </div>
-          <div style={{display:"flex",flexDirection:"column",gap:10}}>
-            {approved.map(post=>{
-              const pl=PLATFORMS.find(p=>post.platform.includes(p.label.split(" ")[0]))||PLATFORMS[0];
-              const isScheduled = scheduledPosts.some(s=>s.postId===post.id);
-              return <div key={post.id} style={{display:"flex",alignItems:"center",gap:12,padding:14,
-                background:isScheduled?"#10B98108":T.inputBg,borderRadius:12,
-                border:`1px solid ${isScheduled?"#10B98133":T.borderLight}`,flexWrap:"wrap"}}>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{display:"flex",gap:6,marginBottom:4,flexWrap:"wrap"}}>
-                    <Tag label={post.platform} color={pl.color}/>
-                    <Tag label={post.business} color={T.textMuted}/>
-                    {post.pipeline?.done&&<Tag label="מדיה" color="#F59E0B"/>}
-                    {isScheduled&&<Tag label="מתוזמן" color="#10B981"/>}
-                  </div>
-                  <p style={{color:T.textSec,fontSize:12,margin:0,direction:"rtl",
-                    overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{post.content.split("\n")[0]}</p>
-                </div>
-                <Btn sm disabled={publishing[post.id]}
-                  grad="linear-gradient(135deg,#10B981,#3B82F6)"
-                  onClick={()=>publishNow(post)}>
-                  {publishing[post.id]?<Spinner size={10}/>:"פרסם עכשיו"}
-                </Btn>
-              </div>;
-            })}
-          </div>
-        </Card>
-    }
+    {/* Published this week */}
+    {publishedLast7.length > 0 && <Card>
+      <div style={{ color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:14,letterSpacing:1 }}>
+        📡 פורסמו השבוע ({publishedLast7.length})
+      </div>
+      <div style={{ display:"flex",flexDirection:"column",gap:6 }}>
+        {publishedLast7.slice(0, 15).map(post => {
+          const pubDate = post.publishedAt ? new Date(post.publishedAt) : null;
+          const pl = PLATFORMS.find(p => post.platform?.includes(p.label.split(" ")[0])) || PLATFORMS[0];
+          const biz = businesses.find(b => b.name === post.business);
+          return <div key={post.id} style={{
+            display:"flex",alignItems:"center",gap:10,padding:"8px 12px",
+            background:T.inputBg,borderRadius:8,border:`1px solid ${T.borderLight}`,flexWrap:"wrap"
+          }}>
+            <div style={{ width:50,textAlign:"center",flexShrink:0 }}>
+              <div style={{ color:"#10B981",fontSize:10,fontWeight:700 }}>{pubDate?.toLocaleDateString("he-IL",{day:"2-digit",month:"short"})}</div>
+              <div style={{ color:T.textSec,fontSize:10 }}>{pubDate?.toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"})}</div>
+            </div>
+            <Tag label={post.platform || "פייסבוק"} color={pl.color}/>
+            <Tag label={post.business} color={biz?.color || T.textMuted}/>
+            <span style={{ flex:1,minWidth:0,color:T.textSec,fontSize:11,
+              overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",direction:"rtl" }}>
+              {(post.content || "").split("\n")[0]}
+            </span>
+            {post.fbPostId && <a href={`https://facebook.com/${post.fbPostId}`} target="_blank" rel="noreferrer"
+              style={{ color:"#1877F2",fontSize:10,fontWeight:600,textDecoration:"none",flexShrink:0 }}>
+              צפה ↗
+            </a>}
+          </div>;
+        })}
+      </div>
+    </Card>}
+
+    {scheduled.length === 0 && readyUnscheduled.length === 0 && publishedLast7.length === 0 && <Card>
+      <div style={{ textAlign:"center",color:T.textDim,padding:30 }}>
+        <div style={{ fontSize:32,marginBottom:8 }}>📭</div>
+        <div style={{ color:T.textSec,fontSize:13,fontWeight:600,marginBottom:4 }}>אין עדיין פוסטים</div>
+        <div style={{ fontSize:11 }}>צור פוסט בעמוד "תוכן", הגדר תזמון בעמוד "עסקים" — והכל יתוזמן אוטומטית</div>
+      </div>
+    </Card>}
   </div>;
 }
 
@@ -4300,7 +4413,7 @@ export default function App({ session }) {
           {page==="media"&&<MediaAI/>}
           {page==="agents"&&<ManagedAgents businesses={businesses}/>}
           {page==="publish"&&<Publish posts={posts} setPosts={setPosts} businesses={businesses}/>}
-          {page==="schedule"&&<Schedule posts={posts} setPosts={setPosts} businesses={businesses}/>}
+          {page==="schedule"&&<Schedule posts={posts} setPosts={setPosts} businesses={businesses} setPage={setPage}/>}
           {page==="analytics"&&<Analytics posts={posts} businesses={businesses} analyticsData={analyticsData} setAnalyticsData={setAnalyticsData}/>}
           {page==="admin"&&<Admin/>}
           {page==="superadmin"&&isAdmin&&<SuperAdmin/>}
