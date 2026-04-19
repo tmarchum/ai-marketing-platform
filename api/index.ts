@@ -956,6 +956,251 @@ app.get('/api/cron/metrics', async (req: any, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// CONTENT CALENDAR — Generate monthly content plans
+// ══════════════════════════════════════════════════════════════
+
+// Israeli holidays + cultural events by month (Gregorian dates — approx for 2025-2026)
+const ISRAELI_EVENTS: Record<number, { date: string; name: string; vibe: string }[]> = {
+  1: [
+    { date: '01-01', name: 'ראש השנה האזרחית', vibe: 'התחלה חדשה, סיכום, החלטות' },
+    { date: '01-15', name: 'ט"ו בשבט (בערך)', vibe: 'טבע, צמיחה, ירוק' },
+  ],
+  2: [
+    { date: '02-14', name: 'ולנטיינס', vibe: 'אהבה, זוגות, מתנות' },
+  ],
+  3: [
+    { date: '03-08', name: 'יום האישה הבינלאומי', vibe: 'חיזוק נשים, העצמה' },
+    { date: '03-20', name: 'פורים (משתנה)', vibe: 'מסיבה, תחפושות, כיף משפחתי' },
+  ],
+  4: [
+    { date: '04-14', name: 'פסח (משתנה)', vibe: 'משפחה, חופש, מסורת, חוצות' },
+    { date: '04-22', name: 'יום השואה (משתנה)', vibe: 'זיכרון, רצינות' },
+    { date: '04-30', name: 'יום הזיכרון + יום העצמאות (משתנה)', vibe: 'גאווה לאומית, חגיגה' },
+  ],
+  5: [
+    { date: '05-01', name: 'חג העצמאות (לעיתים)', vibe: 'מסיבה לאומית, קולנוע ציבורי, חוצות' },
+    { date: '05-10', name: 'ל"ג בעומר (משתנה)', vibe: 'מדורות, חוץ, קבוצות' },
+    { date: '05-25', name: 'שבועות (משתנה)', vibe: 'מסורת, מוצרי חלב, משפחה' },
+  ],
+  6: [
+    { date: '06-01', name: 'תחילת עונת החתונות', vibe: 'חתונות, אירועים, קיץ' },
+    { date: '06-20', name: 'סוף שנה"ל — חופש גדול מתחיל', vibe: 'ילדים חופשיים, מחפשים פעילות' },
+  ],
+  7: [
+    { date: '07-01', name: 'חופש גדול בעיצומו', vibe: 'פעילות משפחתית, חוץ, מים' },
+  ],
+  8: [
+    { date: '08-15', name: 'ט"ו באב (משתנה)', vibe: 'אהבה, זוגות, חתונות' },
+    { date: '08-30', name: 'ערב חזרה ללימודים', vibe: 'סיום חופש, מסיבות סיום' },
+  ],
+  9: [
+    { date: '09-01', name: 'חזרה ללימודים', vibe: 'שגרה, חזרה למסגרת' },
+    { date: '09-20', name: 'ראש השנה העברי (משתנה)', vibe: 'התחלות, משפחה, תפילות' },
+    { date: '09-30', name: 'יום כיפור (משתנה)', vibe: 'רצינות, מחשבה, צום' },
+  ],
+  10: [
+    { date: '10-05', name: 'סוכות (משתנה)', vibe: 'חוץ, משפחה, מסורת, שמחה' },
+    { date: '10-13', name: 'שמחת תורה (משתנה)', vibe: 'ריקודים, שמחה' },
+    { date: '10-31', name: 'ליל כל הקדושים', vibe: 'תחפושות, ילדים, כיף' },
+  ],
+  11: [
+    { date: '11-11', name: 'יום הרווקים / Black Friday', vibe: 'דילים, הזדמנויות, קניות' },
+    { date: '11-27', name: 'Black Friday', vibe: 'מכירות, דילים, הרצה' },
+  ],
+  12: [
+    { date: '12-15', name: 'חנוכה (משתנה)', vibe: 'אור, נרות, משפחה, סופגניות' },
+    { date: '12-25', name: 'כריסמס', vibe: 'חגיגה כללית, אווירה חורפית' },
+    { date: '12-31', name: 'סילבסטר', vibe: 'מסיבה, סיכום שנה, התחלות' },
+  ],
+};
+
+app.post('/api/calendars/generate', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { business_id, year, month, posts_count = 10 } = req.body;
+    if (!business_id) return res.status(400).json({ error: 'business_id required' });
+
+    // Get business
+    const { data: biz, error: bizErr } = await sb.from('businesses').select('*').eq('id', business_id).single();
+    if (bizErr || !biz) return res.status(404).json({ error: 'Business not found' });
+
+    // Get Claude key
+    const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
+    const keyMap: Record<string, string> = {};
+    for (const k of (keys || [])) keyMap[k.key_name] = k.key_value;
+    const claudeKey = keyMap.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
+    if (!claudeKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
+
+    const targetYear = year || new Date().getFullYear();
+    const targetMonth = month || (new Date().getMonth() + 1); // 1-12
+
+    // Get recent posts for this business (to avoid repetition)
+    const { data: recentPosts } = await sb
+      .from('content_posts')
+      .select('content, created_at')
+      .eq('business_name', biz.name)
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    // Get events for the month
+    const events = ISRAELI_EVENTS[targetMonth] || [];
+
+    // Build prompt
+    const viContext = biz.visual_identity ? `\nזהות ויזואלית: ${biz.visual_identity.slice(0, 500)}` : '';
+    const toneContext = biz.tone ? `\nטון: ${biz.tone}` : '';
+    const audienceContext = biz.target_audience ? `\nקהל יעד: ${biz.target_audience}` : '';
+    const scanAnalysis = biz.scan_result && Object.keys(biz.scan_result).length > 0
+      ? `\nתובנות ממותג: ${JSON.stringify(biz.scan_result).slice(0, 800)}`
+      : '';
+    const recentTitles = recentPosts?.length
+      ? recentPosts.slice(0, 10).map(p => `- ${(p.content || '').split('\n')[0].slice(0, 80)}`).join('\n')
+      : '(אין היסטוריה)';
+    const eventsText = events.length
+      ? events.map(e => `- ${e.date}: ${e.name} (${e.vibe})`).join('\n')
+      : '(אין אירועים מיוחדים)';
+
+    const prompt = `אתה מתכנן תוכן לעסק "${biz.name}". תאריך עברי: ${targetMonth}/${targetYear}.
+
+פרטי העסק:
+- שם: ${biz.name}
+- תיאור: ${biz.description || 'N/A'}
+- אתר: ${biz.url || 'N/A'}${toneContext}${audienceContext}${viContext}${scanAnalysis}
+
+פוסטים אחרונים (אל תחזור על אותו נושא!):
+${recentTitles}
+
+אירועים בחודש ${targetMonth}:
+${eventsText}
+
+צור לוח תוכן חודשי עם ${posts_count} פוסטים מגוונים. כלול סוגים שונים:
+- 📢 הצגת שירות/מוצר (לא יותר מ-2)
+- 📚 תוכן חינוכי/טיפים
+- 💬 עדויות או סיפורים
+- 🎬 אחורי הקלעים
+- ❓ שאלה לקהילה / אינטראקציה
+- 🎉 קישור לאירוע/חג אם רלוונטי
+- 💡 תובנה/מחשבה
+- 🌟 הישג/מעמד חדש
+
+החזר JSON בלבד, ללא שום טקסט לפני או אחרי:
+{"posts":[{"day":1,"theme":"theme short","type":"תוכן חינוכי","angle":"הזווית/הנקודה","caption_short":"משפט פתיחה מושך","hook":"הוק ראשון","visual_concept":"מה יופיע בתמונה/סרטון","rationale":"למה עכשיו"}, ...]}
+
+day — מספר היום בחודש (1-28). שמור על מרווחים הגיוניים (לא 2 פוסטים באותו יום). השתמש בימי שני-חמישי יותר מימי שישי-שבת.`;
+
+    const raw = await callClaude(prompt, claudeKey, 4000);
+    let calendar: any = { posts: [] };
+    try {
+      let clean = raw.replace(/```json\n?|```/g, '').trim();
+      const firstBrace = clean.indexOf('{');
+      const lastBrace = clean.lastIndexOf('}');
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        clean = clean.slice(firstBrace, lastBrace + 1);
+      }
+      calendar = JSON.parse(clean);
+    } catch (e: any) {
+      return res.status(500).json({ error: 'Claude returned invalid JSON', details: e.message, raw: raw.slice(0, 500) });
+    }
+
+    // Enrich posts with actual dates
+    const enrichedPosts = (calendar.posts || []).map((p: any) => {
+      const day = Math.min(Math.max(1, Number(p.day) || 1), 28);
+      const date = new Date(targetYear, targetMonth - 1, day, 10, 0, 0);
+      return { ...p, date: date.toISOString(), day };
+    });
+
+    res.json({
+      business: { id: biz.id, name: biz.name, color: biz.color },
+      year: targetYear,
+      month: targetMonth,
+      events,
+      posts: enrichedPosts,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create actual posts from approved calendar
+app.post('/api/calendars/approve', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { business_id, posts: calendarPosts } = req.body;
+    if (!business_id || !Array.isArray(calendarPosts)) {
+      return res.status(400).json({ error: 'business_id and posts array required' });
+    }
+
+    const { data: biz } = await sb.from('businesses').select('*').eq('id', business_id).single();
+    if (!biz) return res.status(404).json({ error: 'Business not found' });
+
+    // Determine scheduling: prefer business schedule slots if enabled
+    const schedule = biz.schedule || {};
+    const slotDays: number[] = schedule.days || [];
+    const slotTimes: string[] = schedule.times || [];
+    const useBizSlots = schedule.enabled && slotDays.length > 0 && slotTimes.length > 0;
+
+    // Get already-taken slots (existing scheduled posts for this biz)
+    const { data: existingScheduled } = await sb
+      .from('content_posts')
+      .select('scheduled_at')
+      .eq('business_name', biz.name)
+      .not('scheduled_at', 'is', null)
+      .is('published_at', null);
+    const takenSlots = new Set((existingScheduled || []).map((p: any) => new Date(p.scheduled_at).toISOString()));
+
+    const created: any[] = [];
+    for (const cp of calendarPosts) {
+      let scheduledAt = cp.date;
+      if (useBizSlots) {
+        // Snap to next business slot ≥ desired date
+        const desired = new Date(cp.date);
+        for (let d = 0; d < 60; d++) {
+          const day = new Date(desired); day.setDate(day.getDate() + d);
+          if (!slotDays.includes(day.getDay())) continue;
+          for (const t of slotTimes) {
+            const [h, m] = t.split(':').map(Number);
+            const slot = new Date(day); slot.setHours(h, m, 0, 0);
+            if (slot < new Date()) continue;
+            if (takenSlots.has(slot.toISOString())) continue;
+            scheduledAt = slot.toISOString();
+            takenSlots.add(scheduledAt);
+            d = 999; break;
+          }
+        }
+      }
+
+      // Compose content from calendar fields
+      const content = [
+        cp.hook || cp.caption_short,
+        '',
+        cp.angle || '',
+      ].filter(Boolean).join('\n');
+
+      const row: any = {
+        platform: 'פייסבוק',
+        type: cp.type || 'פוסט קצר',
+        content,
+        business_id: biz.id,
+        business_name: biz.name,
+        scheduled_at: scheduledAt,
+        status: 'draft',
+        image_prompt: cp.visual_concept || null,
+        performance: { calendar_meta: { theme: cp.theme, rationale: cp.rationale, type: cp.type } },
+      };
+      if (req.userId) row.user_id = req.userId;
+      const { data: newPost, error } = await sb.from('content_posts').insert(row).select().single();
+      if (error) { created.push({ error: error.message, theme: cp.theme }); continue; }
+      created.push({ id: newPost.id, theme: cp.theme, scheduled_at: scheduledAt });
+    }
+
+    res.json({ message: `Created ${created.filter(c => !c.error).length} posts`, created });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 // CRON — Auto-publish scheduled posts
 // ══════════════════════════════════════════════════════════════
 

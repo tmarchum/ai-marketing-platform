@@ -3093,6 +3093,55 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
   const [triggeringReplies, setTriggeringReplies] = useState(false);
   const [replyResult, setReplyResult] = useState(null);
 
+  // Content calendar state
+  const [calBizId, setCalBizId] = useState((businesses||[])[0]?.id || "");
+  const [calMonth, setCalMonth] = useState(new Date().getMonth() + 1);
+  const [calYear, setCalYear] = useState(new Date().getFullYear());
+  const [calCount, setCalCount] = useState(10);
+  const [calGenerating, setCalGenerating] = useState(false);
+  const [calResult, setCalResult] = useState(null);
+  const [calApproving, setCalApproving] = useState(false);
+  const MONTHS_HEB = ["ינואר","פברואר","מרץ","אפריל","מאי","יוני","יולי","אוגוסט","ספטמבר","אוקטובר","נובמבר","דצמבר"];
+
+  async function generateCalendar() {
+    if (!calBizId) { alert("בחר עסק"); return; }
+    setCalGenerating(true);
+    setCalResult(null);
+    try {
+      const r = await authFetch("/api/calendars/generate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ business_id: calBizId, year: calYear, month: calMonth, posts_count: calCount }),
+      });
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || "שגיאה");
+      setCalResult(d);
+    } catch(e) { alert("שגיאה ביצירת לוח: " + e.message); }
+    setCalGenerating(false);
+  }
+
+  async function approveCalendar() {
+    if (!calResult?.posts?.length) return;
+    if (!confirm(`צור ${calResult.posts.length} פוסטים ב-DB? (תצטרך לייצר מדיה לכל אחד)`)) return;
+    setCalApproving(true);
+    try {
+      const r = await authFetch("/api/calendars/approve", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ business_id: calBizId, posts: calResult.posts }),
+      });
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || "שגיאה");
+      alert(`✅ ${d.message}! עבור לעמוד "תוכן" כדי לייצר מדיה.`);
+      setCalResult(null);
+      // Trigger page reload to refresh posts
+      window.location.reload();
+    } catch(e) { alert("שגיאה: " + e.message); }
+    setCalApproving(false);
+  }
+
+  function removeCalendarPost(idx) {
+    setCalResult(prev => ({ ...prev, posts: prev.posts.filter((_, i) => i !== idx) }));
+  }
+
   // Load recent auto-replies
   useEffect(()=>{
     (async()=>{
@@ -3215,6 +3264,101 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
 
   return <div style={{ animation: "fadeUp 0.3s ease" }}>
     <SectionTitle sub="סקירה כללית של תזמוני פרסום — מחושב מהדאטהבייס, מתעדכן אוטומטית">📅 לוח פרסומים</SectionTitle>
+
+    {/* Content Calendar AI */}
+    <Card style={{marginBottom:20,background:"linear-gradient(135deg,#8B5CF608,#3B82F608)",border:"1px solid #8B5CF633"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
+        <div>
+          <div style={{color:"#8B5CF6",fontSize:14,fontWeight:700,marginBottom:3}}>🤖 תכנון תוכן חודשי עם AI</div>
+          <div style={{color:T.textMuted,fontSize:11}}>צור לוח תוכן מגוון לחודש שלם — מחובר לחגים ואירועים</div>
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10,marginBottom:12}}>
+        <div>
+          <div style={{color:T.textDim,fontSize:10,fontWeight:600,marginBottom:4}}>עסק</div>
+          <select value={calBizId} onChange={e=>setCalBizId(e.target.value)}
+            style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,color:T.text,padding:"8px 10px",fontSize:12,fontFamily:"inherit",cursor:"pointer"}}>
+            {(businesses||[]).map(b=><option key={b.id} value={b.id}>{b.icon||""} {b.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={{color:T.textDim,fontSize:10,fontWeight:600,marginBottom:4}}>חודש</div>
+          <select value={calMonth} onChange={e=>setCalMonth(Number(e.target.value))}
+            style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,color:T.text,padding:"8px 10px",fontSize:12,fontFamily:"inherit",cursor:"pointer"}}>
+            {MONTHS_HEB.map((m,i)=><option key={i} value={i+1}>{m}</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={{color:T.textDim,fontSize:10,fontWeight:600,marginBottom:4}}>שנה</div>
+          <select value={calYear} onChange={e=>setCalYear(Number(e.target.value))}
+            style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,color:T.text,padding:"8px 10px",fontSize:12,fontFamily:"inherit",cursor:"pointer"}}>
+            {[0,1,2].map(off=>{const y=new Date().getFullYear()+off;return <option key={y} value={y}>{y}</option>})}
+          </select>
+        </div>
+        <div>
+          <div style={{color:T.textDim,fontSize:10,fontWeight:600,marginBottom:4}}>כמות פוסטים</div>
+          <input type="number" min="4" max="20" value={calCount} onChange={e=>setCalCount(Number(e.target.value))}
+            style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,color:T.text,padding:"8px 10px",fontSize:12,fontFamily:"inherit",boxSizing:"border-box"}}/>
+        </div>
+        <div style={{display:"flex",alignItems:"flex-end"}}>
+          <Btn disabled={calGenerating||!calBizId}
+            grad={calGenerating||!calBizId?undefined:"linear-gradient(135deg,#8B5CF6,#3B82F6)"}
+            onClick={generateCalendar} style={{width:"100%"}}>
+            {calGenerating ? <><Spinner size={12}/>מתכנן...</> : "✨ צור לוח תוכן"}
+          </Btn>
+        </div>
+      </div>
+
+      {calResult && <div style={{marginTop:16}}>
+        {calResult.events?.length > 0 && <div style={{background:"#F59E0B08",border:"1px solid #F59E0B33",borderRadius:10,padding:10,marginBottom:12}}>
+          <div style={{color:"#F59E0B",fontSize:11,fontWeight:700,marginBottom:6}}>📆 אירועים ב{MONTHS_HEB[calMonth-1]}:</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {calResult.events.map((e,i)=><Tag key={i} label={`${e.date.slice(3)}: ${e.name}`} color="#F59E0B"/>)}
+          </div>
+        </div>}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
+          <div style={{color:T.textMuted,fontSize:12,fontWeight:700}}>
+            תצוגה מקדימה: {calResult.posts?.length || 0} פוסטים
+          </div>
+          <Btn disabled={calApproving||!calResult.posts?.length}
+            grad={calApproving?undefined:"linear-gradient(135deg,#10B981,#3B82F6)"}
+            onClick={approveCalendar}>
+            {calApproving ? <><Spinner size={12}/>יוצר...</> : `✅ צור את כל ${calResult.posts?.length || 0} הפוסטים ב-DB`}
+          </Btn>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:10}}>
+          {(calResult.posts||[]).map((p,i)=>{
+            const d = new Date(p.date);
+            const dateStr = d.toLocaleDateString("he-IL",{weekday:"short",day:"2-digit",month:"short"});
+            return <div key={i} style={{background:T.card,border:`1px solid ${T.borderLight}`,borderRadius:10,padding:12,position:"relative"}}>
+              <button onClick={()=>removeCalendarPost(i)} title="הסר"
+                style={{position:"absolute",top:6,left:6,background:"transparent",border:"none",color:"#EF4444",fontSize:16,cursor:"pointer",padding:0,width:20,height:20}}>×</button>
+              <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+                <Tag label={dateStr} color="#8B5CF6"/>
+                <Tag label={p.type} color="#3B82F6"/>
+              </div>
+              <div style={{color:T.text,fontSize:13,fontWeight:700,marginBottom:6,direction:"rtl",lineHeight:1.4}}>
+                {p.theme}
+              </div>
+              {p.hook && <div style={{color:T.textSec,fontSize:12,marginBottom:6,direction:"rtl",fontStyle:"italic",lineHeight:1.4}}>
+                "{p.hook}"
+              </div>}
+              {p.angle && <div style={{color:T.textMuted,fontSize:11,marginBottom:6,direction:"rtl",lineHeight:1.4}}>
+                💡 {p.angle}
+              </div>}
+              {p.visual_concept && <div style={{background:T.inputBg,borderRadius:6,padding:"6px 8px",marginTop:8}}>
+                <div style={{color:T.textDim,fontSize:9,fontWeight:600,marginBottom:2}}>🎨 קונספט ויזואלי:</div>
+                <div style={{color:T.textSec,fontSize:10,direction:"rtl",lineHeight:1.3}}>{p.visual_concept}</div>
+              </div>}
+              {p.rationale && <div style={{color:T.textDim,fontSize:10,marginTop:6,direction:"rtl",lineHeight:1.3}}>
+                <span style={{fontWeight:600}}>למה:</span> {p.rationale}
+              </div>}
+            </div>;
+          })}
+        </div>
+      </div>}
+    </Card>
 
     {/* Stats */}
     <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:12, marginBottom:20 }}>
