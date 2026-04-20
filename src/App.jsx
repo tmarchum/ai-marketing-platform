@@ -2596,6 +2596,19 @@ function Businesses({ businesses, setBusinesses, posts }) {
                 style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,padding:"9px 12px",color:T.text,fontSize:12,fontFamily:"monospace",boxSizing:"border-box"}}/>
             </div>
 
+            {/* WhatsApp number */}
+            <div style={{marginBottom:14}}>
+              <div style={{color:T.textMuted,fontSize:11,marginBottom:4}}>📱 מספר וואטסאפ עסקי (עם קוד מדינה)</div>
+              <input value={biz.whatsapp_number||""} onChange={e=>updateBiz(biz.id,{whatsapp_number:e.target.value})}
+                onBlur={async()=>{try{await authFetch(`/api/businesses/${biz.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({whatsapp_number:biz.whatsapp_number||""})});}catch{}}}
+                placeholder="972501234567 (ללא + או מקפים)"
+                style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:10,padding:"9px 12px",color:T.text,fontSize:12,fontFamily:"monospace",boxSizing:"border-box",direction:"ltr"}}/>
+              <div style={{color:T.textDim,fontSize:10,marginTop:4,lineHeight:1.5}}>
+                💡 יוצגו לידים ישירות אליך. Claude יוסיף לינק ל-wa.me במענים על תגובות מחיר/זמינות.
+                {biz.whatsapp_number && <div style={{marginTop:4,color:"#25D366",fontWeight:600}}>✓ לינק: wa.me/{(biz.whatsapp_number||"").replace(/\D/g,"")}</div>}
+              </div>
+            </div>
+
             {/* Visual Identity — used by Gemini/Veo image/video generation */}
             <div style={{marginBottom:14,padding:12,background:"#8B5CF608",border:`1px solid #8B5CF633`,borderRadius:10}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,gap:8,flexWrap:"wrap"}}>

@@ -66,7 +66,7 @@ app.post('/api/businesses', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   const row: Record<string, any> = {};
-  const fields = ['name','url','industry','target_audience','tone','goals','icon','color','description','social','scan_result','full_scan_data','competitor_analysis','competitors','schedule','business_profile','visual_identity'];
+  const fields = ['name','url','industry','target_audience','tone','goals','icon','color','description','social','scan_result','full_scan_data','competitor_analysis','competitors','schedule','business_profile','visual_identity','whatsapp_number'];
   for (const f of fields) if (req.body[f] !== undefined) row[f] = req.body[f];
   if (req.userId) row.user_id = req.userId;
   const { data, error } = await sb.from('businesses').insert(row).select().single();
@@ -2134,9 +2134,15 @@ JSON:`;
             const kbForReply = await getBizKnowledgeBase(sb, biz.id, 8_000);
             const kbReplyContext = kbForReply ? `\n\n📚 מידע אמיתי על העסק (השתמש בנתונים מדויקים מכאן, אל תמציא!):${kbForReply}` : '';
 
+            // WhatsApp CTA — for commerce/sales inquiries
+            const waNumber = (biz.whatsapp_number || '').replace(/\D/g, '');
+            const waContext = waNumber
+              ? `\n\n💬 מספר וואטסאפ של העסק: ${waNumber}. אם השאלה כוללת בירור על מחיר/זמינות/הזמנה — כלול בסוף המענה לינק קצר לוואטסאפ בפורמט: wa.me/${waNumber} (מומלץ בטקסט "מוזמן/מוזמנת לכתוב לנו ב-wa.me/${waNumber}").`
+              : '';
+
             const prompt = `אתה מנהל קהילה בעמוד העסק הזה. ענה לתגובה בעברית, בצורה חמה, אישית ותמציתית (עד 2 משפטים). אם השאלה כוללת בירור לגבי מחיר/זמינות — השתמש במידע מהמסמכים למטה אם יש, אחרת הצע ליצור קשר. אל תשתמש באימוג'ים מוגזמים (מקסימום 1). דבר בצורה טבעית — לא יותר מדי רשמית. אל תכלול האשטגים.
 
-${bizContext}${kbReplyContext}
+${bizContext}${kbReplyContext}${waContext}
 
 תוכן הפוסט המקורי: "${(post.message || '').slice(0, 200)}"
 
