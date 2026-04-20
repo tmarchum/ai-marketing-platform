@@ -1160,6 +1160,8 @@ app.post('/api/calendars/approve', async (req: any, res) => {
 
     // Get KB context once
     const kbContent = claudeKey ? await getBizKnowledgeBase(sb, business_id, 10_000) : '';
+    // Build cached business context (10 calls × same biz = 90% savings)
+    const cachedSystem = buildBusinessContext(biz, kbContent);
 
     // Determine scheduling: prefer business schedule slots if enabled
     const schedule = biz.schedule || {};
@@ -1202,32 +1204,27 @@ app.post('/api/calendars/approve', async (req: any, res) => {
       let hashtags: string[] = [];
       if (claudeKey) {
         try {
-          const expandPrompt = `אתה כותב תוכן לפייסבוק עבור "${biz.name}" — ${biz.description || ''}.
-טון: ${biz.tone || 'חם, מקצועי, אישי'}.
-${biz.target_audience ? `קהל יעד: ${biz.target_audience}` : ''}
-${kbContent ? `\n📚 מידע על העסק:${kbContent.slice(0, 3000)}` : ''}
+          const expandPrompt = `Write a Facebook post in HEBREW based on this brief (stay ON-THEME):
 
-⚠️ חובה לכתוב פוסט ספציפי **על הנושא הזה בלבד** — אל תחליף נושא:
-- נושא (חובה להיצמד אליו!): ${cp.theme}
-- סוג הפוסט: ${cp.type}
-- הוק פתיחה (השתמש כהשראה, אפשר לשכתב): "${cp.hook}"
-- הזווית/הנקודה: ${cp.angle || ''}
-- מטרת הפוסט: ${cp.rationale || ''}
+TOPIC (must stay faithful to this!): ${cp.theme}
+POST TYPE: ${cp.type}
+HOOK (use as inspiration, feel free to rephrase): "${cp.hook}"
+ANGLE/POINT: ${cp.angle || ''}
+GOAL: ${cp.rationale || ''}
 
-🚫 אסור:
-- להחליף את הנושא. אם הנושא "יום העצמאות" — הפוסט חייב להיות על יום העצמאות.
-- להמציא עובדות/מחירים/שירותים שלא קיימים ב"מידע על העסק" למעלה.
-- להשתמש בגוף ראשון יחיד ("אני").
+🚫 FORBIDDEN:
+- Changing the topic. If topic is "Independence Day" — post MUST be about Independence Day.
+- Inventing facts/prices/services not in the knowledge base above.
+- First person singular ("אני").
 
-✅ חובה:
-- דבר בגוף ראשון רבים ("אנחנו").
-- 3-6 שורות, מובנה: פתיחה חזקה → תוכן → CTA/שאלה.
-- השתמש במידע אמיתי מהעסק אם רלוונטי.
-- עד 2 אימוג'י.
+✅ REQUIRED:
+- First person plural ("אנחנו") — see guidelines above.
+- 3-6 lines, structured: strong opening → content → CTA/question.
+- Use real info from the business knowledge base where relevant.
+- Max 2 emojis.
 
-החזר JSON: {"content": "הטקסט המלא של הפוסט", "hashtags": ["#tag1", "#tag2", "#tag3"]}
-JSON בלבד.`;
-          const raw = await callClaude(expandPrompt, claudeKey, 800);
+Return ONLY JSON: {"content": "full post text in Hebrew", "hashtags": ["#tag1", "#tag2", "#tag3"]}`;
+          const raw = await callClaudeWithCache(cachedSystem, expandPrompt, claudeKey, 800);
           let clean = raw.replace(/```json\n?|```/g, '').trim();
           const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
           if (fb >= 0 && lb > fb) clean = clean.slice(fb, lb + 1);
@@ -2255,6 +2252,56 @@ async function callClaude(prompt: string, apiKey: string, maxTokens = 1200): Pro
   });
   const d = await r.json();
   return d.content?.[0]?.text || '';
+}
+
+// Claude call with system prompt caching (for expensive contexts like KB + visual_identity)
+// Usage: cached "system" content (≥1024 tokens) is charged at 10% on subsequent calls within 5min
+async function callClaudeWithCache(
+  cachedSystem: string,
+  userPrompt: string,
+  apiKey: string,
+  maxTokens = 1200
+): Promise<string> {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: maxTokens,
+      system: [
+        { type: 'text', text: cachedSystem, cache_control: { type: 'ephemeral' } }
+      ],
+      messages: [{ role: 'user', content: userPrompt }],
+    }),
+  });
+  const d = await r.json();
+  return d.content?.[0]?.text || '';
+}
+
+// Build a cacheable "business context" string — shared across many Claude calls per business
+function buildBusinessContext(biz: any, kbContent: string = ''): string {
+  return `BUSINESS PROFILE — cached context for ${biz.name}
+
+Business name: ${biz.name}
+Description: ${biz.description || 'N/A'}
+URL: ${biz.url || 'N/A'}
+Tone: ${biz.tone || 'warm, professional'}
+Target audience: ${biz.target_audience || 'N/A'}
+
+VISUAL IDENTITY (brand look):
+"""
+${biz.visual_identity || 'Professional, clean, modern brand.'}
+"""
+
+${biz.scan_result && Object.keys(biz.scan_result).length > 0 ? `BRAND INSIGHTS:\n${JSON.stringify(biz.scan_result)}\n\n` : ''}${kbContent ? `KNOWLEDGE BASE DOCUMENTS:\n${kbContent}\n\n` : ''}GUIDELINES:
+- Always speak in first person plural ("אנחנו"), never singular ("אני")
+- Reference real facts from the knowledge base — never invent prices/services
+- Match the brand tone and visual identity
+- Keep content specific and concrete, never generic`;
 }
 
 // Helper: fetch website content — try direct first, fallback to Apify for SPAs
