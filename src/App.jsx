@@ -3385,6 +3385,21 @@ function Publish({ posts, setPosts, businesses }) {
         } else {
           setResults(p=>({...p,[key]:{status:"error",msg: wpD.message||"שגיאה ב-WordPress"}}));
         }
+      } else if (platformId === "tiktok") {
+        const accessToken = tokens.TIKTOK_ACCESS_TOKEN;
+        if (!accessToken) throw new Error("חסר TIKTOK_ACCESS_TOKEN");
+        const r = await authFetch("/api/publish/tiktok", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ post_id: post.id, access_token: accessToken, privacy_level: "FOLLOWER_OF_CREATOR" })
+        });
+        const d = await r.json();
+        if (d.ok) {
+          setResults(p=>({...p,[key]:{status:"ok",postId:d.publish_id}}));
+          setPosts?.(prev=>prev.map(p=>p.id===post.id?{...p,publishedAt:new Date().toISOString(),published:true}:p));
+        } else {
+          setResults(p=>({...p,[key]:{status:"error",msg:d.error||"שגיאת TikTok"}}));
+        }
       } else {
         setResults(p=>({...p,[key]:{status:"error",msg:"פלטפורמה לא נתמכת עדיין"}}));
       }
@@ -4255,6 +4270,64 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
 }
 
 // ANALYTICS — REAL DATA FROM META
+// ── Chart helpers ──
+function BarChart({ bars, height=80, color="#8B5CF6", showValues=false }) {
+  const max = Math.max(...bars.map(b=>b.value), 1);
+  return <div style={{display:"flex",gap:4,alignItems:"flex-end",height:height+24}}>
+    {bars.map((bar,i)=>(
+      <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",flex:1,minWidth:0}}>
+        {showValues&&bar.value>0&&<div style={{fontSize:9,color:color,fontWeight:700,marginBottom:2}}>{bar.value}</div>}
+        <div style={{
+          height:max>0?Math.max((bar.value/max)*height,bar.value>0?3:0):0,
+          background:typeof color==="function"?color(i,bar):color,
+          borderRadius:"3px 3px 0 0",width:"100%",transition:"height 0.4s ease",
+          minHeight:bar.value>0?"3px":0,
+        }}/>
+        <div style={{fontSize:9,color:T.textDim,marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%",textAlign:"center"}}>{bar.label}</div>
+      </div>
+    ))}
+  </div>;
+}
+
+function HBarChart({ bars, color="#8B5CF6" }) {
+  const max = Math.max(...bars.map(b=>b.value), 1);
+  return <div style={{display:"flex",flexDirection:"column",gap:6}}>
+    {bars.map((bar,i)=>(
+      <div key={i} style={{display:"flex",alignItems:"center",gap:8}}>
+        <div style={{width:80,fontSize:11,color:T.textSec,textAlign:"right",flexShrink:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{bar.label}</div>
+        <div style={{flex:1,background:T.inputBg,borderRadius:4,height:18,position:"relative"}}>
+          <div style={{
+            height:"100%",width:`${(bar.value/max)*100}%`,
+            background:typeof color==="function"?color(i,bar):color,
+            borderRadius:4,transition:"width 0.4s ease",minWidth:bar.value>0?3:0
+          }}/>
+        </div>
+        <div style={{width:28,fontSize:10,color:T.textSec,fontWeight:600,flexShrink:0}}>{bar.value}</div>
+      </div>
+    ))}
+  </div>;
+}
+
+function MiniLineChart({ points, color="#8B5CF6", height=64 }) {
+  if (!points?.length) return null;
+  const W=300, H=height;
+  const max = Math.max(...points.map(p=>p.value), 1);
+  const xs = points.map((_,i) => i/(points.length-1||1)*W);
+  const ys = points.map(p => H - Math.max((p.value/max)*(H-8), 0) - 4);
+  const polyPts = points.map((_,i)=>`${xs[i]},${ys[i]}`).join(" ");
+  const fillPts = `0,${H} ${polyPts} ${W},${H}`;
+  return <div>
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height,overflow:"visible"}} preserveAspectRatio="none">
+      <polygon points={fillPts} fill={color+"18"}/>
+      <polyline points={polyPts} fill="none" stroke={color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"/>
+      {points.map((_,i)=><circle key={i} cx={xs[i]} cy={ys[i]} r="3" fill={color} stroke="#fff" strokeWidth="1.5"/>)}
+    </svg>
+    <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
+      {points.map((p,i)=><div key={i} style={{fontSize:9,color:T.textDim,textAlign:"center"}}>{p.label}</div>)}
+    </div>
+  </div>;
+}
+
 function Analytics({ posts, businesses, analyticsData, setAnalyticsData }) {
   const [loading, setLoading] = useState(false);
   const [selBizId, setSelBizId] = useState(businesses?.[0]?.id||"");
@@ -4264,6 +4337,55 @@ function Analytics({ posts, businesses, analyticsData, setAnalyticsData }) {
 
   const bizData = analyticsData?.[selBizId] || {};
   const done = posts.filter(p=>p.pipeline?.done).length;
+
+  // ── Compute local charts from posts array ──
+  const selBizPosts = posts.filter(p => !selBizId || p.business === selBiz?.name);
+  const publishedPosts = selBizPosts.filter(p => p.published && p.publishedAt);
+
+  // Weekly posts (last 8 weeks)
+  const weeklyBars = (() => {
+    const now = Date.now();
+    return Array.from({length:8},(_,i)=>{
+      const weekStart = new Date(now - (7-i)*7*86400000);
+      const weekEnd = new Date(weekStart.getTime() + 7*86400000);
+      const label = weekStart.toLocaleDateString("he-IL",{day:"2-digit",month:"2-digit"});
+      const value = publishedPosts.filter(p=>{
+        const d = new Date(p.publishedAt);
+        return d >= weekStart && d < weekEnd;
+      }).length;
+      return {label, value};
+    });
+  })();
+
+  // Platform distribution
+  const platformBars = (() => {
+    const counts = {};
+    publishedPosts.forEach(p => { counts[p.platform||"פייסבוק"] = (counts[p.platform||"פייסבוק"]||0)+1; });
+    return Object.entries(counts).map(([label,value])=>({label,value})).sort((a,b)=>b.value-a.value);
+  })();
+
+  // Best time (hour of day)
+  const hourBars = (() => {
+    const slots = Array.from({length:6},(_,i)=>({label:`${i*4}-${i*4+4}`,value:0,range:[i*4,i*4+4]}));
+    publishedPosts.forEach(p => {
+      const h = new Date(p.publishedAt).getHours();
+      const slot = slots.find(s=>h>=s.range[0]&&h<s.range[1]);
+      if (slot) slot.value++;
+    });
+    return slots;
+  })();
+
+  // Weekly engagement trend (from FB data)
+  const engagementTrend = (() => {
+    if (!bizData.posts?.length) return [];
+    const sorted = [...bizData.posts].sort((a,b)=>new Date(a.created_time||0)-new Date(b.created_time||0));
+    const chunkSize = Math.max(1, Math.floor(sorted.length/6));
+    return Array.from({length:Math.min(6,sorted.length)},(_,i)=>{
+      const chunk = sorted.slice(i*chunkSize,(i+1)*chunkSize);
+      const avg = chunk.reduce((s,p)=>s+p.likes+p.comments+p.shares,0)/chunk.length;
+      return {label:`${i+1}`, value: Math.round(avg||0)};
+    });
+  })();
 
   async function fetchAnalytics() {
     if (!selBiz) return;
@@ -4360,6 +4482,53 @@ ${topContent}
       </Card>)}
     </div>
 
+    {/* Charts row */}
+    <div className="two-col-grid" style={{display:"grid",gap:14,marginBottom:20}}>
+      {/* Weekly publication frequency */}
+      <Card>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:12}}>📅 פרסומים שבועיים (8 שבועות)</div>
+        {publishedPosts.length > 0
+          ? <BarChart bars={weeklyBars} height={70} color="#8B5CF6" showValues={true}/>
+          : <div style={{color:T.textDim,fontSize:12,textAlign:"center",padding:"20px 0"}}>
+              אין פוסטים מפורסמים עדיין<br/><span style={{fontSize:10}}>פרסם פוסטים כדי לראות גרף</span>
+            </div>
+        }
+      </Card>
+
+      {/* Best time to post */}
+      <Card>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:12}}>⏰ שעות פרסום</div>
+        {publishedPosts.length > 0
+          ? <BarChart bars={hourBars} height={70} color={(_,b)=>{
+              const maxV=Math.max(...hourBars.map(h=>h.value));
+              return b.value===maxV&&maxV>0?"#F59E0B":"#3B82F6";
+            }}/>
+          : <div style={{color:T.textDim,fontSize:12,textAlign:"center",padding:"20px 0"}}>
+              פרסם פוסטים כדי לראות שעות מומלצות
+            </div>
+        }
+        {publishedPosts.length>0&&<div style={{color:T.textDim,fontSize:9,marginTop:4,textAlign:"center"}}>
+          🟡 = שעה עם הכי הרבה פרסומים
+        </div>}
+      </Card>
+    </div>
+
+    {/* Platform distribution + Engagement trend */}
+    {(platformBars.length>0||engagementTrend.length>0)&&<div className="two-col-grid" style={{display:"grid",gap:14,marginBottom:20}}>
+      {platformBars.length>0&&<Card>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:12}}>📡 פילוח לפי פלטפורמה</div>
+        <HBarChart bars={platformBars} color={(_,b)=>{
+          const platColors={"פייסבוק":"#1877F2","אינסטגרם":"#E1306C","WordPress":"#21759B","TikTok":"#010101","בלוג SEO":"#34A853"};
+          return platColors[b.label]||"#8B5CF6";
+        }}/>
+      </Card>}
+      {engagementTrend.length>1&&<Card>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:12}}>📈 טרנד מעורבות (ממוצע לפוסט)</div>
+        <MiniLineChart points={engagementTrend} color="#10B981"/>
+        <div style={{color:T.textDim,fontSize:9,marginTop:4,textAlign:"center"}}>קבוצות פוסטים כרונולוגיות</div>
+      </Card>}
+    </div>}
+
     {/* Top posts */}
     {bizData.topPosts?.length > 0 && <Card style={{marginBottom:20}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
@@ -4391,6 +4560,14 @@ ${topContent}
         <span style={{color:"#8B5CF6",fontSize:10}}>● תגובות</span>
         <span style={{color:"#3B82F6",fontSize:10}}>● שיתופים</span>
       </div>
+      {/* Engagement horizontal bar chart */}
+      {bizData.topPosts?.length>0&&<div style={{marginTop:16,paddingTop:12,borderTop:`1px solid ${T.borderLight}`}}>
+        <div style={{color:T.textMuted,fontSize:10,fontWeight:700,marginBottom:8}}>מעורבות לפי פוסט</div>
+        <HBarChart color="#EC4899" bars={bizData.topPosts.slice(0,5).map((p,i)=>({
+          label:`פוסט ${i+1}`,
+          value: p.likes+p.comments+p.shares
+        }))}/>
+      </div>}
     </Card>}
 
     {/* AI Insight */}
@@ -4422,6 +4599,7 @@ ${topContent}
 // ═══════════════════════════════════════════════════════════════════
 // ADMIN
 // ═══════════════════════════════════════════════════════════════════
+
 const API_KEYS_CONFIG = [
   { id:"ANTHROPIC_API_KEY",      label:"Claude API Key",        service:"Anthropic",    color:"#8B5CF6", hint:"sk-ant-..." },
   { id:"GEMINI_API_KEY",         label:"Gemini API Key",        service:"Images + Veo Video", color:"#4285F4", hint:"AIza..." },

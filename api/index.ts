@@ -3062,7 +3062,7 @@ app.get('/api/landing/:slug', async (req, res) => {
   res.json({ id: biz.id, name: biz.name, icon: biz.icon || '🏢', color: biz.color || '#6C5CE7', description: biz.description || '', landing: biz.landing_page });
 });
 
-// Public: capture a lead
+// Public: capture a lead (+ fire owner notification email)
 app.post('/api/leads', async (req, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
@@ -3075,6 +3075,43 @@ app.post('/api/leads', async (req, res) => {
     utm_source: utm_source || null, utm_medium: utm_medium || null,
   }).select().single();
   if (error) return res.status(500).json({ error: error.message });
+
+  // Fire-and-forget notification email to business owner
+  (async () => {
+    try {
+      const { data: bizRow } = await sb.from('businesses').select('user_id, name, icon, color').eq('id', business_id).maybeSingle();
+      if (!bizRow?.user_id) return;
+      const { data: profile } = await sb.from('user_profiles').select('email').eq('id', bizRow.user_id).maybeSingle();
+      const ownerEmail = profile?.email || process.env.REPORT_EMAIL;
+      if (!ownerEmail) return;
+      const html = `<!DOCTYPE html><html lang="he" dir="rtl"><head><meta charset="utf-8"><title>ליד חדש</title></head>
+<body style="font-family:-apple-system,'Segoe UI',Arial,sans-serif;background:#f5f6fa;margin:0;padding:20px;color:#1a1a2e;">
+<div style="max-width:500px;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+  <div style="background:linear-gradient(135deg,${bizRow.color||'#8B5CF6'},${bizRow.color||'#3B82F6'}cc);padding:24px;color:#fff;text-align:center;">
+    <div style="font-size:36px;margin-bottom:8px;">${bizRow.icon||'🏢'}</div>
+    <h1 style="margin:0;font-size:18px;font-weight:700;">🔔 ליד חדש!</h1>
+    <div style="opacity:0.9;font-size:13px;margin-top:4px;">${bizRow.name}</div>
+  </div>
+  <div style="padding:24px;">
+    <div style="background:#f9fafb;border-radius:12px;padding:16px;margin-bottom:16px;">
+      <div style="font-size:20px;font-weight:700;color:#1a1a2e;margin-bottom:10px;">${name}</div>
+      ${phone ? `<div style="margin-bottom:6px;"><a href="tel:${phone}" style="color:#25D366;font-size:14px;text-decoration:none;font-weight:600;">📱 ${phone}</a></div>` : ''}
+      ${email ? `<div style="margin-bottom:6px;"><a href="mailto:${email}" style="color:#3B82F6;font-size:14px;text-decoration:none;font-weight:600;">📧 ${email}</a></div>` : ''}
+      ${message ? `<div style="background:#fff;border-radius:8px;padding:10px;border:1px solid #e0e0e0;font-size:13px;color:#444;margin-top:8px;direction:rtl;line-height:1.6;">${message}</div>` : ''}
+    </div>
+    ${utm_source ? `<div style="color:#888;font-size:11px;margin-bottom:12px;">מקור: ${utm_source}${utm_medium?` / ${utm_medium}`:''}</div>` : ''}
+    <div style="text-align:center;">
+      <a href="https://dashboard-steel-delta-52.vercel.app" style="display:inline-block;background:linear-gradient(135deg,#8B5CF6,#3B82F6);color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:13px;">פתח הדשבורד ←</a>
+    </div>
+  </div>
+  <div style="background:#f5f5f7;padding:12px;text-align:center;font-size:10px;color:#999;">
+    🤖 Marketing AI Platform · ${new Date().toLocaleString('he-IL')}
+  </div>
+</div></body></html>`;
+      await sendEmail(ownerEmail, `🔔 ליד חדש: ${name} — ${bizRow.name}`, html);
+    } catch {}
+  })();
+
   res.json({ ok: true, id: data.id });
 });
 
@@ -3170,6 +3207,69 @@ Return ONLY valid JSON (no markdown):
     }).eq('id', biz.id);
 
     res.json({ ok: true, report });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// TIKTOK PUBLISHING
+// ══════════════════════════════════════════════════════════════
+
+app.post('/api/publish/tiktok', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const { post_id, access_token, privacy_level = 'FOLLOWER_OF_CREATOR' } = req.body;
+  if (!post_id || !access_token) return res.status(400).json({ error: 'post_id and access_token required' });
+
+  try {
+    const { data: post } = await sb.from('content_posts').select('*').eq('id', post_id).single();
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
+    const videoUrl = post.video_url;
+    const imageUrl = post.image_url;
+    const caption = [post.content, ...(post.hashtags || []).map((h: string) => h.startsWith('#') ? h : `#${h}`)].join('\n').slice(0, 2200);
+    const postInfo = { title: caption, privacy_level, disable_comment: false, disable_duet: false, disable_stitch: false };
+
+    let apiUrl: string;
+    let body: any;
+
+    if (videoUrl) {
+      apiUrl = 'https://open.tiktokapis.com/v2/post/publish/video/init/';
+      body = { post_info: postInfo, source_info: { source: 'PULL_FROM_URL', video_url: videoUrl } };
+    } else if (imageUrl) {
+      apiUrl = 'https://open.tiktokapis.com/v2/post/publish/content/init/';
+      body = {
+        post_info: postInfo,
+        source_info: { source: 'PULL_FROM_URL', photo_images: [imageUrl], photo_cover_index: 0 },
+        post_mode: 'DIRECT_POST',
+        media_type: 'PHOTO',
+      };
+    } else {
+      return res.status(400).json({ error: 'TikTok requires a video or image — generate media first' });
+    }
+
+    const r = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${access_token}`, 'Content-Type': 'application/json; charset=UTF-8' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json() as any;
+
+    if (d.error?.code && d.error.code !== 'ok') {
+      return res.status(400).json({ error: d.error.message || d.error.code });
+    }
+
+    const publishId = d.data?.publish_id;
+
+    // Save to DB
+    await sb.from('content_posts').update({
+      published_at: new Date().toISOString(),
+      status: 'published',
+      performance: { ...(post.performance || {}), tiktok_publish_id: publishId, tiktok_published_at: new Date().toISOString() },
+    }).eq('id', post_id);
+
+    res.json({ ok: true, publish_id: publishId });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
