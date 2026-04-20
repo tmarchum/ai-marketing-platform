@@ -1050,19 +1050,44 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
 
     {/* Media preview — image_url / video_url */}
     {(post.video_url || post.image_url || post.pipeline?.imageUrl || post.pipeline?.videoUrl) && (
-      <div style={{marginBottom:12,display:"flex",gap:10,flexWrap:"wrap"}}>
-        {(post.video_url || post.pipeline?.videoUrl) && (
-          <video src={post.video_url || post.pipeline?.videoUrl} controls
-            style={{width:"100%",maxWidth:360,maxHeight:220,borderRadius:10,background:"#000"}}/>
-        )}
-        {(post.image_url || post.pipeline?.imageUrl) && !(post.video_url || post.pipeline?.videoUrl) && (
-          <img src={post.image_url || post.pipeline?.imageUrl} alt="AI"
-            style={{maxWidth:360,maxHeight:220,borderRadius:10,objectFit:"cover",border:`1px solid ${T.border}`}}/>
-        )}
-        {(post.image_url || post.pipeline?.imageUrl) && (post.video_url || post.pipeline?.videoUrl) && (
-          <img src={post.image_url || post.pipeline?.imageUrl} alt="AI"
-            style={{width:80,height:80,borderRadius:8,objectFit:"cover",border:`1px solid ${T.border}`,cursor:"pointer"}}
-            title="תמונת מקור"/>
+      <div style={{marginBottom:12}}>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          {(post.video_url || post.pipeline?.videoUrl) && (
+            <video src={post.video_url || post.pipeline?.videoUrl} controls
+              style={{width:"100%",maxWidth:360,maxHeight:220,borderRadius:10,background:"#000"}}/>
+          )}
+          {(post.image_url || post.pipeline?.imageUrl) && !(post.video_url || post.pipeline?.videoUrl) && (
+            <img src={post.image_url || post.pipeline?.imageUrl} alt="AI"
+              style={{maxWidth:360,maxHeight:220,borderRadius:10,objectFit:"cover",border:`1px solid ${T.border}`}}/>
+          )}
+          {(post.image_url || post.pipeline?.imageUrl) && (post.video_url || post.pipeline?.videoUrl) && (
+            <img src={post.image_url || post.pipeline?.imageUrl} alt="AI"
+              style={{width:80,height:80,borderRadius:8,objectFit:"cover",border:`1px solid ${T.border}`,cursor:"pointer"}}
+              title="תמונת מקור"/>
+          )}
+        </div>
+        {/* Image variants picker */}
+        {Array.isArray(post.image_variants) && post.image_variants.length > 1 && (
+          <div style={{marginTop:8}}>
+            <div style={{color:T.textDim,fontSize:10,fontWeight:600,marginBottom:5}}>🎨 וריאציות — לחץ לבחירה:</div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {post.image_variants.map((vurl, vi) => {
+                const isSelected = vurl === post.image_url;
+                return <button key={vi}
+                  onClick={async()=>{
+                    onUpdate(p=>({...p, image_url: vurl}));
+                    try { await authFetch(`/api/posts/${post.id}/select-variant`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({variant_url: vurl})}); } catch{}
+                  }}
+                  style={{
+                    width:60,height:60,padding:0,border:`2px solid ${isSelected?"#10B981":T.border}`,
+                    borderRadius:8,overflow:"hidden",cursor:"pointer",background:"transparent",
+                    boxShadow:isSelected?"0 0 0 2px #10B98144":"none",transition:"all 0.2s"
+                  }}>
+                  <img src={vurl} alt={`v${vi+1}`} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+                </button>;
+              })}
+            </div>
+          </div>
         )}
       </div>
     )}
@@ -4620,6 +4645,9 @@ export default function App({ session }) {
               pipeline: p.pipeline_status || null,
               image_url: p.image_url || null,
               video_url: p.video_url || null,
+              image_variants: p.image_variants || [],
+              scheduled_at: p.scheduled_at || null,
+              hashtags: p.hashtags || [],
             }));
             setPosts(mapped);
             console.log("[db] Loaded", mapped.length, "posts from Supabase");

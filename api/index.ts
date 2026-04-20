@@ -1326,86 +1326,98 @@ Output ONLY the image prompt description (no explanations):`;
         })()
       : topic;
 
-    // 2. Generate image via Gemini
+    // 2. Generate N image variants via Gemini (default 3)
+    const numVariants = Math.min(Math.max(Number(req.query.variants || req.body?.variants || 3), 1), 4);
     const TIMEOUT = 50_000;
-    let imageBase64: string | null = null;
-    let contentType = 'image/png';
-    let lastError = '';
 
-    const imageModels = ['gemini-3-pro-image-preview', 'gemini-2.5-flash-image'];
-    for (const model of imageModels) {
-      if (imageBase64) break;
-      try {
-        const ac = new AbortController();
-        const timer = setTimeout(() => ac.abort(), TIMEOUT);
-        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: ac.signal,
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: enhancedPrompt }] }],
-            generationConfig: { responseModalities: ['IMAGE'] },
-          }),
-        });
-        clearTimeout(timer);
-        const d = await r.json();
-        if (d.error) { lastError = `${model}: ${d.error.message}`; continue; }
-        const parts = d.candidates?.[0]?.content?.parts || [];
-        const imgPart = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
-        if (imgPart) {
-          imageBase64 = imgPart.inlineData.data;
-          contentType = imgPart.inlineData.mimeType;
-        } else {
-          lastError = `${model}: no image in response`;
+    async function generateOne(seed: number): Promise<{ base64: string | null; contentType: string; error: string }> {
+      let lastError = '';
+      // Add slight variation to prompt for diversity
+      const promptWithSeed = seed > 0 ? `${enhancedPrompt}\n\n(variation ${seed + 1}: slightly different angle/composition)` : enhancedPrompt;
+      const models = ['gemini-3-pro-image-preview', 'gemini-2.5-flash-image'];
+      for (const model of models) {
+        try {
+          const ac = new AbortController();
+          const timer = setTimeout(() => ac.abort(), TIMEOUT);
+          const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ac.signal,
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: promptWithSeed }] }],
+              generationConfig: { responseModalities: ['IMAGE'] },
+            }),
+          });
+          clearTimeout(timer);
+          const d = await r.json();
+          if (d.error) { lastError = `${model}: ${d.error.message}`; continue; }
+          const parts = d.candidates?.[0]?.content?.parts || [];
+          const imgPart = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
+          if (imgPart) return { base64: imgPart.inlineData.data, contentType: imgPart.inlineData.mimeType, error: '' };
+          lastError = `${model}: no image`;
+        } catch (err: any) {
+          lastError = `${model}: ${err.name === 'AbortError' ? 'timeout' : err.message}`;
         }
-      } catch (err: any) {
-        lastError = `${model}: ${err.name === 'AbortError' ? 'timeout' : err.message}`;
       }
-    }
-
-    // Fallback: Imagen 4.0
-    if (!imageBase64) {
+      // Fallback: Imagen
       try {
         const ac = new AbortController();
         const timer = setTimeout(() => ac.abort(), TIMEOUT);
         const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${geminiKey}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: ac.signal,
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ac.signal,
           body: JSON.stringify({
-            instances: [{ prompt: enhancedPrompt }],
+            instances: [{ prompt: promptWithSeed }],
             parameters: { sampleCount: 1, aspectRatio: '1:1' },
           }),
         });
         clearTimeout(timer);
         const d = await r.json();
         const bytes = d.predictions?.[0]?.bytesBase64Encoded;
-        if (bytes) { imageBase64 = bytes; contentType = 'image/png'; }
-        else lastError += ` | imagen: ${d.error?.message || 'no image'}`;
+        if (bytes) return { base64: bytes, contentType: 'image/png', error: '' };
+        lastError += ` | imagen: ${d.error?.message || 'no image'}`;
       } catch (err: any) { lastError += ` | imagen: ${err.message}`; }
+      return { base64: null, contentType: 'image/png', error: lastError };
     }
 
-    if (!imageBase64) {
-      return res.status(500).json({ error: 'Image generation failed', details: lastError });
+    // Generate in parallel
+    const results = await Promise.all(
+      Array.from({ length: numVariants }, (_, i) => generateOne(i))
+    );
+    const successful = results.filter(r => r.base64);
+    if (successful.length === 0) {
+      return res.status(500).json({ error: 'All variants failed', details: results[0]?.error });
     }
 
-    // 3. Upload to Supabase Storage
-    const buffer = Buffer.from(imageBase64, 'base64');
-    const ext = contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'png';
-    const fileName = `media/${post.user_id || 'anon'}/${Date.now()}-${postId}.${ext}`;
+    // Upload all successful variants to Storage
     await sb.storage.createBucket('media', { public: true }).catch(() => {});
-    const { error: upErr } = await sb.storage.from('media').upload(fileName, buffer, { contentType, upsert: true });
-    if (upErr) return res.status(500).json({ error: 'Upload failed: ' + upErr.message });
-    const { data: urlData } = sb.storage.from('media').getPublicUrl(fileName);
-    const imageUrl = urlData.publicUrl;
+    const uploaded: string[] = [];
+    for (let i = 0; i < successful.length; i++) {
+      const r = successful[i];
+      const buffer = Buffer.from(r.base64!, 'base64');
+      const ext = r.contentType.includes('jpeg') || r.contentType.includes('jpg') ? 'jpg' : 'png';
+      const fileName = `media/${post.user_id || 'anon'}/${Date.now()}-${postId}-v${i + 1}.${ext}`;
+      const { error: upErr } = await sb.storage.from('media').upload(fileName, buffer, { contentType: r.contentType, upsert: true });
+      if (upErr) continue;
+      const { data: urlData } = sb.storage.from('media').getPublicUrl(fileName);
+      uploaded.push(urlData.publicUrl);
+    }
 
-    // 4. Update post with image_url + enhanced prompt
+    if (uploaded.length === 0) {
+      return res.status(500).json({ error: 'All uploads failed' });
+    }
+
+    // Save: first as primary, rest in image_variants
     await sb.from('content_posts').update({
-      image_url: imageUrl,
+      image_url: uploaded[0],
       image_prompt: enhancedPrompt,
+      image_variants: uploaded,
     }).eq('id', postId);
 
-    res.json({ ok: true, url: imageUrl, prompt: enhancedPrompt });
+    res.json({
+      ok: true,
+      url: uploaded[0],
+      variants: uploaded,
+      count: uploaded.length,
+      prompt: enhancedPrompt,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1855,6 +1867,19 @@ app.get('/api/cron/weekly-report', async (req: any, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Select a different variant as the primary image
+app.post('/api/posts/:id/select-variant', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { variant_url } = req.body;
+    if (!variant_url) return res.status(400).json({ error: 'variant_url required' });
+    const { error } = await sb.from('content_posts').update({ image_url: variant_url }).eq('id', req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
 // Batch endpoint: find all scheduled posts missing media and return their IDs
