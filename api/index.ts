@@ -1900,6 +1900,98 @@ app.get('/api/cron/weekly-report', async (req: any, res) => {
   }
 });
 
+// Generate alternate text version of a post (A/B test variant)
+app.post('/api/posts/:id/regenerate-content', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { data: post } = await sb.from('content_posts').select('*').eq('id', req.params.id).single();
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
+    const { data: biz } = await sb.from('businesses').select('*').eq('name', post.business_name).single();
+    const claudeKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
+    if (!claudeKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
+
+    const kbContent = await getBizKnowledgeBase(sb, biz?.id || '', 5000);
+    const cachedSystem = buildBusinessContext(biz || {}, kbContent);
+
+    const calendarMeta = post.performance?.calendar_meta || {};
+    const variantPrompt = `Write an ALTERNATE VERSION of a Hebrew Facebook post — completely different angle and tone than the current version.
+
+CURRENT VERSION:
+"""
+${post.content || ''}
+"""
+
+TOPIC: ${calendarMeta.theme || 'same as current'}
+
+🎯 Goal: A/B test — create a version that uses a DIFFERENT approach:
+- If current uses a question hook → try a story/statement opening
+- If current is long → try concise punchy version (or vice versa)
+- If current is formal → try more casual/playful (or vice versa)
+- Different hook, different angle, different CTA phrasing
+
+Return ONLY JSON: {"content": "alternate version in Hebrew", "hashtags": ["#tag1", "#tag2", "#tag3"], "angle_note": "1-line English note about what's different"}`;
+
+    const raw = await callClaudeWithCache(cachedSystem, variantPrompt, claudeKey, 800);
+    let parsed: any = {};
+    try {
+      let clean = raw.replace(/```json\n?|```/g, '').trim();
+      const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
+      if (fb >= 0 && lb > fb) clean = clean.slice(fb, lb + 1);
+      parsed = JSON.parse(clean);
+    } catch (e: any) {
+      return res.status(500).json({ error: 'Claude JSON parse failed', raw: raw.slice(0, 200) });
+    }
+
+    // Store current content as a variant, promote new one
+    const existingVariants = Array.isArray(post.content_variants) ? post.content_variants : [];
+    const variants = [
+      ...existingVariants,
+      { content: post.content, hashtags: post.hashtags, created_at: post.created_at, label: 'previous' }
+    ].slice(-3); // keep last 3 only
+
+    await sb.from('content_posts').update({
+      content: parsed.content,
+      hashtags: parsed.hashtags || post.hashtags,
+      content_variants: variants,
+      performance: { ...(post.performance || {}), alternate_angle_note: parsed.angle_note || '' },
+    }).eq('id', req.params.id);
+
+    res.json({ ok: true, content: parsed.content, hashtags: parsed.hashtags, angle_note: parsed.angle_note, previous_variants_count: variants.length });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Select a previous content variant as the current content
+app.post('/api/posts/:id/use-variant', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { content, hashtags } = req.body;
+    if (!content) return res.status(400).json({ error: 'content required' });
+
+    const { data: post } = await sb.from('content_posts').select('content, hashtags, content_variants').eq('id', req.params.id).single();
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
+    // Swap: current becomes a variant, selected variant becomes current
+    const existingVariants = Array.isArray(post.content_variants) ? post.content_variants : [];
+    const variants = [
+      ...existingVariants.filter((v: any) => v.content !== content), // remove the selected one from variants
+      { content: post.content, hashtags: post.hashtags, label: 'swapped_out' }
+    ].slice(-3);
+
+    await sb.from('content_posts').update({
+      content,
+      hashtags: hashtags || post.hashtags,
+      content_variants: variants,
+    }).eq('id', req.params.id);
+
+    res.json({ ok: true });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
 // Select a different variant as the primary image
 app.post('/api/posts/:id/select-variant', async (req: any, res) => {
   const sb = getSupabase();

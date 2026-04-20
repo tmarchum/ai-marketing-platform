@@ -890,6 +890,7 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
   const [videoOpts, setVideoOpts] = useState(null); // {aspect, duration} or null
   const [scheduling, setScheduling] = useState(false);
   const [autoSchedulingNow, setAutoSchedulingNow] = useState(false);
+  const [abLoading, setAbLoading] = useState(false);
   const [scheduleVal, setScheduleVal] = useState(() => {
     if (post.scheduled_at) {
       try { return new Date(post.scheduled_at).toISOString().slice(0,16); } catch { return ""; }
@@ -1151,8 +1152,48 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
         </>
       }
       {onRegenerate && <Btn sm bg="#8B5CF610" color="#8B5CF6" onClick={onRegenerate}>🔄 צור פוסט אחר</Btn>}
+      {!post.published && typeof post.id === "string" && post.id.length > 20 && <Btn sm bg="#EC489910" color="#EC4899" disabled={abLoading}
+        onClick={async()=>{
+          if (!confirm("ליצור גרסה חלופית של הטקסט? הגרסה הנוכחית תישמר כ-variant זמין להחלפה.")) return;
+          setAbLoading(true);
+          try {
+            const r = await authFetch(`/api/posts/${post.id}/regenerate-content`,{method:"POST"});
+            const d = await r.json();
+            if (d.ok) {
+              onUpdate(p=>({...p, content: d.content, hashtags: d.hashtags || p.hashtags, content_variants: [...(p.content_variants||[]), {content: p.content, hashtags: p.hashtags, label:"previous"}].slice(-3)}));
+            } else { alert("שגיאה: " + (d.error || "לא ידוע")); }
+          } catch(e) { alert("שגיאה: " + e.message); }
+          setAbLoading(false);
+        }}>
+        {abLoading ? <><Spinner size={10}/>יוצר...</> : "🎭 גרסה חלופית"}
+      </Btn>}
       {onDelete && <Btn sm bg="#EF444410" color="#EF4444" onClick={()=>{if(confirm("למחוק את הפוסט?"))onDelete(post.id)}}>🗑️</Btn>}
     </div>
+
+    {/* Content variants (A/B versions available) */}
+    {Array.isArray(post.content_variants) && post.content_variants.length > 0 && !post.published && (
+      <div style={{marginTop:10,padding:"10px 12px",background:"#EC489908",border:"1px solid #EC489933",borderRadius:10}}>
+        <div style={{color:"#EC4899",fontSize:10,fontWeight:700,marginBottom:6}}>🎭 גרסאות חלופיות זמינות ({post.content_variants.length}):</div>
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          {post.content_variants.map((v,vi) => (
+            <div key={vi} style={{background:T.card,borderRadius:8,padding:8,border:`1px solid ${T.border}`}}>
+              <div style={{color:T.textSec,fontSize:11,direction:"rtl",lineHeight:1.4,marginBottom:6,maxHeight:60,overflow:"hidden"}}>
+                {(v.content || "").slice(0, 200)}...
+              </div>
+              <button onClick={async()=>{
+                if (!confirm("להחליף לגרסה הזאת?")) return;
+                try {
+                  await authFetch(`/api/posts/${post.id}/use-variant`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content: v.content, hashtags: v.hashtags})});
+                  onUpdate(p=>({...p, content: v.content, hashtags: v.hashtags || p.hashtags, content_variants: (p.content_variants||[]).filter((_,i)=>i!==vi).concat([{content: p.content, hashtags: p.hashtags, label:"swapped"}]).slice(-3)}));
+                } catch(e) { alert("שגיאה: " + e.message); }
+              }} style={{background:"#EC489915",border:"none",color:"#EC4899",fontSize:10,fontWeight:600,padding:"4px 10px",borderRadius:6,cursor:"pointer",fontFamily:"inherit"}}>
+                השתמש בגרסה זו ←
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
 
     {(exp || post.pipeline?.error) && post.pipeline && <PipelineBar stages={post.pipeline.gemini ? GEMINI_STAGES : MEDIA_STAGES} pipeline={post.pipeline}/>}
   </Card>;
@@ -4652,6 +4693,7 @@ export default function App({ session }) {
               image_url: p.image_url || null,
               video_url: p.video_url || null,
               image_variants: p.image_variants || [],
+              content_variants: p.content_variants || [],
               scheduled_at: p.scheduled_at || null,
               hashtags: p.hashtags || [],
             }));
