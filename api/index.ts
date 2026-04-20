@@ -1725,7 +1725,12 @@ app.get('/api/cron/weekly-report', async (req: any, res) => {
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   try {
     const testOnly = req.query.test === '1';
-    const toEmail = req.query.to || process.env.REPORT_EMAIL || '';
+    // Priority: ?to= param → NOTIFICATION_EMAIL in user_api_keys (first row) → env REPORT_EMAIL
+    let toEmail = (req.query.to as string) || '';
+    if (!toEmail) {
+      const { data: notifRow } = await sb.from('user_api_keys').select('key_value').eq('key_name', 'NOTIFICATION_EMAIL').limit(1).maybeSingle();
+      toEmail = notifRow?.key_value || process.env.REPORT_EMAIL || '';
+    }
     if (!toEmail) return res.status(400).json({ error: 'REPORT_EMAIL not set (or provide ?to=)' });
 
     const weekAgo = new Date(Date.now() - 7 * 86400000);
@@ -3081,8 +3086,10 @@ app.post('/api/leads', async (req, res) => {
     try {
       const { data: bizRow } = await sb.from('businesses').select('user_id, name, icon, color').eq('id', business_id).maybeSingle();
       if (!bizRow?.user_id) return;
+      // Priority: user's NOTIFICATION_EMAIL key → profile email → env fallback
+      const notifEmail = await getUserKey(sb, bizRow.user_id, 'NOTIFICATION_EMAIL');
       const { data: profile } = await sb.from('user_profiles').select('email').eq('id', bizRow.user_id).maybeSingle();
-      const ownerEmail = profile?.email || process.env.REPORT_EMAIL;
+      const ownerEmail = notifEmail || profile?.email || process.env.REPORT_EMAIL;
       if (!ownerEmail) return;
       const html = `<!DOCTYPE html><html lang="he" dir="rtl"><head><meta charset="utf-8"><title>ליד חדש</title></head>
 <body style="font-family:-apple-system,'Segoe UI',Arial,sans-serif;background:#f5f6fa;margin:0;padding:20px;color:#1a1a2e;">

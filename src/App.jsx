@@ -4601,6 +4601,8 @@ ${topContent}
 // ═══════════════════════════════════════════════════════════════════
 
 const API_KEYS_CONFIG = [
+  { id:"NOTIFICATION_EMAIL",     label:"מייל להתראות",           service:"דוחות + ליד'ים", color:"#8B5CF6", hint:"your@email.com", isContact: true },
+  { id:"NOTIFICATION_PHONE",     label:"טלפון / וואטסאפ",        service:"כל העסקים",      color:"#25D366", hint:"972542070020",   isContact: true },
   { id:"ANTHROPIC_API_KEY",      label:"Claude API Key",        service:"Anthropic",    color:"#8B5CF6", hint:"sk-ant-..." },
   { id:"GEMINI_API_KEY",         label:"Gemini API Key",        service:"Images + Veo Video", color:"#4285F4", hint:"AIza..." },
   { id:"META_ACCESS_TOKEN",      label:"Meta Access Token",     service:"Facebook/IG",  color:"#1877F2", hint:"EAA..." },
