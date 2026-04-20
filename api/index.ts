@@ -1785,6 +1785,48 @@ app.get('/api/cron/weekly-report', async (req: any, res) => {
     // Top post
     const topPost = (published || [])[0];
 
+    // AI insights — Claude analyzes the week's data and gives 3 actionable recommendations
+    let aiInsights: any[] = [];
+    const claudeKeyReport = await getUserKey(sb, null, 'ANTHROPIC_API_KEY');
+    if (claudeKeyReport && (published?.length || 0) + (replied?.length || 0) > 0) {
+      try {
+        const analysisData = {
+          published_count: published?.length || 0,
+          scheduled_count: scheduled?.length || 0,
+          replied_count: replied?.length || 0,
+          attention_count: attention?.length || 0,
+          total_engagement: totalLikes + totalComments + totalShares,
+          top_post_text: (topPost?.content || '').slice(0, 200),
+          businesses: bizList.map((b: any) => ({
+            name: b.name,
+            published: (published || []).filter(p => p.business_name === b.name).length,
+            has_schedule: !!b.schedule?.enabled,
+            has_auto_reply: !!b.schedule?.auto_reply_enabled,
+          })),
+          attention_samples: (attention || []).slice(0, 3).map(a => ({
+            biz: a.business_name, sentiment: a.sentiment_label, text: (a.original_text || '').slice(0, 100),
+          })),
+        };
+        const insightPrompt = `אתה יועץ שיווק מנוסה. קיבלת את נתוני השבוע האחרון של פלטפורמת שיווק לעסקים. הפק 3 תובנות פעילות (actionable) בעברית:
+
+נתונים:
+${JSON.stringify(analysisData, null, 2)}
+
+לכל תובנה:
+1. כותרת קצרה (3-5 מילים) — מתחילה באימוג'י
+2. הסבר של 2-3 שורות
+3. פעולה קונקרטית להמשך ("מומלץ ש...")
+
+החזר JSON בלבד: {"insights": [{"emoji_title":"💡 כותרת","analysis":"ההסבר","action":"הפעולה"}, ...]}`;
+        const raw = await callClaude(insightPrompt, claudeKeyReport, 1000);
+        let clean = raw.replace(/```json\n?|```/g, '').trim();
+        const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
+        if (fb >= 0 && lb > fb) clean = clean.slice(fb, lb + 1);
+        const parsed = JSON.parse(clean);
+        aiInsights = Array.isArray(parsed.insights) ? parsed.insights.slice(0, 3) : [];
+      } catch {}
+    }
+
     // Build HTML
     const bizSummary = bizList.map((b: any) => {
       const bizPubs = (published || []).filter(p => p.business_name === b.name);
@@ -1835,6 +1877,19 @@ app.get('/api/cron/weekly-report', async (req: any, res) => {
         <div style="flex:1; min-width:80px;"><div style="color:#10B981; font-size:18px; font-weight:700;">💬 ${totalComments}</div><div style="color:#666; font-size:10px;">תגובות</div></div>
         <div style="flex:1; min-width:80px;"><div style="color:#F59E0B; font-size:18px; font-weight:700;">🔄 ${totalShares}</div><div style="color:#666; font-size:10px;">שיתופים</div></div>
       </div>
+    </div>` : ''}
+
+    <!-- AI Insights -->
+    ${aiInsights.length > 0 ? `
+    <div style="background:linear-gradient(135deg,#8B5CF608,#3B82F608); border:1px solid #8B5CF633; border-radius:12px; padding:18px; margin-bottom:20px;">
+      <div style="color:#8B5CF6; font-size:14px; font-weight:700; margin-bottom:12px;">🧠 תובנות השבוע מ-Claude</div>
+      ${aiInsights.map(ins => `
+        <div style="background:#fff; border-radius:10px; padding:12px; margin-bottom:8px; box-shadow:0 1px 2px rgba(0,0,0,0.04);">
+          <div style="font-size:13px; font-weight:700; color:#1d1d1f; margin-bottom:6px; direction:rtl;">${ins.emoji_title || '💡 תובנה'}</div>
+          <div style="font-size:12px; color:#444; line-height:1.5; margin-bottom:8px; direction:rtl;">${ins.analysis || ''}</div>
+          <div style="font-size:12px; color:#8B5CF6; font-weight:600; direction:rtl; padding-top:6px; border-top:1px solid #f0f0f0;">👉 ${ins.action || ''}</div>
+        </div>
+      `).join('')}
     </div>` : ''}
 
     <!-- Attention needed -->
