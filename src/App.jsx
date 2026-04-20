@@ -2420,6 +2420,53 @@ function KnowledgeBaseSection({ biz }) {
   </div>;
 }
 
+// ── SEO Report display panel ──
+function SeoReportPanel({ report }) {
+  if (!report) return null;
+  const scoreColor = report.score_color || (report.score >= 70 ? "#10B981" : report.score >= 50 ? "#F59E0B" : "#EF4444");
+  return <div style={{background:"#34A85308",border:"1px solid #34A85322",borderRadius:12,padding:16,marginTop:8}}>
+    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+      <div style={{width:56,height:56,borderRadius:"50%",background:`conic-gradient(${scoreColor} ${report.score||0}%, #e0e0e0 0)`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+        <div style={{width:40,height:40,borderRadius:"50%",background:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:13,color:scoreColor}}>{report.score||0}</div>
+      </div>
+      <div>
+        <div style={{fontSize:14,fontWeight:700,color:scoreColor}}>{report.score_label||"SEO Score"}</div>
+        {report.quick_wins?.length>0&&<div style={{fontSize:11,color:T.textSec,marginTop:2}}>💡 {report.quick_wins[0]}</div>}
+      </div>
+    </div>
+    {report.keywords?.primary?.length>0&&<div style={{marginBottom:10}}>
+      <div style={{color:T.textMuted,fontSize:10,fontWeight:700,marginBottom:4}}>🎯 מילות מפתח ראשיות</div>
+      <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{report.keywords.primary.map((k,i)=><Tag key={i} label={k} color="#34A853"/>)}</div>
+    </div>}
+    {report.keywords?.missing?.length>0&&<div style={{marginBottom:10}}>
+      <div style={{color:T.textMuted,fontSize:10,fontWeight:700,marginBottom:4}}>🚀 הזדמנויות (מילים חסרות)</div>
+      <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{report.keywords.missing.map((k,i)=><Tag key={i} label={k} color="#F59E0B"/>)}</div>
+    </div>}
+    {report.on_page?.length>0&&<div style={{marginBottom:10}}>
+      <div style={{color:T.textMuted,fontSize:10,fontWeight:700,marginBottom:6}}>📋 On-Page</div>
+      {report.on_page.slice(0,3).map((item,i)=><div key={i} style={{background:T.inputBg,borderRadius:8,padding:"8px 10px",marginBottom:6,fontSize:11}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
+          <Tag label={item.priority||"בינוני"} color={item.priority==="גבוה"?"#EF4444":"#F59E0B"}/>
+          <span style={{color:T.text,fontWeight:600}}>{item.issue}</span>
+        </div>
+        <div style={{color:"#34A853",direction:"rtl"}}>→ {item.fix}</div>
+      </div>)}
+    </div>}
+    {report.content_gaps?.length>0&&<div style={{marginBottom:10}}>
+      <div style={{color:T.textMuted,fontSize:10,fontWeight:700,marginBottom:6}}>✍️ פערי תוכן</div>
+      {report.content_gaps.map((g,i)=><div key={i} style={{background:"#8B5CF608",borderRadius:8,padding:"8px 10px",marginBottom:6,fontSize:11}}>
+        <div style={{color:"#8B5CF6",fontWeight:700,marginBottom:2}}>{g.topic}</div>
+        <div style={{color:T.textSec,direction:"rtl",marginBottom:2}}>{g.why}</div>
+        <div style={{color:T.accent,fontStyle:"italic"}}>💡 {g.idea}</div>
+      </div>)}
+    </div>}
+    {report.local_seo&&<div style={{background:"#3B82F608",borderRadius:8,padding:10}}>
+      <div style={{color:"#3B82F6",fontSize:11,fontWeight:700,marginBottom:4}}>📍 Local SEO</div>
+      <div style={{color:T.textSec,fontSize:11,direction:"rtl"}}>{report.local_seo}</div>
+    </div>}
+  </div>;
+}
+
 function Businesses({ businesses, setBusinesses, posts }) {
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -2428,6 +2475,14 @@ function Businesses({ businesses, setBusinesses, posts }) {
   const [scanProgress, setScanProgress] = useState({});
   const [scrapingComp, setScrapingComp] = useState({});
   const [newCompUrl, setNewCompUrl] = useState({});
+  // P2: Lead capture
+  const [leadsModal, setLeadsModal] = useState(null);
+  const [leadsCount, setLeadsCount] = useState({});
+  // P3: SEO report
+  const [seoLoading, setSeoLoading] = useState({});
+  // P4: GBP
+  const [gbpLoading, setGbpLoading] = useState({});
+  const [gbpReviews, setGbpReviews] = useState({});
 
   function updateBiz(id, upd) { setBusinesses(p=>p.map(b=>b.id===id?{...b,...upd}:b)); }
 
@@ -2611,6 +2666,9 @@ function Businesses({ businesses, setBusinesses, posts }) {
               <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
                 {biz.url&&<Tag label={biz.url.replace(/https?:\/\/(www\.)?/,"")} color={T.textMuted}/>}
                 <Tag label={`${bizPosts.length} פוסטים`} color="#8B5CF6"/>
+                {biz.landing_page?.enabled&&<Tag label="📋 ליד'ים" color="#3B82F6"/>}
+                {biz.social?.gbp?.connected&&<Tag label="📍 GBP" color="#34A853"/>}
+                {biz.scanResult?.seo_report&&<Tag label={`SEO ${biz.scanResult.seo_report.score||"?"}`} color={biz.scanResult.seo_report.score_color||"#34A853"}/>}
                 {SOCIAL_PLATFORMS.filter(sp=>biz.social?.[sp.id]?.connected).map(sp=>
                   <Tag key={sp.id} label={sp.icon+" "+sp.label} color={sp.color}/>)}
               </div>
@@ -2834,6 +2892,62 @@ function Businesses({ businesses, setBusinesses, posts }) {
             {/* Knowledge Base */}
             <KnowledgeBaseSection biz={biz} />
 
+            {/* Landing Page (Lead Capture) */}
+            <div style={{background:"#3B82F608",border:`1px solid #3B82F633`,borderRadius:10,padding:12,marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8,flexWrap:"wrap"}}>
+                <div style={{color:"#3B82F6",fontSize:11,fontWeight:700}}>📋 דף לידים (Landing Page)</div>
+                <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                  <input type="checkbox" checked={!!biz.landing_page?.enabled}
+                    onChange={async e=>{
+                      const lp={...(biz.landing_page||{}),enabled:e.target.checked};
+                      updateBiz(biz.id,{landing_page:lp});
+                      try{await authFetch(`/api/businesses/${biz.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({landing_page:lp})});}catch{}
+                    }}/>
+                  <span style={{color:T.textSec,fontSize:11,fontWeight:600}}>{biz.landing_page?.enabled?"פעיל":"כבוי"}</span>
+                </label>
+              </div>
+              <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+                <span style={{color:T.textDim,fontSize:11,whiteSpace:"nowrap"}}>/l/</span>
+                <input value={biz.landing_page?.slug||""} onChange={e=>updateBiz(biz.id,{landing_page:{...(biz.landing_page||{}),slug:e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,"-")}})}
+                  onBlur={async()=>{try{await authFetch(`/api/businesses/${biz.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({landing_page:biz.landing_page})});}catch{}}}
+                  placeholder="my-business"
+                  style={{flex:1,background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,padding:"6px 10px",color:T.text,fontSize:11,fontFamily:"monospace",boxSizing:"border-box"}}/>
+                {biz.landing_page?.slug&&<Btn sm bg="#3B82F615" color="#3B82F6" onClick={()=>window.open(`/l/${biz.landing_page.slug}`)}>↗ פתח</Btn>}
+                {biz.landing_page?.slug&&<Btn sm bg={T.inputBg} color={T.textMuted} onClick={()=>navigator.clipboard.writeText(window.location.origin+"/l/"+biz.landing_page.slug).then(()=>alert("הועתק!"))}>העתק</Btn>}
+              </div>
+              <div className="two-col-grid" style={{display:"grid",gap:8,marginBottom:8}}>
+                <div>
+                  <div style={{color:T.textMuted,fontSize:10,marginBottom:3}}>כותרת</div>
+                  <input value={biz.landing_page?.headline||""} onChange={e=>updateBiz(biz.id,{landing_page:{...(biz.landing_page||{}),headline:e.target.value}})}
+                    onBlur={async()=>{try{await authFetch(`/api/businesses/${biz.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({landing_page:biz.landing_page})});}catch{}}}
+                    placeholder="השאיר פרטים ונחזור אליך!"
+                    style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,padding:"6px 10px",color:T.text,fontSize:11,fontFamily:"inherit",boxSizing:"border-box",direction:"rtl"}}/>
+                </div>
+                <div>
+                  <div style={{color:T.textMuted,fontSize:10,marginBottom:3}}>כפתור שליחה</div>
+                  <input value={biz.landing_page?.cta_text||""} onChange={e=>updateBiz(biz.id,{landing_page:{...(biz.landing_page||{}),cta_text:e.target.value}})}
+                    onBlur={async()=>{try{await authFetch(`/api/businesses/${biz.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({landing_page:biz.landing_page})});}catch{}}}
+                    placeholder="שלח"
+                    style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,padding:"6px 10px",color:T.text,fontSize:11,fontFamily:"inherit",boxSizing:"border-box",direction:"rtl"}}/>
+                </div>
+              </div>
+              <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:10}}>
+                {[{k:"collect_phone",l:"📱 טלפון"},{k:"collect_email",l:"📧 אימייל"},{k:"collect_message",l:"✉️ הודעה"}].map(f=>(
+                  <label key={f.k} style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer",fontSize:11,color:T.textSec}}>
+                    <input type="checkbox" checked={biz.landing_page?.[f.k]!==false}
+                      onChange={async e=>{
+                        const lp={...(biz.landing_page||{}),[f.k]:e.target.checked};
+                        updateBiz(biz.id,{landing_page:lp});
+                        try{await authFetch(`/api/businesses/${biz.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({landing_page:lp})});}catch{}
+                      }}/>{f.l}
+                  </label>
+                ))}
+              </div>
+              <Btn sm bg="#3B82F615" color="#3B82F6" onClick={async()=>{
+                try{const r=await authFetch(`/api/leads?business_id=${biz.id}`);const d=await r.json();setLeadsModal({biz,leads:Array.isArray(d)?d:[]});}catch(e){alert("שגיאה: "+e.message);}
+              }}>📋 ליד'ים {leadsCount[biz.id]?`(${leadsCount[biz.id]})`:""}</Btn>
+            </div>
+
             {/* Social connections per business */}
             <div style={{marginBottom:14}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
@@ -2972,6 +3086,95 @@ function Businesses({ businesses, setBusinesses, posts }) {
               </div>}
             </div>
 
+            {/* SEO Report */}
+            <div style={{marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
+                <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1}}>🔍 דוח SEO</div>
+                <Btn sm grad="linear-gradient(135deg,#34A853,#0EA5E9)" disabled={!!seoLoading[biz.id]}
+                  onClick={async()=>{
+                    setSeoLoading(p=>({...p,[biz.id]:true}));
+                    try{
+                      const r=await authFetch(`/api/seo-report/${biz.id}`,{method:"POST"});
+                      const d=await r.json();
+                      if(d.ok){updateBiz(biz.id,{scanResult:{...(biz.scanResult||{}),seo_report:d.report,seo_report_at:new Date().toISOString()}});}
+                      else alert("שגיאה: "+(d.error||""));
+                    }catch(e){alert("שגיאה: "+e.message);}
+                    setSeoLoading(p=>({...p,[biz.id]:false}));
+                  }}>
+                  {seoLoading[biz.id]?<><Spinner size={10}/> מנתח...</>:"✨ נתח SEO"}
+                </Btn>
+              </div>
+              {biz.scanResult?.seo_report&&<>
+                <SeoReportPanel report={biz.scanResult.seo_report}/>
+                {biz.scanResult?.seo_report_at&&<div style={{color:T.textDim,fontSize:9,marginTop:4}}>
+                  נוצר: {new Date(biz.scanResult.seo_report_at).toLocaleString("he-IL")}
+                </div>}
+              </>}
+            </div>
+
+            {/* GBP — Google Business Profile */}
+            <div style={{background:"#34A85308",border:`1px solid #34A85333`,borderRadius:10,padding:12,marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8,flexWrap:"wrap"}}>
+                <div style={{color:"#34A853",fontSize:11,fontWeight:700}}>📍 Google Business Profile</div>
+                {biz.social?.gbp?.connected
+                  ?<div style={{background:"#34A85310",borderRadius:8,padding:"4px 10px",fontSize:10,color:"#34A853",fontWeight:600}}>
+                      ● {biz.social.gbp.google_email||"מחובר"}
+                    </div>
+                  :<button onClick={()=>window.location.href=`/api/auth/google?business_id=${biz.id}`}
+                      style={{background:"linear-gradient(135deg,#34A853,#0EA5E9)",color:"#fff",border:"none",borderRadius:8,
+                        padding:"6px 14px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
+                      🔗 חבר Google
+                    </button>}
+              </div>
+              <div style={{color:T.textDim,fontSize:10,marginBottom:8,lineHeight:1.5}}>
+                פרסם עדכוני GBP, נהל ביקורות, הופיע בגוגל מפות. מתאים גם לעסקים ניידים (SAB).
+              </div>
+              {biz.social?.gbp?.connected&&<>
+                <div style={{marginBottom:8}}>
+                  <div style={{color:T.textMuted,fontSize:10,marginBottom:3}}>Location Name (accounts/.../locations/...)</div>
+                  <input value={biz.social?.gbp?.location_name||""}
+                    onChange={e=>{const s={...(biz.social||{}),gbp:{...(biz.social?.gbp||{}),location_name:e.target.value}};updateBiz(biz.id,{social:s});}}
+                    onBlur={async()=>{try{await authFetch(`/api/businesses/${biz.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({social:biz.social})});}catch{}}}
+                    placeholder="accounts/123456789/locations/987654321"
+                    style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,padding:"6px 10px",color:T.text,fontSize:10,fontFamily:"monospace",boxSizing:"border-box"}}/>
+                  <div style={{color:T.textDim,fontSize:9,marginTop:3}}>מצא אותו ב-Google Business Profile Manager → Info → שם ה-URL</div>
+                </div>
+                <Btn sm bg="#34A85315" color="#34A853" disabled={!!gbpLoading[`rv_${biz.id}`]||!biz.social?.gbp?.location_name}
+                  onClick={async()=>{
+                    setGbpLoading(p=>({...p,[`rv_${biz.id}`]:true}));
+                    try{const r=await authFetch(`/api/gbp/reviews/${biz.id}`);const d=await r.json();if(d.reviews)setGbpReviews(p=>({...p,[biz.id]:d}));else alert(d.error||"שגיאה");}catch(e){alert("שגיאה: "+e.message);}
+                    setGbpLoading(p=>({...p,[`rv_${biz.id}`]:false}));
+                  }}>
+                  {gbpLoading[`rv_${biz.id}`]?<><Spinner size={10}/> טוען...</>:"⭐ טען ביקורות"}
+                </Btn>
+                {gbpReviews[biz.id]?.reviews?.length>0&&<div style={{marginTop:10}}>
+                  <div style={{color:T.textMuted,fontSize:10,marginBottom:6}}>
+                    ⭐ ממוצע: {gbpReviews[biz.id].averageRating} · {gbpReviews[biz.id].reviews.length} ביקורות
+                  </div>
+                  {gbpReviews[biz.id].reviews.slice(0,5).map((rv,i)=>(
+                    <div key={i} style={{background:T.inputBg,borderRadius:8,padding:"8px 10px",marginBottom:6}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+                        <span style={{color:T.text,fontSize:11,fontWeight:600}}>{rv.reviewer?.displayName||"אנונימי"}</span>
+                        <span style={{color:"#F59E0B",fontSize:10}}>{"★".repeat(Math.min(rv.starRating||0,5))}</span>
+                      </div>
+                      <div style={{color:T.textSec,fontSize:11,direction:"rtl",marginBottom:6,lineHeight:1.4}}>{(rv.comment||"(ללא טקסט)").slice(0,120)}</div>
+                      {rv.reviewReply
+                        ?<div style={{background:"#34A85310",borderRadius:6,padding:"5px 8px",fontSize:10,color:"#34A853"}}>✓ {rv.reviewReply.comment?.slice(0,80)}</div>
+                        :<Btn sm bg="#34A85315" color="#34A853" disabled={!!gbpLoading[`rp_${i}`]}
+                            onClick={async()=>{
+                              setGbpLoading(p=>({...p,[`rp_${i}`]:true}));
+                              try{const r=await authFetch("/api/gbp/reviews/reply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({review_name:rv.name,generate_ai:true,review_text:rv.comment,star_rating:rv.starRating,business_name:biz.name})});const d=await r.json();if(d.ok)alert("נשלח: "+d.reply);else alert("שגיאה: "+d.error);}catch(e){alert("שגיאה: "+e.message);}
+                              setGbpLoading(p=>({...p,[`rp_${i}`]:false}));
+                            }}>
+                          {gbpLoading[`rp_${i}`]?<><Spinner size={10}/></>:"🤖 ענה AI"}
+                        </Btn>
+                      }
+                    </div>
+                  ))}
+                </div>}
+              </>}
+            </div>
+
             {/* Scan results */}
             {result&&!result.error&&<div style={{background:"#10B98108",border:"1px solid #10B98118",borderRadius:10,padding:14,marginBottom:14}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
@@ -3023,6 +3226,46 @@ function Businesses({ businesses, setBusinesses, posts }) {
       })}
     </div>
     {businesses.length===0&&<Card><div style={{textAlign:"center",color:T.textDim,padding:30}}>הוסף את העסק הראשון שלך</div></Card>}
+
+    {/* Leads modal */}
+    {leadsModal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={()=>setLeadsModal(null)}>
+      <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:16,padding:24,maxWidth:600,width:"100%",maxHeight:"80vh",overflow:"auto",direction:"rtl",boxShadow:T.shadowLg}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <h3 style={{margin:0,color:T.text,fontSize:16}}>📋 ליד'ים — {leadsModal.biz.name}</h3>
+          <button onClick={()=>setLeadsModal(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T.textDim}}>✕</button>
+        </div>
+        {leadsModal.leads.length===0
+          ?<div style={{textAlign:"center",color:T.textDim,padding:30}}>אין ליד'ים עדיין. שתף את הלינק /l/{leadsModal.biz.landing_page?.slug}</div>
+          :<div>
+            <div style={{color:T.textMuted,fontSize:11,marginBottom:12}}>{leadsModal.leads.length} ליד'ים סה"כ</div>
+            {leadsModal.leads.map((lead,i)=>(
+              <div key={lead.id} style={{background:T.inputBg,borderRadius:10,padding:"10px 14px",marginBottom:8,border:`1px solid ${T.borderLight}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                  <span style={{color:T.text,fontWeight:700,fontSize:13}}>{lead.name}</span>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <span style={{fontSize:10,color:T.textDim}}>{new Date(lead.created_at).toLocaleString("he-IL")}</span>
+                    <select value={lead.status||"new"} onChange={async e=>{
+                      try{await authFetch(`/api/leads/${lead.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:e.target.value})});
+                        setLeadsModal(p=>({...p,leads:p.leads.map((l,j)=>j===i?{...l,status:e.target.value}:l)}));}catch{}
+                    }} style={{fontSize:10,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,padding:"2px 6px",color:T.textSec,fontFamily:"inherit"}}>
+                      <option value="new">חדש</option>
+                      <option value="contacted">נוצר קשר</option>
+                      <option value="converted">הומר</option>
+                      <option value="closed">סגור</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+                  {lead.phone&&<a href={`tel:${lead.phone}`} style={{color:"#25D366",fontSize:12,textDecoration:"none"}}>📱 {lead.phone}</a>}
+                  {lead.email&&<a href={`mailto:${lead.email}`} style={{color:"#3B82F6",fontSize:12,textDecoration:"none"}}>📧 {lead.email}</a>}
+                </div>
+                {lead.message&&<div style={{color:T.textSec,fontSize:11,marginTop:4,direction:"rtl"}}>{lead.message}</div>}
+              </div>
+            ))}
+          </div>
+        }
+      </div>
+    </div>}
   </div>;
 }
 
@@ -4818,6 +5061,24 @@ export default function App({ session }) {
     if (hash.startsWith('#fb-error=')) {
       const err = decodeURIComponent(hash.slice('#fb-error='.length));
       alert('שגיאת חיבור פייסבוק: ' + err);
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+    // Handle Google OAuth callback
+    if (hash.startsWith('#google-connected=true')) {
+      const params = new URLSearchParams(hash.slice(1));
+      const email = decodeURIComponent(params.get('email')||'');
+      const accounts = params.get('accounts')||'0';
+      const bizId = params.get('bizId')||'';
+      alert(`✅ חיבור Google הצליח!\n📧 ${email}\n📍 ${accounts} חשבונות GBP`);
+      // Update business social if bizId returned
+      if (bizId) {
+        setBusinesses(prev=>prev.map(b=>b.id===bizId?{...b,social:{...b.social,gbp:{...(b.social?.gbp||{}),connected:true,google_email:email,account_count:+accounts}}}:b));
+      }
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+    if (hash.startsWith('#google-error=')) {
+      const err = decodeURIComponent(hash.slice('#google-error='.length));
+      alert('שגיאת חיבור Google: ' + err);
       window.history.replaceState(null, '', window.location.pathname);
     }
     // Legacy token-update support

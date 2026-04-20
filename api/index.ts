@@ -3046,6 +3046,383 @@ app.put('/api/superadmin/config', requireAdmin, async (req: any, res) => {
   res.json(data);
 });
 
+// ══════════════════════════════════════════════════════════════
+// LANDING PAGES + LEAD CAPTURE
+// ══════════════════════════════════════════════════════════════
+
+// Public: get landing page config by slug
+app.get('/api/landing/:slug', async (req, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const slug = req.params.slug.toLowerCase().replace(/[^a-z0-9-]/g, '');
+  // Find business whose landing_page.slug matches
+  const { data: all } = await sb.from('businesses').select('id,name,icon,color,description,landing_page');
+  const biz = (all || []).find((b: any) => b.landing_page?.slug === slug);
+  if (!biz || !biz.landing_page?.enabled) return res.status(404).json({ error: 'Landing page not found' });
+  res.json({ id: biz.id, name: biz.name, icon: biz.icon || '🏢', color: biz.color || '#6C5CE7', description: biz.description || '', landing: biz.landing_page });
+});
+
+// Public: capture a lead
+app.post('/api/leads', async (req, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const { business_id, business_name, name, phone, email, message, source, utm_source, utm_medium } = req.body;
+  if (!business_id || !name) return res.status(400).json({ error: 'business_id and name required' });
+  const { data, error } = await sb.from('leads').insert({
+    business_id, business_name: business_name || null,
+    name, phone: phone || null, email: email || null,
+    message: message || null, source: source || 'landing_page',
+    utm_source: utm_source || null, utm_medium: utm_medium || null,
+  }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, id: data.id });
+});
+
+// Auth: list leads for a business
+app.get('/api/leads', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json([]);
+  const { business_id } = req.query;
+  if (!business_id) return res.status(400).json({ error: 'business_id required' });
+  // Verify user owns this business
+  let bizQ = sb.from('businesses').select('id').eq('id', business_id as string);
+  if (req.userId) bizQ = bizQ.eq('user_id', req.userId);
+  const { data: biz } = await bizQ.maybeSingle();
+  if (!biz) return res.status(403).json({ error: 'Forbidden' });
+  const { data, error } = await sb.from('leads').select('*').eq('business_id', business_id as string).order('created_at', { ascending: false }).limit(500);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data ?? []);
+});
+
+// Auth: update lead status/notes
+app.put('/api/leads/:id', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const { status, notes } = req.body;
+  const updates: any = {};
+  if (status !== undefined) updates.status = status;
+  if (notes !== undefined) updates.notes = notes;
+  const { data, error } = await sb.from('leads').update(updates).eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// ══════════════════════════════════════════════════════════════
+// SEO MINI-REPORT
+// ══════════════════════════════════════════════════════════════
+
+app.post('/api/seo-report/:business_id', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    let bizQ = sb.from('businesses').select('*').eq('id', req.params.business_id);
+    if (req.userId) bizQ = bizQ.eq('user_id', req.userId);
+    const { data: biz } = await bizQ.single();
+    if (!biz) return res.status(404).json({ error: 'Business not found' });
+
+    const claudeKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
+    if (!claudeKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
+
+    const kbContent = await getBizKnowledgeBase(sb, biz.id, 2000);
+    const scanData = biz.scan_result || {};
+    const competitorData = biz.competitor_analysis || '';
+
+    const prompt = `You are a senior Israeli SEO consultant. Produce a practical Hebrew SEO mini-report for the following business.
+
+Business: ${biz.name}
+URL: ${biz.url || 'N/A'}
+Industry: ${biz.industry || 'N/A'}
+Description: ${biz.description || ''}
+Scan summary: ${JSON.stringify(scanData).slice(0, 600)}
+Knowledge base: ${kbContent.slice(0, 800)}
+Competitor intel: ${typeof competitorData === 'string' ? competitorData.slice(0, 400) : JSON.stringify(competitorData).slice(0, 400)}
+
+Return ONLY valid JSON (no markdown):
+{
+  "score": 65,
+  "score_label": "בינוני",
+  "score_color": "#F59E0B",
+  "keywords": {
+    "primary": ["מילה ראשית 1","מילה ראשית 2","מילה ראשית 3"],
+    "long_tail": ["ביטוי ארוך 1","ביטוי ארוך 2","ביטוי ארוך 3"],
+    "missing": ["הזדמנות 1","הזדמנות 2"]
+  },
+  "on_page": [
+    {"issue":"תיאור בעיה","priority":"גבוה","fix":"מה לעשות"}
+  ],
+  "content_gaps": [
+    {"topic":"נושא חסר","why":"למה חשוב","idea":"רעיון תוכן קונקרטי"}
+  ],
+  "quick_wins": ["פעולה מהירה 1","פעולה מהירה 2","פעולה מהירה 3"],
+  "competitor_insight": "תובנה על המתחרים",
+  "local_seo": "המלצה ספציפית ל-Local SEO"
+}`;
+
+    const raw = await callClaude(prompt, claudeKey, 1500);
+    let clean = raw.replace(/```json\n?|```/g, '').trim();
+    const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
+    if (fb >= 0 && lb > fb) clean = clean.slice(fb, lb + 1);
+    const report = JSON.parse(clean);
+
+    // Cache on business
+    await sb.from('businesses').update({
+      scan_result: { ...(biz.scan_result || {}), seo_report: report, seo_report_at: new Date().toISOString() }
+    }).eq('id', biz.id);
+
+    res.json({ ok: true, report });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// GOOGLE BUSINESS PROFILE — OAuth + Publishing
+// ══════════════════════════════════════════════════════════════
+
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const GBP_REDIRECT = `${PROD_URL}/api/auth/google/callback`;
+
+// Step 1: Start Google OAuth
+app.get('/api/auth/google', (req: any, res) => {
+  if (!GOOGLE_CLIENT_ID) return res.status(503).json({ error: 'GOOGLE_CLIENT_ID not configured' });
+  const state = Buffer.from(JSON.stringify({ userId: req.userId || 'anon', bizId: req.query.business_id || '' })).toString('base64');
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GBP_REDIRECT,
+    response_type: 'code',
+    scope: 'https://www.googleapis.com/auth/business.manage email profile',
+    access_type: 'offline',
+    prompt: 'consent',
+    state,
+  });
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+});
+
+// Step 2: Handle OAuth callback
+app.get('/api/auth/google/callback', async (req, res) => {
+  const { code, error: gErr, state } = req.query as any;
+  if (gErr || !code) return res.redirect(`${PROD_URL}/#google-error=${encodeURIComponent(gErr || 'no_code')}`);
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) return res.redirect(`${PROD_URL}/#google-error=not_configured`);
+
+  let stateObj: any = {};
+  try { stateObj = JSON.parse(Buffer.from(state as string, 'base64').toString()); } catch {}
+
+  const sb = getSupabase();
+  if (!sb) return res.redirect(`${PROD_URL}/#google-error=db_error`);
+  try {
+    // Exchange code for tokens
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code, client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri: GBP_REDIRECT, grant_type: 'authorization_code',
+      }),
+    });
+    const tokens = await tokenRes.json() as any;
+    if (tokens.error) return res.redirect(`${PROD_URL}/#google-error=${encodeURIComponent(tokens.error)}`);
+
+    const { access_token, refresh_token, expires_in } = tokens;
+    const expires_at = new Date(Date.now() + (expires_in || 3600) * 1000).toISOString();
+
+    const userId = stateObj.userId !== 'anon' ? stateObj.userId : null;
+    if (userId) {
+      await Promise.all([
+        sb.from('user_api_keys').upsert({ user_id: userId, key_name: 'GOOGLE_ACCESS_TOKEN', key_value: access_token }, { onConflict: 'user_id,key_name' }),
+        sb.from('user_api_keys').upsert({ user_id: userId, key_name: 'GOOGLE_TOKEN_EXPIRES_AT', key_value: expires_at }, { onConflict: 'user_id,key_name' }),
+        ...(refresh_token ? [sb.from('user_api_keys').upsert({ user_id: userId, key_name: 'GOOGLE_REFRESH_TOKEN', key_value: refresh_token }, { onConflict: 'user_id,key_name' })] : []),
+      ]);
+    }
+
+    // Get user profile
+    const profRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', { headers: { Authorization: `Bearer ${access_token}` } });
+    const profile = await profRes.json() as any;
+
+    // List GBP accounts
+    const accRes = await fetch('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', { headers: { Authorization: `Bearer ${access_token}` } });
+    const accData = await accRes.json() as any;
+    const accounts = accData.accounts || [];
+
+    // If bizId in state, store Google email on business social
+    if (stateObj.bizId && userId) {
+      const { data: biz } = await sb.from('businesses').select('social').eq('id', stateObj.bizId).maybeSingle();
+      if (biz) {
+        await sb.from('businesses').update({
+          social: { ...(biz.social || {}), gbp: { connected: true, google_email: profile.email, account_count: accounts.length } }
+        }).eq('id', stateObj.bizId);
+      }
+    }
+
+    res.redirect(`${PROD_URL}/#google-connected=true&email=${encodeURIComponent(profile.email || '')}&accounts=${accounts.length}&bizId=${stateObj.bizId || ''}`);
+  } catch (err: any) {
+    res.redirect(`${PROD_URL}/#google-error=${encodeURIComponent(err.message)}`);
+  }
+});
+
+// Helper: get valid Google access token (auto-refresh)
+async function getGoogleToken(sb: any, userId: string): Promise<string | null> {
+  try {
+    const [{ data: atRow }, { data: rtRow }, { data: expRow }] = await Promise.all([
+      sb.from('user_api_keys').select('key_value').eq('user_id', userId).eq('key_name', 'GOOGLE_ACCESS_TOKEN').maybeSingle(),
+      sb.from('user_api_keys').select('key_value').eq('user_id', userId).eq('key_name', 'GOOGLE_REFRESH_TOKEN').maybeSingle(),
+      sb.from('user_api_keys').select('key_value').eq('user_id', userId).eq('key_name', 'GOOGLE_TOKEN_EXPIRES_AT').maybeSingle(),
+    ]);
+    const accessToken = atRow?.key_value;
+    const refreshToken = rtRow?.key_value;
+    const expiresAt = expRow?.key_value;
+    if (!accessToken) return null;
+    // Valid if not expiring within 5 min
+    if (expiresAt && new Date(expiresAt).getTime() > Date.now() + 300_000) return accessToken;
+    if (!refreshToken || !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) return accessToken;
+    // Refresh
+    const r = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ refresh_token: refreshToken, client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET, grant_type: 'refresh_token' }),
+    });
+    const t = await r.json() as any;
+    if (t.access_token) {
+      const newExp = new Date(Date.now() + (t.expires_in || 3600) * 1000).toISOString();
+      await Promise.all([
+        sb.from('user_api_keys').upsert({ user_id: userId, key_name: 'GOOGLE_ACCESS_TOKEN', key_value: t.access_token }, { onConflict: 'user_id,key_name' }),
+        sb.from('user_api_keys').upsert({ user_id: userId, key_name: 'GOOGLE_TOKEN_EXPIRES_AT', key_value: newExp }, { onConflict: 'user_id,key_name' }),
+      ]);
+      return t.access_token;
+    }
+    return accessToken;
+  } catch { return null; }
+}
+
+// Get GBP accounts + locations
+app.get('/api/gbp/accounts', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb || !req.userId) return res.status(401).json({ error: 'Auth required' });
+  const token = await getGoogleToken(sb, req.userId);
+  if (!token) return res.status(400).json({ error: 'Google account not connected. Visit /api/auth/google to connect.' });
+  try {
+    const r = await fetch('https://mybusinessaccountmanagement.googleapis.com/v1/accounts', { headers: { Authorization: `Bearer ${token}` } });
+    const data = await r.json() as any;
+    if (data.error) return res.status(400).json({ error: data.error.message });
+    const accounts = data.accounts || [];
+    // Fetch locations for each account
+    const enriched = await Promise.all(accounts.map(async (acc: any) => {
+      try {
+        const lr = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${acc.name}/locations?readMask=name,title,websiteUri`, { headers: { Authorization: `Bearer ${token}` } });
+        const ld = await lr.json() as any;
+        return { ...acc, locations: ld.locations || [] };
+      } catch { return { ...acc, locations: [] }; }
+    }));
+    res.json({ accounts: enriched });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// Assign GBP location to a business
+app.post('/api/gbp/assign', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb || !req.userId) return res.status(401).json({ error: 'Auth required' });
+  const { business_id, location_name } = req.body;
+  if (!business_id || !location_name) return res.status(400).json({ error: 'business_id and location_name required' });
+  const { data: biz } = await sb.from('businesses').select('social').eq('id', business_id).eq('user_id', req.userId).single();
+  if (!biz) return res.status(404).json({ error: 'Business not found' });
+  await sb.from('businesses').update({
+    social: { ...(biz.social || {}), gbp: { ...(biz.social?.gbp || {}), location_name, connected: true } }
+  }).eq('id', business_id);
+  res.json({ ok: true });
+});
+
+// Get GBP reviews for a business
+app.get('/api/gbp/reviews/:business_id', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb || !req.userId) return res.status(401).json({ error: 'Auth required' });
+  const { data: biz } = await sb.from('businesses').select('social').eq('id', req.params.business_id).eq('user_id', req.userId).single();
+  if (!biz) return res.status(404).json({ error: 'Business not found' });
+  const locationName = biz.social?.gbp?.location_name;
+  if (!locationName) return res.status(400).json({ error: 'GBP location not assigned to this business' });
+  const token = await getGoogleToken(sb, req.userId);
+  if (!token) return res.status(400).json({ error: 'Google account not connected' });
+  try {
+    const r = await fetch(`https://mybusiness.googleapis.com/v4/${locationName}/reviews?orderBy=updateTime%20desc&pageSize=20`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await r.json() as any;
+    if (data.error) return res.status(400).json({ error: data.error.message });
+    res.json({ reviews: data.reviews || [], averageRating: data.averageRating });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// Reply to a GBP review (or generate AI reply)
+app.post('/api/gbp/reviews/reply', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb || !req.userId) return res.status(401).json({ error: 'Auth required' });
+  const { review_name, reply_text, generate_ai } = req.body;
+  if (!review_name) return res.status(400).json({ error: 'review_name required' });
+  const token = await getGoogleToken(sb, req.userId);
+  if (!token) return res.status(400).json({ error: 'Google account not connected' });
+
+  let finalReply = reply_text;
+  if (generate_ai && !finalReply) {
+    const claudeKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
+    if (claudeKey) {
+      const { review_text, star_rating, business_name } = req.body;
+      const p = `Write a SHORT professional Hebrew reply (2-3 sentences max) to this Google Business Profile review.
+Business: ${business_name || ''}. Rating: ${star_rating || '?'}/5. Review: "${review_text || ''}"
+Rules: warm, professional, in Hebrew, no generic phrases, address the specific content, sign off naturally.
+Return ONLY the reply text.`;
+      finalReply = await callClaude(p, claudeKey, 200);
+    }
+  }
+  if (!finalReply) return res.status(400).json({ error: 'reply_text required or generate_ai must be true' });
+
+  try {
+    const r = await fetch(`https://mybusiness.googleapis.com/v4/${review_name}/reply`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment: finalReply.trim() }),
+    });
+    const data = await r.json() as any;
+    if (data.error) return res.status(400).json({ error: data.error.message });
+    res.json({ ok: true, reply: finalReply });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// Post to GBP local posts
+app.post('/api/gbp/post/:business_id', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb || !req.userId) return res.status(401).json({ error: 'Auth required' });
+  const { data: biz } = await sb.from('businesses').select('social,url').eq('id', req.params.business_id).eq('user_id', req.userId).single();
+  if (!biz) return res.status(404).json({ error: 'Business not found' });
+  const locationName = biz.social?.gbp?.location_name;
+  if (!locationName) return res.status(400).json({ error: 'GBP location not assigned' });
+  const token = await getGoogleToken(sb, req.userId);
+  if (!token) return res.status(400).json({ error: 'Google account not connected' });
+  const { content, post_id, cta_type = 'LEARN_MORE', cta_url, image_url } = req.body;
+  if (!content) return res.status(400).json({ error: 'content required' });
+  try {
+    const postBody: any = { languageCode: 'he', summary: content.slice(0, 1500) };
+    if (cta_url || biz.url) postBody.callToAction = { actionType: cta_type, url: cta_url || biz.url };
+    if (image_url) postBody.media = [{ mediaFormat: 'PHOTO', sourceUrl: image_url }];
+    const r = await fetch(`https://mybusiness.googleapis.com/v4/${locationName}/localPosts`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(postBody),
+    });
+    const data = await r.json() as any;
+    if (data.error) return res.status(400).json({ error: data.error.message });
+    // Mark content post as GBP-posted
+    if (post_id) {
+      const { data: cp } = await sb.from('content_posts').select('performance').eq('id', post_id).single();
+      await sb.from('content_posts').update({ performance: { ...(cp?.performance || {}), gbp_post_name: data.name, gbp_posted_at: new Date().toISOString() } }).eq('id', post_id);
+    }
+    res.json({ ok: true, gbp_post_name: data.name });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// Check Google connection status for logged-in user
+app.get('/api/gbp/status', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb || !req.userId) return res.json({ connected: false });
+  const { data } = await sb.from('user_api_keys').select('key_value').eq('user_id', req.userId).eq('key_name', 'GOOGLE_ACCESS_TOKEN').maybeSingle();
+  res.json({ connected: !!data?.key_value });
+});
+
 // ── Catch-all for unknown API routes ──
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'Not found' });

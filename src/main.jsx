@@ -4,7 +4,19 @@ import './index.css'
 import App from './App.jsx'
 import AuthPage from './components/AuthPage.jsx'
 import LandingPage from './components/LandingPage.jsx'
+import LeadFormPage from './components/LeadFormPage.jsx'
 import { supabase } from './lib/supabase'
+
+// ── Detect business lead-capture pages: /l/:slug ──
+const _path = window.location.pathname;
+const _leadMatch = _path.match(/^\/l\/([^/]+)/);
+if (_leadMatch) {
+  createRoot(document.getElementById('root')).render(
+    <StrictMode>
+      <LeadFormPage slug={_leadMatch[1]} />
+    </StrictMode>
+  );
+} else {
 
 function Root() {
   const [session, setSession] = useState(undefined); // undefined = loading, null = no session
@@ -52,4 +64,5 @@ createRoot(document.getElementById('root')).render(
   <StrictMode>
     <Root />
   </StrictMode>,
-)
+);
+} // end else (not a lead-capture page)
