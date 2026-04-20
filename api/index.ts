@@ -1943,13 +1943,63 @@ app.get('/api/cron/publish', async (req: any, res) => {
           continue;
         }
         const fbPostId = fbD.post_id || fbD.id;
+
+        // Also publish to Instagram if connected
+        let igPostId: string | null = null;
+        const igTokens = biz?.social?.instagram?.tokens;
+        if (igTokens?.META_IG_ACCOUNT_ID && mediaUrl) {
+          try {
+            const igAcct = igTokens.META_IG_ACCOUNT_ID;
+            const igToken = igTokens.META_ACCESS_TOKEN;
+
+            // Instagram requires 2-step: create container, then publish
+            const containerBody: any = { caption: message, access_token: igToken };
+            if (isVideo) {
+              containerBody.media_type = 'REELS';
+              containerBody.video_url = mediaUrl;
+            } else {
+              containerBody.image_url = mediaUrl;
+            }
+
+            const containerR = await fetch(
+              `https://graph.facebook.com/v25.0/${igAcct}/media`,
+              { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(containerBody) }
+            );
+            const containerD = await containerR.json();
+            if (!containerD.error && containerD.id) {
+              // For videos wait for container to be ready (polling)
+              if (isVideo) {
+                const deadline = Date.now() + 120_000;
+                while (Date.now() < deadline) {
+                  await new Promise(rs => setTimeout(rs, 3000));
+                  const statusR = await fetch(`https://graph.facebook.com/v25.0/${containerD.id}?fields=status_code&access_token=${igToken}`);
+                  const statusD = await statusR.json();
+                  if (statusD.status_code === 'FINISHED') break;
+                  if (statusD.status_code === 'ERROR') break;
+                }
+              }
+              const publishR = await fetch(
+                `https://graph.facebook.com/v25.0/${igAcct}/media_publish`,
+                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ creation_id: containerD.id, access_token: igToken }) }
+              );
+              const publishD = await publishR.json();
+              if (!publishD.error && publishD.id) igPostId = publishD.id;
+              else r.ig_error = publishD.error?.message || 'publish failed';
+            } else {
+              r.ig_error = containerD.error?.message || 'container failed';
+            }
+          } catch (e: any) { r.ig_error = e.message; }
+        }
+
         await sb.from('content_posts').update({
           status: 'published',
           fb_post_id: fbPostId,
           published_at: now,
+          performance: { ...(post.performance || {}), ig_post_id: igPostId },
         }).eq('id', post.id);
         r.ok = true;
         r.fb_post_id = fbPostId;
+        if (igPostId) r.ig_post_id = igPostId;
       } catch (e: any) {
         r.error = e.message;
       }
@@ -1957,7 +2007,8 @@ app.get('/api/cron/publish', async (req: any, res) => {
     }
 
     const published = results.filter(x => x.ok).length;
-    res.json({ message: `Published ${published}/${due.length}`, published, results });
+    const igPublished = results.filter(x => x.ig_post_id).length;
+    res.json({ message: `Published ${published}/${due.length}${igPublished ? ` (${igPublished} also on IG)` : ''}`, published, results });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -2472,7 +2523,7 @@ const PROD_URL = 'https://dashboard-steel-delta-52.vercel.app';
 app.get('/api/auth/facebook', (req: any, res) => {
   if (!FB_APP_ID) return res.status(503).json({ error: 'FB_APP_ID not configured' });
   const redirectUri = `${PROD_URL}/api/auth/facebook/callback`;
-  const scopes = 'pages_manage_posts,pages_manage_engagement,pages_read_engagement,pages_show_list,pages_read_user_content';
+  const scopes = 'pages_manage_posts,pages_manage_engagement,pages_read_engagement,pages_show_list,pages_read_user_content,instagram_basic,instagram_content_publish,instagram_manage_insights';
   // Pass user_id in state so we know who to assign tokens to
   const state = req.userId || 'anon';
   const fbUrl = `https://www.facebook.com/v25.0/dialog/oauth?client_id=${FB_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scopes}&state=${state}&response_type=code`;
@@ -2507,9 +2558,9 @@ app.get('/api/auth/facebook/callback', async (req, res) => {
     const longData: any = await longResp.json();
     const longToken = longData.access_token || userToken;
 
-    // Get user's pages with page access tokens
+    // Get user's pages with page access tokens + linked Instagram account
     const pagesResp = await fetch(
-      `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,access_token,category&access_token=${longToken}`
+      `https://graph.facebook.com/v25.0/me/accounts?fields=id,name,access_token,category,instagram_business_account{id,username}&access_token=${longToken}`
     );
     const pagesData: any = await pagesResp.json();
     if (pagesData.error) throw new Error(pagesData.error.message);
@@ -2518,6 +2569,8 @@ app.get('/api/auth/facebook/callback', async (req, res) => {
       name: p.name,
       token: p.access_token,
       category: p.category,
+      instagram_id: p.instagram_business_account?.id || null,
+      instagram_username: p.instagram_business_account?.username || null,
     }));
 
     // Store pages in Supabase for this user
@@ -2535,7 +2588,7 @@ app.get('/api/auth/facebook/callback', async (req, res) => {
           .maybeSingle();
 
         if (biz) {
-          // Auto-match: update business with FB page token
+          // Auto-match: update business with FB page token + Instagram
           const social = biz.social || {};
           social.facebook = {
             ...(social.facebook || {}),
@@ -2548,6 +2601,17 @@ app.get('/api/auth/facebook/callback', async (req, res) => {
               META_PAGE_ID: page.id,
             }
           };
+          if (page.instagram_id) {
+            social.instagram = {
+              connected: true,
+              accountId: page.instagram_id,
+              username: page.instagram_username,
+              tokens: {
+                META_ACCESS_TOKEN: page.token, // same page token works for IG
+                META_IG_ACCOUNT_ID: page.instagram_id,
+              }
+            };
+          }
           await sb.from('businesses').update({ social }).eq('id', biz.id);
         }
       }
@@ -2566,7 +2630,7 @@ app.post('/api/auth/facebook/assign', async (req: any, res) => {
   if (!req.userId) return res.status(401).json({ error: 'Not authenticated' });
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
-  const { businessId, pageId, pageName, pageToken } = req.body;
+  const { businessId, pageId, pageName, pageToken, instagramId, instagramUsername } = req.body;
   if (!businessId || !pageToken) return res.status(400).json({ error: 'Missing businessId or pageToken' });
 
   // Verify business belongs to user
@@ -2589,6 +2653,17 @@ app.post('/api/auth/facebook/assign', async (req: any, res) => {
       META_PAGE_ID: pageId,
     }
   };
+  if (instagramId) {
+    social.instagram = {
+      connected: true,
+      accountId: instagramId,
+      username: instagramUsername,
+      tokens: {
+        META_ACCESS_TOKEN: pageToken,
+        META_IG_ACCOUNT_ID: instagramId,
+      }
+    };
+  }
   const { error } = await sb.from('businesses').update({ social }).eq('id', biz.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true, social });

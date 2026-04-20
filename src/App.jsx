@@ -2746,17 +2746,30 @@ function Businesses({ businesses, setBusinesses, posts }) {
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
                 <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1}}>רשתות חברתיות — {biz.name}</div>
                 {/* Facebook OAuth connect button */}
-                {biz.social?.facebook?.connected && biz.social?.facebook?.tokens?.META_ACCESS_TOKEN
-                  ? <div style={{display:"flex",alignItems:"center",gap:6,background:"#10B98110",border:"1px solid #10B98122",borderRadius:8,padding:"4px 10px"}}>
-                      <span style={{color:"#10B981",fontSize:10}}>●</span>
-                      <span style={{color:"#10B981",fontSize:11,fontWeight:600}}>FB מחובר: {biz.social.facebook.pageName || biz.social.facebook.tokens.META_PAGE_ID}</span>
-                    </div>
-                  : <button onClick={()=>window.location.href='/api/auth/facebook'}
-                      style={{background:"linear-gradient(135deg,#1877F2,#42A5F5)",color:"#fff",border:"none",borderRadius:8,
-                        padding:"6px 14px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
-                      <span>📘</span> חבר עמוד פייסבוק
-                    </button>
-                }
+                <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                  {biz.social?.facebook?.connected && biz.social?.facebook?.tokens?.META_ACCESS_TOKEN
+                    ? <div style={{display:"flex",alignItems:"center",gap:6,background:"#10B98110",border:"1px solid #10B98122",borderRadius:8,padding:"4px 10px"}}>
+                        <span style={{color:"#10B981",fontSize:10}}>●</span>
+                        <span style={{color:"#10B981",fontSize:11,fontWeight:600}}>📘 {biz.social.facebook.pageName || biz.social.facebook.tokens.META_PAGE_ID}</span>
+                      </div>
+                    : <button onClick={()=>window.location.href='/api/auth/facebook'}
+                        style={{background:"linear-gradient(135deg,#1877F2,#42A5F5)",color:"#fff",border:"none",borderRadius:8,
+                          padding:"6px 14px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
+                        <span>📘</span> חבר פייסבוק
+                      </button>
+                  }
+                  {biz.social?.instagram?.connected && biz.social?.instagram?.accountId
+                    ? <div style={{display:"flex",alignItems:"center",gap:6,background:"#E1306C10",border:"1px solid #E1306C22",borderRadius:8,padding:"4px 10px"}}>
+                        <span style={{color:"#E1306C",fontSize:10}}>●</span>
+                        <span style={{color:"#E1306C",fontSize:11,fontWeight:600}}>📸 @{biz.social.instagram.username}</span>
+                      </div>
+                    : biz.social?.facebook?.connected
+                      ? <div style={{background:"#E1306C10",border:"1px dashed #E1306C44",borderRadius:8,padding:"4px 10px",fontSize:10,color:"#E1306C"}}>
+                          📸 Instagram: חבר IG לדף FB ולחץ "חבר פייסבוק" שוב
+                        </div>
+                      : null
+                  }
+                </div>
               </div>
               <div className="two-col-grid" style={{display:"grid",gap:10}}>
                 {SOCIAL_PLATFORMS.map(plat=>{
