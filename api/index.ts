@@ -1090,8 +1090,13 @@ ${eventsText}
 - "video" — לכ-20-30% מהפוסטים, במיוחד ל: אחורי הקלעים, תהליך, דמו, אירועים חיים, תנועה/אקשן. סרטונים קצרים 8 שניות, אנכיים.
 - "image" — ברירת מחדל, לתוכן סטטי (ציטוטים, הצגה, עדויות, חגים, טיפים ויזואליים).
 
+⚠️ חשוב מאוד — visual_concept חייב להיות **סצנה קונקרטית של ${biz.name}** עם אנשים/אובייקטים אמיתיים!
+- ❌ לא: "סמל שאלה עם כדורים מחוברים", "אייקונים מופשטים", "רקע גיאומטרי", "גרפיקה מטאפורית"
+- ✅ כן: "מנחה חידון מחזיק מיקרופון מול קהל של 50 אנשים בבימה מוארת", "מסך גדול עם שאלות חידון, קבוצות שחקנים מקפיצים ידיים", "עובדים יושבים סביב שולחן לונג עם טאבלטים, צוחקים על תשובה"
+- כל visual_concept חייב להזכיר: מי (אנשים אמיתיים), איפה (מקום מזוהה), מה עושים (פעולה קונקרטית), תאורה/mood.
+
 החזר JSON בלבד, ללא שום טקסט לפני או אחרי:
-{"posts":[{"day":1,"theme":"theme short","type":"תוכן חינוכי","media_type":"image","angle":"הזווית/הנקודה","caption_short":"משפט פתיחה מושך","hook":"הוק ראשון","visual_concept":"מה יופיע בתמונה/סרטון","rationale":"למה עכשיו"}, ...]}
+{"posts":[{"day":1,"theme":"theme short","type":"תוכן חינוכי","media_type":"image","angle":"הזווית/הנקודה","caption_short":"משפט פתיחה מושך","hook":"הוק ראשון","visual_concept":"סצנה קונקרטית — מי, איפה, מה עושים","rationale":"למה עכשיו"}, ...]}
 
 day — מספר היום בחודש (1-28). שמור על מרווחים הגיוניים (לא 2 פוסטים באותו יום). השתמש בימי שני-חמישי יותר מימי שישי-שבת.`;
 
@@ -1141,6 +1146,15 @@ app.post('/api/calendars/approve', async (req: any, res) => {
     const { data: biz } = await sb.from('businesses').select('*').eq('id', business_id).single();
     if (!biz) return res.status(404).json({ error: 'Business not found' });
 
+    // Get Claude key for expanding posts
+    const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
+    const keyMap: Record<string, string> = {};
+    for (const k of (keys || [])) keyMap[k.key_name] = k.key_value;
+    const claudeKey = keyMap.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
+
+    // Get KB context once
+    const kbContent = claudeKey ? await getBizKnowledgeBase(sb, business_id, 10_000) : '';
+
     // Determine scheduling: prefer business schedule slots if enabled
     const schedule = biz.schedule || {};
     const slotDays: number[] = schedule.days || [];
@@ -1177,17 +1191,52 @@ app.post('/api/calendars/approve', async (req: any, res) => {
         }
       }
 
-      // Compose content from calendar fields
-      const content = [
-        cp.hook || cp.caption_short,
-        '',
-        cp.angle || '',
-      ].filter(Boolean).join('\n');
+      // Expand calendar brief into FULL post via Claude
+      let content = '';
+      let hashtags: string[] = [];
+      if (claudeKey) {
+        try {
+          const expandPrompt = `אתה כותב תוכן לפייסבוק עבור "${biz.name}" — ${biz.description || ''}.
+טון: ${biz.tone || 'חם, מקצועי, אישי'}.
+${biz.target_audience ? `קהל יעד: ${biz.target_audience}` : ''}
+${kbContent ? `\n📚 מידע על העסק:${kbContent.slice(0, 3000)}` : ''}
+
+בחן את הרעיון הבא וכתוב פוסט שלם מוכן לפרסום:
+- נושא: ${cp.theme}
+- סוג: ${cp.type}
+- הוק פתיחה: "${cp.hook}"
+- הזווית/הנקודה: ${cp.angle || ''}
+- מה המטרה: ${cp.rationale || ''}
+
+⚠️ כללים:
+- דבר בגוף ראשון רבים ("אנחנו"), לא "אני".
+- 3-6 שורות טקסט, מובנה (פתיחה חזקה → תוכן → CTA/שאלה).
+- השתמש במידע אמיתי מהעסק אם רלוונטי (מחירים, שירותים, דוגמאות) — לא להמציא!
+- כלול CTA או שאלה לקהילה בסוף.
+- עד 2 אימוג'י.
+
+החזר JSON: {"content": "הטקסט המלא של הפוסט", "hashtags": ["#tag1", "#tag2", "#tag3"]}
+JSON בלבד.`;
+          const raw = await callClaude(expandPrompt, claudeKey, 800);
+          let clean = raw.replace(/```json\n?|```/g, '').trim();
+          const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
+          if (fb >= 0 && lb > fb) clean = clean.slice(fb, lb + 1);
+          const parsed = JSON.parse(clean);
+          content = (parsed.content || '').trim();
+          hashtags = Array.isArray(parsed.hashtags) ? parsed.hashtags.slice(0, 5) : [];
+        } catch {}
+      }
+
+      // Fallback if Claude expansion fails
+      if (!content) {
+        content = [cp.hook || cp.caption_short, '', cp.angle || ''].filter(Boolean).join('\n');
+      }
 
       const row: any = {
         platform: 'פייסבוק',
         type: cp.type || 'פוסט קצר',
         content,
+        hashtags: hashtags.length > 0 ? hashtags : null,
         business_id: biz.id,
         business_name: biz.name,
         scheduled_at: scheduledAt,
@@ -1235,28 +1284,37 @@ app.post('/api/posts/:id/generate-media', async (req: any, res) => {
     if (!geminiKey) return res.status(503).json({ error: 'GEMINI_API_KEY not set' });
 
     // 1. Enhance prompt with Claude (using visual identity)
-    const topic = post.image_prompt || (post.content || '').slice(0, 200);
+    const topic = post.image_prompt || (post.content || '').slice(0, 300);
     const vi = biz?.visual_identity || '';
+    const bizDescription = biz?.description || '';
+    const bizName = biz?.name || '';
     const enhancedPrompt = claudeKey
       ? await (async () => {
-          const claudeMessage = `You are directing an AI image model. Generate a detailed, cinematic, photographic description in English for this post:
+          const claudeMessage = `You are directing a REALISTIC, PHOTOJOURNALISTIC image for a Facebook post.
 
-Topic/concept: ${topic}
+BUSINESS: ${bizName} — ${bizDescription}
 
-Brand visual identity:
+BRAND LOOK (style guide only — colors/mood/aesthetic):
 """
-${vi || 'A professional, clean, modern brand.'}
+${vi || 'Warm, professional photography.'}
 """
 
-Requirements:
-- Extract the SPECIFIC visual subject from the topic (e.g. "outdoor cinema night for kids birthday" NOT "marketing image")
-- Describe concrete objects, people, setting, lighting, mood
-- Match the brand visual identity (colors, style, motifs)
-- NO text or typography in image
-- Single paragraph, 60-100 words
+POST TOPIC / VISUAL BRIEF:
+"""
+${topic}
+"""
 
-Output ONLY the image prompt, nothing else:`;
-          try { return (await callClaude(claudeMessage, claudeKey, 500)).trim(); }
+⚠️ CRITICAL RULES:
+1. Generate a PHOTOREALISTIC scene showing ACTUAL people performing ACTUAL activities related to ${bizName}.
+2. ❌ FORBIDDEN: abstract concepts, symbolic imagery, floating spheres, icons, geometric shapes, question marks as objects, infographic-style layouts, 3D renders of metaphors, glowing orbs, hexagonal grids.
+3. ✅ REQUIRED: Describe a SPECIFIC scene like a photographer would — who is in frame, what they're doing, where (real location), lighting, mood, camera angle.
+4. If the topic is abstract ("community question", "insights"), invent a REAL SCENE that captures the feeling — e.g. "group of 40 people sitting in a circle at a corporate event, smiling and raising hands" NOT "floating question mark with connected spheres".
+5. Match brand mood/colors but AVOID brand metaphors.
+6. NO text, NO typography, NO logos.
+7. Single paragraph, 70-120 words, in English.
+
+Output ONLY the image prompt description (no explanations):`;
+          try { return (await callClaude(claudeMessage, claudeKey, 600)).trim(); }
           catch { return topic; }
         })()
       : topic;
@@ -1369,17 +1427,32 @@ app.post('/api/posts/:id/generate-video', async (req: any, res) => {
     let enhancedPrompt = topic;
     if (claudeKey) {
       try {
-        const claudeMessage = `Direct an 8-second vertical 9:16 Veo video. Describe: the scene, 1-2 specific subjects, camera motion (slow push-in / handheld / static), lighting, mood, and ONE key action that happens. No text overlays, no typography. 60-100 words.
+        const bizNameV = biz?.name || '';
+        const bizDescV = biz?.description || '';
+        const claudeMessage = `Direct a REALISTIC 8-second vertical 9:16 Veo video for a Facebook post.
 
-Topic: ${topic}
+BUSINESS: ${bizNameV} — ${bizDescV}
 
-Brand visual identity:
+BRAND LOOK (style guide):
 """
-${vi || 'Professional modern brand'}
+${vi || 'Warm, professional cinematography.'}
 """
+
+VIDEO TOPIC / BRIEF:
+"""
+${topic}
+"""
+
+⚠️ CRITICAL RULES:
+1. PHOTOREALISTIC scene with REAL PEOPLE performing REAL activities related to ${bizNameV}.
+2. ❌ FORBIDDEN: abstract visuals, floating symbols, icons, geometric animations, metaphorical shapes, 3D renders of concepts.
+3. ✅ REQUIRED: Specific people in specific location, one clear action that unfolds over 8 seconds, natural camera movement (slow push-in / handheld / static / slow pan), realistic lighting.
+4. If topic is abstract, invent a REAL SCENE — e.g. "camera slowly pushes in on a host with microphone standing before a cheering crowd, hands raising in the air" NOT "abstract question mark floating with glowing orbs".
+5. NO text overlays, NO typography.
+6. 60-120 words, single paragraph, English.
 
 Output ONLY the video prompt:`;
-        enhancedPrompt = (await callClaude(claudeMessage, claudeKey, 500)).trim();
+        enhancedPrompt = (await callClaude(claudeMessage, claudeKey, 600)).trim();
       } catch {}
     }
 
