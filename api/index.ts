@@ -3283,6 +3283,95 @@ app.post('/api/publish/tiktok', async (req: any, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// LINKEDIN PUBLISHING
+// ══════════════════════════════════════════════════════════════
+
+app.post('/api/publish/linkedin', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const { post_id, access_token, author_urn } = req.body;
+  if (!post_id || !access_token || !author_urn) {
+    return res.status(400).json({ error: 'post_id, access_token and author_urn required' });
+  }
+
+  try {
+    const { data: post } = await sb.from('content_posts').select('*').eq('id', post_id).single();
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
+    const text = [post.content, ...(post.hashtags || []).map((h: string) => h.startsWith('#') ? h : `#${h}`)].join('\n').slice(0, 3000);
+    const imageUrl: string | null = post.image_url || post.pipeline?.imageUrl || null;
+
+    // Build share content
+    const shareContent: any = {
+      shareCommentary: { text },
+      shareMediaCategory: imageUrl ? 'IMAGE' : 'NONE',
+    };
+
+    // If there's an image, register it with LinkedIn first
+    if (imageUrl) {
+      // Register upload
+      const regRes = await fetch('https://api.linkedin.com/v2/assets?action=registerUpload', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0' },
+        body: JSON.stringify({
+          registerUploadRequest: {
+            recipes: ['urn:li:digitalmediaRecipe:feedshare-image'],
+            owner: author_urn,
+            serviceRelationships: [{ relationshipType: 'OWNER', identifier: 'urn:li:userGeneratedContent' }],
+          },
+        }),
+      });
+      const regData = await regRes.json() as any;
+      const uploadUrl: string = regData?.value?.uploadMechanism?.['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']?.uploadUrl;
+      const assetUrn: string = regData?.value?.asset;
+
+      if (uploadUrl && assetUrn) {
+        // Fetch the image and upload to LinkedIn
+        const imgRes = await fetch(imageUrl);
+        const imgBuf = await imgRes.arrayBuffer();
+        await fetch(uploadUrl, { method: 'PUT', headers: { Authorization: `Bearer ${access_token}` }, body: imgBuf });
+
+        shareContent.media = [{ status: 'READY', media: assetUrn }];
+      } else {
+        shareContent.shareMediaCategory = 'NONE'; // Fallback to text-only
+      }
+    }
+
+    // Create UGC post
+    const ugcBody = {
+      author: author_urn,
+      lifecycleState: 'PUBLISHED',
+      specificContent: { 'com.linkedin.ugc.ShareContent': shareContent },
+      visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
+    };
+
+    const postRes = await fetch('https://api.linkedin.com/v2/ugcPosts', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0' },
+      body: JSON.stringify(ugcBody),
+    });
+    const postData = await postRes.json() as any;
+
+    if (!postRes.ok) {
+      return res.status(400).json({ error: postData?.message || `LinkedIn HTTP ${postRes.status}` });
+    }
+
+    const linkedinPostId: string = postData.id || postData['com.linkedin.ugc.UGCPostUrn'];
+
+    // Mark as published in DB
+    await sb.from('content_posts').update({
+      published_at: new Date().toISOString(),
+      status: 'published',
+      performance: { ...(post.performance || {}), linkedin_post_id: linkedinPostId, linkedin_published_at: new Date().toISOString() },
+    }).eq('id', post_id);
+
+    res.json({ ok: true, id: linkedinPostId });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 // GOOGLE BUSINESS PROFILE — OAuth + Publishing
 // ══════════════════════════════════════════════════════════════
 

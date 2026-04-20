@@ -47,6 +47,10 @@ const SOCIAL_PLATFORMS = [
   { id:"tiktok",    label:"טיקטוק",   icon:"🎵", color:"#010101", fields:[
     { key:"TIKTOK_ACCESS_TOKEN", label:"Access Token", hint:"act...." }
   ]},
+  { id:"linkedin",  label:"לינקדאין",  icon:"💼", color:"#0A66C2", fields:[
+    { key:"LINKEDIN_ACCESS_TOKEN", label:"Access Token", hint:"AQV..." },
+    { key:"LINKEDIN_AUTHOR_URN",   label:"Author URN",   hint:"urn:li:organization:1234 / urn:li:person:abc" }
+  ]},
 ];
 
 const NAV_ITEMS = [
@@ -3235,33 +3239,76 @@ function Businesses({ businesses, setBusinesses, posts }) {
           <button onClick={()=>setLeadsModal(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T.textDim}}>✕</button>
         </div>
         {leadsModal.leads.length===0
-          ?<div style={{textAlign:"center",color:T.textDim,padding:30}}>אין ליד'ים עדיין. שתף את הלינק /l/{leadsModal.biz.landing_page?.slug}</div>
+          ?<div style={{textAlign:"center",color:T.textDim,padding:30}}>
+            אין ליד'ים עדיין.<br/>
+            <span style={{fontSize:12}}>שתף את הקישור: </span>
+            <code style={{background:T.inputBg,padding:"2px 8px",borderRadius:4,fontSize:11,color:"#8B5CF6"}}>
+              /l/{leadsModal.biz.landing_page?.slug}
+            </code>
+          </div>
           :<div>
             <div style={{color:T.textMuted,fontSize:11,marginBottom:12}}>{leadsModal.leads.length} ליד'ים סה"כ</div>
-            {leadsModal.leads.map((lead,i)=>(
-              <div key={lead.id} style={{background:T.inputBg,borderRadius:10,padding:"10px 14px",marginBottom:8,border:`1px solid ${T.borderLight}`}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                  <span style={{color:T.text,fontWeight:700,fontSize:13}}>{lead.name}</span>
-                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                    <span style={{fontSize:10,color:T.textDim}}>{new Date(lead.created_at).toLocaleString("he-IL")}</span>
-                    <select value={lead.status||"new"} onChange={async e=>{
-                      try{await authFetch(`/api/leads/${lead.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:e.target.value})});
-                        setLeadsModal(p=>({...p,leads:p.leads.map((l,j)=>j===i?{...l,status:e.target.value}:l)}));}catch{}
-                    }} style={{fontSize:10,background:T.card,border:`1px solid ${T.border}`,borderRadius:6,padding:"2px 6px",color:T.textSec,fontFamily:"inherit"}}>
-                      <option value="new">חדש</option>
-                      <option value="contacted">נוצר קשר</option>
-                      <option value="converted">הומר</option>
-                      <option value="closed">סגור</option>
-                    </select>
+            {/* ── Kanban board ── */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+              {[
+                {key:"new",       label:"חדש",      color:"#3B82F6"},
+                {key:"contacted", label:"נוצר קשר", color:"#F59E0B"},
+                {key:"converted", label:"הומר",     color:"#10B981"},
+                {key:"closed",    label:"סגור",     color:"#6B7280"},
+              ].map(col=>{
+                const colLeads = leadsModal.leads.filter(l=>(l.status||"new")===col.key);
+                return <div key={col.key}>
+                  {/* Column header */}
+                  <div style={{background:col.color+"18",borderRadius:8,padding:"5px 10px",marginBottom:6,
+                    display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <span style={{color:col.color,fontSize:11,fontWeight:700}}>{col.label}</span>
+                    <span style={{background:col.color,color:"#fff",borderRadius:10,padding:"1px 7px",fontSize:10,fontWeight:700}}>{colLeads.length}</span>
                   </div>
-                </div>
-                <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
-                  {lead.phone&&<a href={`tel:${lead.phone}`} style={{color:"#25D366",fontSize:12,textDecoration:"none"}}>📱 {lead.phone}</a>}
-                  {lead.email&&<a href={`mailto:${lead.email}`} style={{color:"#3B82F6",fontSize:12,textDecoration:"none"}}>📧 {lead.email}</a>}
-                </div>
-                {lead.message&&<div style={{color:T.textSec,fontSize:11,marginTop:4,direction:"rtl"}}>{lead.message}</div>}
-              </div>
-            ))}
+                  {/* Cards */}
+                  {colLeads.map(lead=>(
+                    <div key={lead.id} style={{background:T.card,border:`1px solid ${T.borderLight}`,
+                      borderRadius:8,padding:"8px 10px",marginBottom:6,boxShadow:T.shadow}}>
+                      <div style={{color:T.text,fontWeight:700,fontSize:12,marginBottom:4}}>{lead.name}</div>
+                      <div style={{fontSize:10,color:T.textDim,marginBottom:6}}>
+                        {new Date(lead.created_at).toLocaleDateString("he-IL")}
+                      </div>
+                      {/* Contact links + WhatsApp */}
+                      {lead.phone&&<div style={{display:"flex",gap:4,alignItems:"center",marginBottom:3,flexWrap:"wrap"}}>
+                        <a href={`tel:${lead.phone}`} style={{color:"#25D366",fontSize:11,textDecoration:"none"}}>📱 {lead.phone}</a>
+                        <a href={`https://wa.me/972${lead.phone.replace(/^0/,"")}`} target="_blank" rel="noreferrer"
+                          style={{background:"#25D36618",color:"#25D366",fontSize:10,textDecoration:"none",
+                            padding:"1px 6px",borderRadius:8,border:"1px solid #25D36630"}}>💬 WA</a>
+                      </div>}
+                      {lead.email&&<a href={`mailto:${lead.email}`} style={{color:"#3B82F6",fontSize:11,textDecoration:"none",display:"block",marginBottom:4}}>📧 {lead.email}</a>}
+                      {lead.message&&<div style={{color:T.textDim,fontSize:10,direction:"rtl",
+                        overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginBottom:6}}>{lead.message}</div>}
+                      {/* Move buttons */}
+                      <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+                        {[
+                          {key:"new",       label:"חדש",  color:"#3B82F6"},
+                          {key:"contacted", label:"📞",   color:"#F59E0B"},
+                          {key:"converted", label:"✅",   color:"#10B981"},
+                          {key:"closed",    label:"🔒",   color:"#6B7280"},
+                        ].filter(s=>s.key!==col.key).map(s=>(
+                          <button key={s.key} onClick={async()=>{
+                            try{
+                              await authFetch(`/api/leads/${lead.id}`,{method:"PUT",
+                                headers:{"Content-Type":"application/json"},
+                                body:JSON.stringify({status:s.key})});
+                              setLeadsModal(p=>({...p,leads:p.leads.map(l=>l.id===lead.id?{...l,status:s.key}:l)}));
+                            }catch{}
+                          }} style={{background:s.color+"18",color:s.color,
+                            border:`1px solid ${s.color}30`,borderRadius:6,
+                            padding:"2px 6px",fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>
+                            {s.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>;
+              })}
+            </div>
           </div>
         }
       </div>
@@ -3399,6 +3446,21 @@ function Publish({ posts, setPosts, businesses }) {
           setPosts?.(prev=>prev.map(p=>p.id===post.id?{...p,publishedAt:new Date().toISOString(),published:true}:p));
         } else {
           setResults(p=>({...p,[key]:{status:"error",msg:d.error||"שגיאת TikTok"}}));
+        }
+      } else if (platformId === "linkedin") {
+        const accessToken = tokens.LINKEDIN_ACCESS_TOKEN;
+        const authorUrn = tokens.LINKEDIN_AUTHOR_URN;
+        if (!accessToken || !authorUrn) throw new Error("חסר LinkedIn Access Token או Author URN");
+        const r = await authFetch("/api/publish/linkedin", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ post_id: post.id, access_token: accessToken, author_urn: authorUrn })
+        });
+        const d = await r.json();
+        if (d.ok) {
+          setResults(p=>({...p,[key]:{status:"ok",postId:d.id}}));
+          setPosts?.(prev=>prev.map(p=>p.id===post.id?{...p,publishedAt:new Date().toISOString(),published:true}:p));
+        } else {
+          setResults(p=>({...p,[key]:{status:"error",msg:d.error||"שגיאת לינקדאין"}}));
         }
       } else {
         setResults(p=>({...p,[key]:{status:"error",msg:"פלטפורמה לא נתמכת עדיין"}}));
@@ -3564,6 +3626,22 @@ function Publish({ posts, setPosts, businesses }) {
       </div>}
     </>}
   </div>;
+}
+
+// ── Smart-scheduling helper: find top posting hours from published data ──
+function computeBestPostHours(publishedPosts) {
+  if (!publishedPosts.length) return null;
+  const hourCounts = Array(24).fill(0);
+  publishedPosts.forEach(p => {
+    const ts = p.publishedAt || p.scheduled_at;
+    if (ts) hourCounts[new Date(ts).getHours()]++;
+  });
+  const top = hourCounts
+    .map((c,h)=>({h,c}))
+    .filter(x=>x.c>0)
+    .sort((a,b)=>b.c-a.c)
+    .slice(0,3);
+  return top.length ? top : null;
 }
 
 // SCHEDULE
@@ -3850,6 +3928,35 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
         </Btn>
       </div>
     </Card>}
+
+    {/* ── M4: Smart scheduling insight ── */}
+    {(()=>{
+      const allPubs = posts.filter(p=>p.published && (p.publishedAt||p.scheduled_at));
+      const top = computeBestPostHours(allPubs);
+      if (!top) return null;
+      const SLOT_COLORS = ["#10B981","#3B82F6","#8B5CF6"];
+      return <Card style={{marginBottom:16,background:"#F59E0B08",border:"1px solid #F59E0B33"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:6}}>
+          <div style={{color:"#F59E0B",fontSize:12,fontWeight:700}}>⚡ שעות מיטביות לפרסום</div>
+          <div style={{color:T.textDim,fontSize:10}}>מבוסס על {allPubs.length} פרסומים קיימים</div>
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {top.map(({h,c},i)=>(
+            <div key={h} style={{background:SLOT_COLORS[i]+"15",border:`1px solid ${SLOT_COLORS[i]}33`,
+              borderRadius:10,padding:"8px 14px",textAlign:"center",minWidth:70}}>
+              <div style={{color:SLOT_COLORS[i],fontWeight:800,fontSize:18,lineHeight:1}}>
+                {String(h).padStart(2,"0")}:00
+              </div>
+              <div style={{color:T.textDim,fontSize:10,marginTop:3}}>{c} פוסטים</div>
+              {i===0&&<div style={{color:SLOT_COLORS[i],fontSize:9,fontWeight:600,marginTop:2}}>מומלץ ⭐</div>}
+            </div>
+          ))}
+          <div style={{color:T.textDim,fontSize:11,alignSelf:"center",maxWidth:160,lineHeight:1.4}}>
+            תזמן פוסטים חדשים בשעות אלו לביצועים מיטביים
+          </div>
+        </div>
+      </Card>;
+    })()}
 
     {/* Content Calendar AI */}
     <Card style={{marginBottom:20,background:"linear-gradient(135deg,#8B5CF608,#3B82F608)",border:"1px solid #8B5CF633"}}>
@@ -4465,6 +4572,45 @@ ${topContent}
       <Btn sm grad="linear-gradient(135deg,#8B5CF6,#3B82F6)" disabled={loading} onClick={fetchAnalytics}>
         {loading?<><Spinner size={12}/>טוען...</>:"עדכן נתונים"}
       </Btn>
+      <Btn sm bg={T.card} color={T.textSec} onClick={()=>{
+        const selBiz = businesses?.find(b=>b.id===selBizId);
+        const win = window.open("","_blank","width=800,height=900");
+        win.document.write(`<!DOCTYPE html><html dir="rtl" lang="he"><head><meta charset="utf-8">
+<title>דוח ביצועים — ${selBiz?.name||""}</title>
+<style>
+  body{font-family:-apple-system,'Segoe UI',Arial,sans-serif;background:#fff;color:#1a1a2e;padding:32px;direction:rtl;}
+  h1{font-size:22px;margin-bottom:4px;}
+  .sub{color:#888;font-size:13px;margin-bottom:24px;}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:24px;}
+  .card{background:#f7f8fc;border-radius:12px;padding:16px;text-align:center;}
+  .num{font-size:28px;font-weight:700;}
+  .label{font-size:12px;color:#888;margin-top:4px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{background:#f0f0f7;padding:8px 12px;text-align:right;font-weight:600;}
+  td{padding:8px 12px;border-bottom:1px solid #eee;}
+  @media print{body{padding:16px;}button{display:none;}}
+</style>
+</head><body>
+<h1>${selBiz?.icon||"📊"} ${selBiz?.name||"עסק"} — דוח ביצועים</h1>
+<div class="sub">הופק ב-${new Date().toLocaleString("he-IL")} · AI Marketing Platform</div>
+<div class="grid">
+  <div class="card"><div class="num" style="color:#EC4899">${bizData.totalLikes||0}</div><div class="label">סה"כ לייקים</div></div>
+  <div class="card"><div class="num" style="color:#8B5CF6">${bizData.totalComments||0}</div><div class="label">סה"כ תגובות</div></div>
+  <div class="card"><div class="num" style="color:#3B82F6">${bizData.totalShares||0}</div><div class="label">סה"כ שיתופים</div></div>
+  <div class="card"><div class="num" style="color:#10B981">${bizData.avgEngagement||0}</div><div class="label">ממוצע אינטראקציות</div></div>
+  <div class="card"><div class="num" style="color:#F59E0B">${bizData.posts?.length||0}</div><div class="label">פוסטים שנבדקו</div></div>
+  <div class="card"><div class="num" style="color:#06B6D4">${publishedPosts.length}</div><div class="label">פרסומים סה"כ</div></div>
+</div>
+${bizData.topPosts?.length?`
+<h2 style="font-size:15px;margin-bottom:8px;">פוסטים מובילים</h2>
+<table>
+  <tr><th>#</th><th>תוכן</th><th>לייקים</th><th>תגובות</th><th>שיתופים</th></tr>
+  ${bizData.topPosts.slice(0,5).map((p,i)=>`<tr><td>${i+1}</td><td>${(p.message||"").slice(0,60)}</td><td>${p.likes}</td><td>${p.comments}</td><td>${p.shares}</td></tr>`).join("")}
+</table>`:""}
+<br/><button onclick="window.print()" style="background:#8B5CF6;color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-size:14px;">🖨️ הדפס / שמור PDF</button>
+</body></html>`);
+        win.document.close();
+      }}>🖨️ PDF</Btn>
     </div>
 
     {/* Stats */}
@@ -4518,7 +4664,7 @@ ${topContent}
       {platformBars.length>0&&<Card>
         <div style={{color:T.textMuted,fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:12}}>📡 פילוח לפי פלטפורמה</div>
         <HBarChart bars={platformBars} color={(_,b)=>{
-          const platColors={"פייסבוק":"#1877F2","אינסטגרם":"#E1306C","WordPress":"#21759B","TikTok":"#010101","בלוג SEO":"#34A853"};
+          const platColors={"פייסבוק":"#1877F2","אינסטגרם":"#E1306C","WordPress":"#21759B","TikTok":"#010101","בלוג SEO":"#34A853","לינקדאין":"#0A66C2"};
           return platColors[b.label]||"#8B5CF6";
         }}/>
       </Card>}
