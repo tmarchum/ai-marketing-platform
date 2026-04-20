@@ -1900,6 +1900,55 @@ app.get('/api/cron/weekly-report', async (req: any, res) => {
   }
 });
 
+// Generate YouTube Shorts metadata (title, description, tags) for a post
+app.post('/api/posts/:id/youtube-export', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { data: post } = await sb.from('content_posts').select('*').eq('id', req.params.id).single();
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    if (!post.video_url) return res.status(400).json({ error: 'Post has no video to export' });
+
+    const claudeKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
+    if (!claudeKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
+
+    const prompt = `Create YouTube Shorts metadata in HEBREW for this Facebook post. YT Shorts rules:
+- Title: under 100 chars, punchy, uses trending words
+- Description: first 2 lines visible in feed — hook + CTA. Can be longer.
+- Tags: 5-10 short Hebrew/English keywords (no #)
+
+Post content:
+"""
+${post.content}
+"""
+
+Business: ${post.business_name}
+
+Return ONLY JSON:
+{"title": "...", "description": "...", "tags": ["tag1","tag2",...]}`;
+
+    const raw = await callClaude(prompt, claudeKey, 600);
+    let parsed: any = {};
+    try {
+      let clean = raw.replace(/```json\n?|```/g, '').trim();
+      const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
+      if (fb >= 0 && lb > fb) clean = clean.slice(fb, lb + 1);
+      parsed = JSON.parse(clean);
+    } catch { parsed = { title: (post.content || '').split('\n')[0].slice(0, 95), description: post.content, tags: [] }; }
+
+    res.json({
+      ok: true,
+      video_url: post.video_url,
+      title: parsed.title,
+      description: parsed.description,
+      tags: parsed.tags || [],
+      upload_url: 'https://youtube.com/upload',
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Generate alternate text version of a post (A/B test variant)
 app.post('/api/posts/:id/regenerate-content', async (req: any, res) => {
   const sb = getSupabase();

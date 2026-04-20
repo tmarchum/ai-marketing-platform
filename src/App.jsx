@@ -1152,6 +1152,20 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
         </>
       }
       {onRegenerate && <Btn sm bg="#8B5CF610" color="#8B5CF6" onClick={onRegenerate}>🔄 צור פוסט אחר</Btn>}
+      {post.video_url && typeof post.id === "string" && post.id.length > 20 && <Btn sm bg="#FF000015" color="#FF0000"
+        onClick={async()=>{
+          try {
+            const r = await authFetch(`/api/posts/${post.id}/youtube-export`,{method:"POST"});
+            const d = await r.json();
+            if (!d.ok) throw new Error(d.error || "שגיאה");
+            const text = `כותרת:\n${d.title}\n\nתיאור:\n${d.description}\n\nתגיות: ${d.tags.join(", ")}\n\nסרטון: ${d.video_url}`;
+            await navigator.clipboard.writeText(text);
+            alert(`✅ הועתק ל-clipboard!\n\nכותרת: ${d.title}\n\nעבור אל youtube.com/upload, הדבק את הקישור לסרטון והעתק את הטקסט להעלאה.`);
+            window.open("https://youtube.com/upload", "_blank");
+          } catch(e) { alert("שגיאה: " + e.message); }
+        }}>
+        📺 YouTube
+      </Btn>}
       {!post.published && typeof post.id === "string" && post.id.length > 20 && <Btn sm bg="#EC489910" color="#EC4899" disabled={abLoading}
         onClick={async()=>{
           if (!confirm("ליצור גרסה חלופית של הטקסט? הגרסה הנוכחית תישמר כ-variant זמין להחלפה.")) return;
