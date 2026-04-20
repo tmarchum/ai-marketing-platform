@@ -3589,6 +3589,12 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
             {calResult.events.map((e,i)=><Tag key={i} label={`${e.date.slice(3)}: ${e.name}`} color="#F59E0B"/>)}
           </div>
         </div>}
+        {calResult.trends?.length > 0 && <div style={{background:"#EF444408",border:"1px solid #EF444433",borderRadius:10,padding:10,marginBottom:12}}>
+          <div style={{color:"#EF4444",fontSize:11,fontWeight:700,marginBottom:6}}>🔥 טרנדים חמים בישראל שנלקחו בחשבון:</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {calResult.trends.slice(0,8).map((t,i)=><Tag key={i} label={t.length > 30 ? t.slice(0,30)+'...' : t} color="#EF4444"/>)}
+          </div>
+        </div>}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
           <div style={{color:T.textMuted,fontSize:12,fontWeight:700}}>
             תצוגה מקדימה: {calResult.posts?.length || 0} פוסטים

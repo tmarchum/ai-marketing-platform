@@ -1020,6 +1020,30 @@ const ISRAELI_EVENTS: Record<number, { date: string; name: string; vibe: string 
   ],
 };
 
+// Fetch Israel trending topics (unofficial — scrapes Google Trends RSS)
+async function fetchIsraelTrends(): Promise<string[]> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    const r = await fetch('https://trends.google.com/trending/rss?geo=IL', {
+      signal: ctrl.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 MarketingBot/1.0' },
+    });
+    clearTimeout(timer);
+    if (!r.ok) return [];
+    const xml = await r.text();
+    // Parse <title> entries inside <item>
+    const titles: string[] = [];
+    const itemRegex = /<item>[\s\S]*?<title><!\[CDATA\[(.*?)\]\]><\/title>/g;
+    let match;
+    while ((match = itemRegex.exec(xml)) && titles.length < 10) {
+      const t = match[1].trim();
+      if (t) titles.push(t);
+    }
+    return titles;
+  } catch { return []; }
+}
+
 app.post('/api/calendars/generate', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
@@ -1069,6 +1093,12 @@ app.post('/api/calendars/generate', async (req: any, res) => {
       ? events.map(e => `- ${e.date}: ${e.name} (${e.vibe})`).join('\n')
       : '(אין אירועים מיוחדים)';
 
+    // Fetch Israel trending topics for timely content
+    const trends = await fetchIsraelTrends();
+    const trendsText = trends.length
+      ? '\n\n🔥 טרנדים חמים בישראל היום (שקול לשלב פוסט אחד שמתייחס באופן יצירתי לאחד מהם, אם רלוונטי לעסק):\n' + trends.slice(0, 8).map(t => `- ${t}`).join('\n')
+      : '';
+
     const prompt = `אתה מתכנן תוכן לעסק "${biz.name}". תאריך עברי: ${targetMonth}/${targetYear}.
 
 פרטי העסק:
@@ -1080,7 +1110,7 @@ app.post('/api/calendars/generate', async (req: any, res) => {
 ${recentTitles}
 
 אירועים בחודש ${targetMonth}:
-${eventsText}
+${eventsText}${trendsText}
 
 צור לוח תוכן חודשי עם ${posts_count} פוסטים מגוונים. כלול סוגים שונים:
 - 📢 הצגת שירות/מוצר (לא יותר מ-2)
@@ -1132,6 +1162,7 @@ day — מספר היום בחודש (1-28). שמור על מרווחים הגי
       year: targetYear,
       month: targetMonth,
       events,
+      trends,
       posts: enrichedPosts,
     });
   } catch (err: any) {
