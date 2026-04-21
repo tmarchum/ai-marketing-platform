@@ -895,6 +895,9 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
   const [scheduling, setScheduling] = useState(false);
   const [autoSchedulingNow, setAutoSchedulingNow] = useState(false);
   const [abLoading, setAbLoading] = useState(false);
+  // L1: performance check
+  const [perfChecking, setPerfChecking] = useState(false);
+  const [perfResult, setPerfResult] = useState(post.performance?.grade ? post.performance : null);
   const [scheduleVal, setScheduleVal] = useState(() => {
     if (post.scheduled_at) {
       try { return new Date(post.scheduled_at).toISOString().slice(0,16); } catch { return ""; }
@@ -1019,9 +1022,13 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:6}}>
       <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
         <Tag label={post.platform} color={pl.color}/>
+        {post.is_reel && <Tag label="📱 ריל" color="#E1306C"/>}
         {post.published && <Tag label="📡 פורסם" color="#1877F2"/>}
         {!post.published && post.scheduled_at && <Tag label={`⏰ ${new Date(post.scheduled_at).toLocaleString("he-IL",{weekday:"short",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}`} color="#F59E0B"/>}
         {autoSchedulingNow && <Tag label="⏳ מתזמן..." color="#F59E0B"/>}
+        {/* L1: performance grade badge */}
+        {perfResult?.grade && <Tag label={{"A":"🏆 מצוין","B":"📈 טוב","C":"📊 ממוצע","D":"📉 חלש"}[perfResult.grade]||perfResult.grade}
+          color={{"A":"#10B981","B":"#3B82F6","C":"#F59E0B","D":"#EF4444"}[perfResult.grade]||"#888"}/>}
         <Tag label={post.business} color={T.textMuted}/>
         {post.pipeline&&<PipelineBar stages={MEDIA_STAGES} pipeline={post.pipeline} compact/>}
       </div>
@@ -1170,6 +1177,24 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
         }}>
         📺 YouTube
       </Btn>}
+      {/* L1: Performance check button for published posts with FB post ID */}
+      {post.published && post.fbPostId && biz?.social?.facebook?.tokens?.META_ACCESS_TOKEN && (
+        <Btn sm bg={perfResult?"#10B98115":"#3B82F615"} color={perfResult?"#10B981":"#3B82F6"} disabled={perfChecking}
+          onClick={async()=>{
+            setPerfChecking(true);
+            try {
+              const r = await authFetch(`/api/posts/${post.id}/performance-check`,{
+                method:"POST",headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({fb_post_id:post.fbPostId,access_token:biz.social.facebook.tokens.META_ACCESS_TOKEN,existing_performance:post.performance||{}})});
+              const d = await r.json();
+              if(d.ok){setPerfResult(d);onUpdate(p=>({...p,performance:{...(p.performance||{}),...d.metrics,grade:d.grade}}));}
+              else alert("שגיאה: "+d.error);
+            }catch(e){alert(e.message);}
+            setPerfChecking(false);
+          }}>
+          {perfChecking?<><Spinner size={10}/>בודק...</>:perfResult?`${{"A":"🏆","B":"📈","C":"📊","D":"📉"}[perfResult.grade]} ${perfResult.gradeLabel||"נבדק"}`:"📊 בדוק ביצועים"}
+        </Btn>
+      )}
       {!post.published && typeof post.id === "string" && post.id.length > 20 && <Btn sm bg="#EC489910" color="#EC4899" disabled={abLoading}
         onClick={async()=>{
           if (!confirm("ליצור גרסה חלופית של הטקסט? הגרסה הנוכחית תישמר כ-variant זמין להחלפה.")) return;
@@ -1466,13 +1491,24 @@ function Content({ posts, setPosts, sources, businesses, setBusinesses, analytic
   const [selBiz, setSelBiz] = useState(BUSINESSES[0]);
   const [selPlatforms, setSelPlatforms] = useState(["facebook","instagram"]);
   const [selTypes, setSelTypes] = useState(["פוסט קצר"]);
+  const [reelsFormat, setReelsFormat] = useState(false); // L3: Instagram Reels toggle
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
+  // L4: Templates
+  const [templates, setTemplates] = useState([]);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [templateName, setTemplateName] = useState("");
   const [postMetricsMap, setPostMetricsMap] = useState({}); // {fb_post_id: {likes,comments,shares,...}}
 
   function updateBiz(id, upd) { setBusinesses?.(p=>p.map(b=>b.id===id?{...b,...upd}:b)); }
 
   const existingBizPosts = posts.filter(p=>p.business===selBiz?.name);
+
+  // L4: Load templates
+  useEffect(()=>{
+    authFetch("/api/templates").then(r=>r.json()).then(d=>Array.isArray(d)&&setTemplates(d)).catch(()=>{});
+  },[]);
 
   // Load per-post metrics from DB
   useEffect(()=>{
@@ -1684,7 +1720,8 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
       let newPosts = arr.slice(0, 1).map((p,i)=>({
         id:Date.now()+i, business:activeBiz.name, ...p,
         date: new Date().toLocaleDateString("he-IL", {weekday:"short",day:"2-digit",month:"2-digit"}) + " · " + new Date().toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"}),
-        approved:true, media:null, pipeline:null
+        approved:true, media:null, pipeline:null,
+        is_reel: reelsFormat && selPlatforms.includes("instagram"), // L3
       }));
       // Append CTA with shortened URL to each post if business has a URL
       if (activeBiz.url) {
@@ -1734,11 +1771,44 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
       </span>
     </div>}
 
+    {/* L4: Templates panel */}
+    {templates.length>0&&<Card style={{marginBottom:12,background:"#8B5CF608",border:"1px solid #8B5CF633"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:showTemplates?10:0}}>
+        <div style={{color:"#8B5CF6",fontSize:12,fontWeight:700,cursor:"pointer"}} onClick={()=>setShowTemplates(p=>!p)}>
+          📋 תבניות שמורות ({templates.length}) {showTemplates?"▲":"▼"}
+        </div>
+      </div>
+      {showTemplates&&<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        {templates.map(t=>(
+          <div key={t.id} style={{background:T.card,border:`1px solid ${T.borderLight}`,borderRadius:10,padding:"8px 12px",
+            display:"flex",alignItems:"center",gap:8}}>
+            <div>
+              <div style={{color:T.text,fontSize:12,fontWeight:700}}>{t.name}</div>
+              {t.description&&<div style={{color:T.textDim,fontSize:10}}>{t.description}</div>}
+            </div>
+            <div style={{display:"flex",gap:4}}>
+              <Btn sm bg="#8B5CF615" color="#8B5CF6" onClick={()=>{
+                if(t.platforms?.length) setSelPlatforms(t.platforms);
+                if(t.tone) setMsg(`טון: ${t.tone}`);
+                if(t.content_types?.length) setSelTypes(t.content_types);
+                setShowTemplates(false);
+              }}>טען</Btn>
+              <Btn sm bg="#EF444410" color="#EF4444" onClick={async()=>{
+                if(!confirm("למחוק תבנית?")) return;
+                await authFetch(`/api/templates/${t.id}`,{method:"DELETE"});
+                setTemplates(p=>p.filter(x=>x.id!==t.id));
+              }}>✕</Btn>
+            </div>
+          </div>
+        ))}
+      </div>}
+    </Card>}
+
     <Card style={{marginBottom:20}}>
       <div style={{display:"flex",gap:16,flexWrap:"wrap",marginBottom:16}}>
         <div>
           <div style={{color:T.textMuted,fontSize:11,marginBottom:8}}>פלטפורמות</div>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
             {PLATFORMS.map(p=><button key={p.id} onClick={()=>setSelPlatforms(prev=>
               prev.includes(p.id)?prev.filter(x=>x!==p.id):[...prev,p.id])} style={{
               background:selPlatforms.includes(p.id)?p.color+"12":T.inputBg,
@@ -1746,6 +1816,14 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
               color:selPlatforms.includes(p.id)?p.color:T.textMuted,
               borderRadius:10,padding:"7px 14px",cursor:"pointer",fontSize:12,fontFamily:"inherit"
             }}>{p.label}</button>)}
+            {/* L3: Reels toggle — shows when Instagram is selected */}
+            {selPlatforms.includes("instagram")&&<label style={{display:"flex",alignItems:"center",gap:5,
+              cursor:"pointer",fontSize:11,color:"#E1306C",background:"#E1306C12",
+              border:"1px solid #E1306C33",borderRadius:10,padding:"7px 12px"}}>
+              <input type="checkbox" checked={reelsFormat} onChange={e=>setReelsFormat(e.target.checked)}
+                style={{accentColor:"#E1306C"}}/>
+              📱 ריל (9:16)
+            </label>}
           </div>
         </div>
         <div>
@@ -1765,7 +1843,7 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
         <Btn disabled={loading||!selBiz}
           grad={loading||!selBiz?undefined:"linear-gradient(135deg,#8B5CF6,#3B82F6)"}
           onClick={generate}>
-          {loading?<><Spinner/>מייצר...</>:`צור פוסט ל${selBiz?.name||"..."}`}
+          {loading?<><Spinner/>מייצר...</>:`${reelsFormat?"📱 ריל ל":"צור פוסט ל"}${selBiz?.name||"..."}`}
         </Btn>
         <Btn grad="linear-gradient(135deg,#4285F4,#34A853)"
           onClick={()=>existingBizPosts.filter(p=>(!p.pipeline||!p.pipeline.done&&!p.pipeline.current)).forEach(post=>{
@@ -1774,6 +1852,22 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
           })}>
           🖼️ תמונות לכל הפוסטים
         </Btn>
+        {/* L4: Save as template */}
+        <div style={{display:"flex",gap:4,alignItems:"center"}}>
+          {savingTemplate
+            ?<><input value={templateName} onChange={e=>setTemplateName(e.target.value)} placeholder="שם התבנית"
+                style={{background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,padding:"6px 10px",fontSize:11,fontFamily:"inherit",color:T.text,width:130}}/>
+              <Btn sm bg="#8B5CF6" color="#fff" onClick={async()=>{
+                if(!templateName.trim()) return;
+                const r = await authFetch("/api/templates",{method:"POST",headers:{"Content-Type":"application/json"},
+                  body:JSON.stringify({name:templateName.trim(),platforms:selPlatforms,tone:"",content_types:selTypes,business_id:selBiz?.id})});
+                const d = await r.json();
+                if(d.ok){setTemplates(p=>[d.template,...p]);setTemplateName("");setSavingTemplate(false);}
+              }}>שמור</Btn>
+              <Btn sm bg={T.inputBg} color={T.textMuted} onClick={()=>setSavingTemplate(false)}>ביטול</Btn>
+            </>
+            :<Btn sm bg={T.inputBg} color={T.textMuted} onClick={()=>setSavingTemplate(true)}>💾 שמור כתבנית</Btn>}
+        </div>
         {msg&&<span style={{color:msg.includes("שגיאה")?"#EF4444":"#10B981",fontSize:12,fontWeight:600}}>{msg}</span>}
       </div>
     </Card>
@@ -2918,6 +3012,18 @@ function Businesses({ businesses, setBusinesses, posts }) {
                   style={{flex:1,background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,padding:"6px 10px",color:T.text,fontSize:11,fontFamily:"monospace",boxSizing:"border-box"}}/>
                 {biz.landing_page?.slug&&<Btn sm bg="#3B82F615" color="#3B82F6" onClick={()=>window.open(`/l/${biz.landing_page.slug}`)}>↗ פתח</Btn>}
                 {biz.landing_page?.slug&&<Btn sm bg={T.inputBg} color={T.textMuted} onClick={()=>navigator.clipboard.writeText(window.location.origin+"/l/"+biz.landing_page.slug).then(()=>alert("הועתק!"))}>העתק</Btn>}
+              </div>
+              {/* L2: Custom domain */}
+              <div style={{marginBottom:8}}>
+                <div style={{color:T.textDim,fontSize:10,fontWeight:600,marginBottom:3}}>🌐 דומיין מותאם אישית (אופציונלי)</div>
+                <input value={biz.landing_page?.custom_domain||""} onChange={e=>updateBiz(biz.id,{landing_page:{...(biz.landing_page||{}),custom_domain:e.target.value.toLowerCase().trim()}})}
+                  onBlur={async()=>{try{await authFetch(`/api/businesses/${biz.id}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({landing_page:biz.landing_page})});}catch{}}}
+                  placeholder="l.yourdomain.com"
+                  style={{width:"100%",background:T.inputBg,border:`1px solid ${T.inputBorder}`,borderRadius:8,padding:"6px 10px",color:T.text,fontSize:11,fontFamily:"monospace",boxSizing:"border-box",direction:"ltr"}}/>
+                {biz.landing_page?.custom_domain&&<div style={{background:"#3B82F608",border:"1px solid #3B82F630",borderRadius:6,padding:"6px 10px",marginTop:5,fontSize:10,color:T.textSec,direction:"ltr",lineHeight:1.6}}>
+                  🔧 <strong>DNS:</strong> Add CNAME record<br/>
+                  Name: <code style={{background:"#f0f2ff",padding:"1px 4px",borderRadius:3}}>{biz.landing_page.custom_domain.split('.').slice(0,-2).join('.') || 'l'}</code> →  Value: <code style={{background:"#f0f2ff",padding:"1px 4px",borderRadius:3}}>dashboard-steel-delta-52.vercel.app</code>
+                </div>}
               </div>
               <div className="two-col-grid" style={{display:"grid",gap:8,marginBottom:8}}>
                 <div>
@@ -5218,6 +5324,16 @@ export default function App({ session }) {
   const [mobileNav, setMobileNav] = useState(false);
   const [dbReady, setDbReady] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  // L5: PWA install prompt
+  const [pwaPrompt, setPwaPrompt] = useState(null);
+  const [pwaDismissed, setPwaDismissed] = useState(()=>!!localStorage.getItem("pwa_dismissed"));
+
+  // L5: Capture PWA install event
+  useEffect(()=>{
+    const handler = e => { e.preventDefault(); setPwaPrompt(e); };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  },[]);
 
   // ── Load from Supabase on startup, localStorage as fallback ──
   useEffect(()=>{
@@ -5279,6 +5395,8 @@ export default function App({ session }) {
               content_variants: p.content_variants || [],
               scheduled_at: p.scheduled_at || null,
               hashtags: p.hashtags || [],
+              is_reel: p.is_reel || false,
+              performance: p.performance || null,
             }));
             setPosts(mapped);
             console.log("[db] Loaded", mapped.length, "posts from Supabase");
@@ -5569,6 +5687,21 @@ export default function App({ session }) {
 
       {/* MAIN */}
       <div style={{flex:1,overflowY:"auto",maxHeight:"100vh",paddingBottom:70}}>
+        {/* L5: PWA install banner */}
+        {pwaPrompt && !pwaDismissed && <div style={{
+          background:"linear-gradient(135deg,#6C5CE7,#3B82F6)",
+          padding:"10px 16px",display:"flex",alignItems:"center",
+          justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+          <div style={{color:"#fff",fontSize:12,fontWeight:600}}>📱 התקן כאפליקציה — גישה מהירה בנייד!</div>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={async()=>{pwaPrompt.prompt();const c=await pwaPrompt.userChoice;if(c.outcome==="accepted")setPwaPrompt(null);}}
+              style={{background:"#fff",color:"#6C5CE7",border:"none",borderRadius:8,padding:"5px 14px",
+                fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>התקן</button>
+            <button onClick={()=>{setPwaDismissed(true);localStorage.setItem("pwa_dismissed","1");}}
+              style={{background:"rgba(255,255,255,0.2)",color:"#fff",border:"1px solid rgba(255,255,255,0.4)",
+                borderRadius:8,padding:"5px 12px",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>לא עכשיו</button>
+          </div>
+        </div>}
         {/* Top bar */}
         <div style={{padding:"14px 20px",borderBottom:`1px solid ${T.borderLight}`,
           background:T.topbar,position:"sticky",top:0,zIndex:50,

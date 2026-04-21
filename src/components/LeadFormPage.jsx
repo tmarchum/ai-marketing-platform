@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 
-export default function LeadFormPage({ slug }) {
+export default function LeadFormPage({ slug, hostname }) {
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -10,7 +10,11 @@ export default function LeadFormPage({ slug }) {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch(`/api/landing/${slug}`)
+    // L2: if no slug, look up by custom domain hostname
+    const url = slug
+      ? `/api/landing/${slug}`
+      : `/api/landing/domain/${encodeURIComponent(hostname || window.location.hostname)}`;
+    fetch(url)
       .then(r => {
         if (!r.ok) { setNotFound(true); return null; }
         return r.json();
@@ -18,7 +22,7 @@ export default function LeadFormPage({ slug }) {
       .then(d => { if (d) setConfig(d); })
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
-  }, [slug]);
+  }, [slug, hostname]);
 
   async function handleSubmit(e) {
     e.preventDefault();

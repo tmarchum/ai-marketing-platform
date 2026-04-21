@@ -3055,6 +3055,20 @@ app.put('/api/superadmin/config', requireAdmin, async (req: any, res) => {
 // LANDING PAGES + LEAD CAPTURE
 // ══════════════════════════════════════════════════════════════
 
+// ── L2: Public: get landing page config by custom domain hostname ──
+app.get('/api/landing/domain/:hostname', async (req, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const hostname = decodeURIComponent(req.params.hostname).toLowerCase().trim();
+  const { data: all } = await sb.from('businesses').select('id,name,icon,color,description,landing_page');
+  const biz = (all || []).find((b: any) => {
+    const cd = (b.landing_page?.custom_domain || '').toLowerCase().trim();
+    return cd && (cd === hostname || cd === `www.${hostname}` || `www.${cd}` === hostname);
+  });
+  if (!biz || !biz.landing_page?.enabled) return res.status(404).json({ error: 'No landing page found for this domain' });
+  res.json({ id: biz.id, name: biz.name, icon: biz.icon || '🏢', color: biz.color || '#6C5CE7', description: biz.description || '', landing: biz.landing_page });
+});
+
 // Public: get landing page config by slug
 app.get('/api/landing/:slug', async (req, res) => {
   const sb = getSupabase();
@@ -3149,6 +3163,92 @@ app.put('/api/leads/:id', async (req: any, res) => {
   const { data, error } = await sb.from('leads').update(updates).eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+// ══════════════════════════════════════════════════════════════
+// L4: CONTENT TEMPLATES
+// ══════════════════════════════════════════════════════════════
+
+app.get('/api/templates', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb || !req.userId) return res.json([]);
+  const { data, error } = await sb.from('content_templates').select('*').eq('user_id', req.userId).order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data ?? []);
+});
+
+app.post('/api/templates', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb || !req.userId) return res.status(401).json({ error: 'Unauthorized' });
+  const { name, description, prompt, platforms, tone, content_types, business_id, example_post } = req.body;
+  if (!name) return res.status(400).json({ error: 'name required' });
+  const { data, error } = await sb.from('content_templates').insert({
+    user_id: req.userId, name, description: description || null,
+    prompt: prompt || null, platforms: platforms || [],
+    tone: tone || null, content_types: content_types || [],
+    business_id: business_id || null, example_post: example_post || null,
+  }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, template: data });
+});
+
+app.delete('/api/templates/:id', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb || !req.userId) return res.status(401).json({ error: 'Unauthorized' });
+  const { error } = await sb.from('content_templates').delete().eq('id', req.params.id).eq('user_id', req.userId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
+});
+
+// ══════════════════════════════════════════════════════════════
+// L1: POST PERFORMANCE CHECK (A/B tracking — fetch FB metrics for a specific post)
+// ══════════════════════════════════════════════════════════════
+
+app.post('/api/posts/:id/performance-check', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const { fb_post_id, access_token } = req.body;
+  if (!fb_post_id || !access_token) return res.status(400).json({ error: 'fb_post_id and access_token required' });
+
+  try {
+    // Fetch post metrics from Facebook
+    const r = await fetch(`https://graph.facebook.com/v25.0/${fb_post_id}?fields=insights.metric(post_engaged_users,post_reactions_by_type_total,post_impressions)&access_token=${access_token}`);
+    const d = await r.json() as any;
+
+    // Also try simple reactions/comments/shares
+    const r2 = await fetch(`https://graph.facebook.com/v25.0/${fb_post_id}?fields=likes.summary(true),comments.summary(true),shares&access_token=${access_token}`);
+    const d2 = await r2.json() as any;
+
+    const metrics = {
+      likes: d2?.likes?.summary?.total_count || 0,
+      comments: d2?.comments?.summary?.total_count || 0,
+      shares: d2?.shares?.count || 0,
+      engaged_users: d?.data?.find((x: any) => x.name === 'post_engaged_users')?.values?.[0]?.value || 0,
+      impressions: d?.data?.find((x: any) => x.name === 'post_impressions')?.values?.[0]?.value || 0,
+    };
+    metrics['total_engagement'] = metrics.likes + metrics.comments + metrics.shares;
+
+    // Get average across other published posts of same business to compute grade
+    let { data: bizPosts } = await sb.from('content_posts')
+      .select('performance')
+      .eq('status', 'published')
+      .neq('id', req.params.id)
+      .limit(50);
+    const avgEngagements = (bizPosts || []).map((p: any) => (p.performance?.likes || 0) + (p.performance?.comments || 0) + (p.performance?.shares || 0)).filter((n: number) => n > 0);
+    const avg = avgEngagements.length ? Math.round(avgEngagements.reduce((a: number, b: number) => a + b, 0) / avgEngagements.length) : 0;
+    const ratio = avg > 0 ? metrics.total_engagement / avg : 1;
+    const grade = ratio >= 1.5 ? 'A' : ratio >= 1.0 ? 'B' : ratio >= 0.6 ? 'C' : 'D';
+    const gradeLabel = { A: 'מצוין 🏆', B: 'מעל הממוצע 📈', C: 'ממוצע 📊', D: 'מתחת לממוצע 📉' }[grade];
+
+    // Save to post performance
+    await sb.from('content_posts').update({
+      performance: { ...(req.body.existing_performance || {}), ...metrics, avg_peers: avg, grade, checked_at: new Date().toISOString() }
+    }).eq('id', req.params.id);
+
+    res.json({ ok: true, metrics, grade, gradeLabel, avg, ratio: Math.round(ratio * 100) / 100 });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ══════════════════════════════════════════════════════════════

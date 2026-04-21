@@ -7,13 +7,34 @@ import LandingPage from './components/LandingPage.jsx'
 import LeadFormPage from './components/LeadFormPage.jsx'
 import { supabase } from './lib/supabase'
 
-// ── Detect business lead-capture pages: /l/:slug ──
+// ── L5: Register service worker for PWA ──
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+
+// ── Route detection ──
+//   /l/:slug         → built-in landing page
+//   custom domain /  → landing page served by hostname lookup (L2)
+//   otherwise        → dashboard app
 const _path = window.location.pathname;
+const _host = window.location.hostname;
+const _isVercel = _host.includes('vercel.app') || _host === 'localhost' || _host === '127.0.0.1';
 const _leadMatch = _path.match(/^\/l\/([^/]+)/);
+
 if (_leadMatch) {
+  // /l/:slug
   createRoot(document.getElementById('root')).render(
     <StrictMode>
       <LeadFormPage slug={_leadMatch[1]} />
+    </StrictMode>
+  );
+} else if (!_isVercel && _path === '/') {
+  // Custom domain root — let LeadFormPage look up by hostname
+  createRoot(document.getElementById('root')).render(
+    <StrictMode>
+      <LeadFormPage slug={null} hostname={_host} />
     </StrictMode>
   );
 } else {
