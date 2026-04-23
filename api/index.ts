@@ -45,7 +45,7 @@ app.use(authMiddleware);
 // ── Health ──
 app.get('/api/health', (_req, res) => {
   const sb = getSupabase();
-  res.json({ ok: true, ts: new Date().toISOString(), supabase: Boolean(sb) });
+  res.json({ ok: true, ts: new Date().toISOString(), supabase: Boolean(sb), build: 'tool_use_calendar_v1' });
 });
 
 // ══════════════════════════════════════════════════════════════
