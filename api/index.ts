@@ -2576,15 +2576,26 @@ async function runApify(actorId: string, input: any, apifyToken: string): Promis
   return [];
 }
 
-// Helper: call Claude
+// Helper: call Claude — throws on API error so callers get a meaningful message
 async function callClaude(prompt: string, apiKey: string, maxTokens = 1200): Promise<string> {
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }),
-  });
-  const d = await r.json();
-  return d.content?.[0]?.text || '';
+  const MODELS = ['claude-sonnet-4-5', 'claude-3-5-sonnet-20241022'];
+  let lastErr = '';
+  for (const model of MODELS) {
+    try {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }),
+      });
+      const d = await r.json() as any;
+      if (d.error) { lastErr = `${model}: ${d.error.message || JSON.stringify(d.error)}`; continue; }
+      if (!r.ok) { lastErr = `${model}: HTTP ${r.status}`; continue; }
+      const text = d.content?.[0]?.text || '';
+      if (text) return text;
+      lastErr = `${model}: empty response`;
+    } catch (e: any) { lastErr = `${model}: ${e.message}`; }
+  }
+  throw new Error(`Claude API failed — ${lastErr}`);
 }
 
 // Claude call with system prompt caching (for expensive contexts like KB + visual_identity)

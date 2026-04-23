@@ -3781,9 +3781,9 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
         body: JSON.stringify({ business_id: calBizId, year: calYear, month: calMonth, posts_count: calCount }),
       });
       const d = await r.json();
-      if (!r.ok || d.error) throw new Error(d.error || "שגיאה");
+      if (!r.ok || d.error) throw new Error((d.error||"שגיאה") + (d.details ? `\n\n${d.details}` : ""));
       setCalResult(d);
-    } catch(e) { alert("שגיאה ביצירת לוח: " + e.message); }
+    } catch(e) { alert("שגיאה ביצירת לוח:\n" + e.message); }
     setCalGenerating(false);
   }
 
