@@ -1131,23 +1131,42 @@ ${eventsText}${trendsText}
 - ✅ כן: "מנחה חידון מחזיק מיקרופון מול קהל של 50 אנשים בבימה מוארת", "מסך גדול עם שאלות חידון, קבוצות שחקנים מקפיצים ידיים", "עובדים יושבים סביב שולחן לונג עם טאבלטים, צוחקים על תשובה"
 - כל visual_concept חייב להזכיר: מי (אנשים אמיתיים), איפה (מקום מזוהה), מה עושים (פעולה קונקרטית), תאורה/mood.
 
-החזר JSON בלבד, ללא שום טקסט לפני או אחרי:
-{"posts":[{"day":1,"theme":"theme short","type":"תוכן חינוכי","media_type":"image","angle":"הזווית/הנקודה","caption_short":"משפט פתיחה מושך","hook":"הוק ראשון","visual_concept":"סצנה קונקרטית — מי, איפה, מה עושים","rationale":"למה עכשיו"}, ...]}
+החזר JSON בלבד, ללא שום טקסט לפני או אחרי. כל שדה — קצר וענייני (מקסימום 120 תווים לשדה):
+{"posts":[{"day":1,"theme":"נושא קצר","type":"תוכן חינוכי","media_type":"image","caption_short":"משפט פתיחה","hook":"הוק","visual_concept":"סצנה קונקרטית: מי, איפה, מה עושים"}, ...]}
 
-day — מספר היום בחודש (1-28). שמור על מרווחים הגיוניים (לא 2 פוסטים באותו יום). השתמש בימי שני-חמישי יותר מימי שישי-שבת.`;
+חוקים: day — מספר יום בחודש (1-28), מרווחים הגיוניים, ימי ב׳-ה׳ עדיפים. אין שדות נוספים.`;
 
-    const raw = await callClaude(prompt, claudeKey, 4000);
+    // Use higher token budget — 10 posts with full fields can easily exceed 4k tokens
+    const raw = await callClaude(prompt, claudeKey, 8000);
     let calendar: any = { posts: [] };
     try {
       let clean = raw.replace(/```json\n?|```/g, '').trim();
-      const firstBrace = clean.indexOf('{');
-      const lastBrace = clean.lastIndexOf('}');
-      if (firstBrace >= 0 && lastBrace > firstBrace) {
-        clean = clean.slice(firstBrace, lastBrace + 1);
+
+      // 1. Try direct parse
+      try { calendar = JSON.parse(clean); }
+      catch {
+        // 2. Extract outermost { … }
+        const firstBrace = clean.indexOf('{');
+        const lastBrace = clean.lastIndexOf('}');
+        if (firstBrace >= 0 && lastBrace > firstBrace) {
+          clean = clean.slice(firstBrace, lastBrace + 1);
+          try { calendar = JSON.parse(clean); }
+          catch {
+            // 3. JSON was truncated — find the last complete post object and close the array/object
+            const lastCompletePost = clean.lastIndexOf('},');  // last full post
+            if (lastCompletePost > 0) {
+              const repaired = clean.slice(0, lastCompletePost + 1) + ']}';
+              try { calendar = JSON.parse(repaired); } catch {}
+            }
+          }
+        }
       }
-      calendar = JSON.parse(clean);
+
+      if (!Array.isArray(calendar?.posts) || calendar.posts.length === 0) {
+        throw new Error('No posts array in response');
+      }
     } catch (e: any) {
-      return res.status(500).json({ error: 'Claude returned invalid JSON', details: e.message, raw: raw.slice(0, 500) });
+      return res.status(500).json({ error: 'Claude returned invalid JSON', details: e.message, raw: raw.slice(0, 800) });
     }
 
     // Enrich posts with actual dates
