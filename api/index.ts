@@ -1084,7 +1084,8 @@ app.post('/api/calendars/generate', async (req: any, res) => {
       ? `\nתובנות ממותג: ${JSON.stringify(biz.scan_result).slice(0, 800)}`
       : '';
     // Knowledge Base — business documents (mentions prices, services, FAQs, etc.)
-    const kbContent = await getBizKnowledgeBase(sb, business_id, 15_000);
+    // Cap at 5k chars — larger KB caused Claude to hit token limit before finishing JSON
+    const kbContent = await getBizKnowledgeBase(sb, business_id, 5_000);
     const kbContext = kbContent ? `\n\n📚 ידע על העסק (מסמכים שהועלו — השתמש בפרטים קונקרטיים מתוכם!):${kbContent}` : '';
     const recentTitles = recentPosts?.length
       ? recentPosts.slice(0, 10).map(p => `- ${(p.content || '').split('\n')[0].slice(0, 80)}`).join('\n')
@@ -1138,39 +1139,51 @@ ${eventsText}${trendsText}
 
 חוקים: day — מספר יום בחודש (1-28), מרווחים הגיוניים, ימי ב׳-ה׳ עדיפים. אין שדות נוספים.`;
 
-    // Use higher token budget — 10 posts with full fields can easily exceed 4k tokens
-    const raw = await callClaude(prompt, claudeKey, 8000);
-    let calendar: any = { posts: [] };
-    try {
+    // Helper: parse Claude calendar JSON (handles markdown, truncation, extra text)
+    function parseCalendarJson(raw: string): any {
       let clean = raw.replace(/```json\n?|```/g, '').trim();
-
-      // 1. Try direct parse
-      try { calendar = JSON.parse(clean); }
-      catch {
-        // 2. Extract outermost { … }
-        const firstBrace = clean.indexOf('{');
-        const lastBrace = clean.lastIndexOf('}');
-        if (firstBrace >= 0 && lastBrace > firstBrace) {
-          clean = clean.slice(firstBrace, lastBrace + 1);
-          try { calendar = JSON.parse(clean); }
-          catch {
-            // 3. JSON was truncated — find the last complete post object and close the array/object
-            const lastCompletePost = clean.lastIndexOf('},');  // last full post
-            if (lastCompletePost > 0) {
-              const repaired = clean.slice(0, lastCompletePost + 1) + ']}';
-              try { calendar = JSON.parse(repaired); } catch {}
-            }
-          }
+      // 1. Direct parse
+      try { return JSON.parse(clean); } catch {}
+      // 2. Extract outermost braces
+      const firstBrace = clean.indexOf('{');
+      const lastBrace = clean.lastIndexOf('}');
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        clean = clean.slice(firstBrace, lastBrace + 1);
+        try { return JSON.parse(clean); } catch {}
+        // 3. Truncated — close at last complete post
+        const lastCompletePost = clean.lastIndexOf('},');
+        if (lastCompletePost > 0) {
+          try { return JSON.parse(clean.slice(0, lastCompletePost + 1) + ']}'); } catch {}
         }
       }
+      return null;
+    }
 
-      if (!Array.isArray(calendar?.posts) || calendar.posts.length === 0) {
-        throw new Error('No posts array in response');
-      }
-    } catch (e: any) {
+    // Use high token budget — 10 posts can exceed 4k tokens
+    console.log(`[calendar] prompt length: ${prompt.length} chars`);
+    let raw = await callClaude(prompt, claudeKey, 16000);
+    console.log(`[calendar] raw response length: ${raw.length} chars, first 200: ${raw.slice(0, 200)}`);
+    let calendar: any = parseCalendarJson(raw);
+
+    // Retry once with a stripped-down prompt if first attempt failed
+    if (!calendar || !Array.isArray(calendar?.posts) || calendar.posts.length === 0) {
+      console.log('[calendar] first attempt failed, retrying with simpler prompt');
+      const simplePrompt = `צור ${posts_count} פוסטים לעסק "${biz.name}" (${biz.description || ''}) לחודש ${targetMonth}/${targetYear}.
+
+החזר JSON בלבד. אין טקסט לפני או אחרי. אין markdown.
+
+{"posts":[{"day":1,"theme":"...","type":"...","media_type":"image","caption_short":"...","hook":"...","visual_concept":"..."}]}
+
+חוקים: day 1-28, ${posts_count} פוסטים, media_type הוא "image" או "video" (20% video), כל שדה עד 100 תווים.`;
+      raw = await callClaude(simplePrompt, claudeKey, 8000);
+      console.log(`[calendar] retry response length: ${raw.length} chars`);
+      calendar = parseCalendarJson(raw);
+    }
+
+    if (!calendar || !Array.isArray(calendar?.posts) || calendar.posts.length === 0) {
       return res.status(500).json({
         error: 'Claude returned invalid JSON',
-        details: `${e.message}\n\nRAW (first 500 chars):\n${raw.slice(0, 500)}\n\nRAW (last 300 chars):\n${raw.slice(-300)}`,
+        details: `Failed to parse after 2 attempts.\n\nRAW (first 500 chars):\n${raw.slice(0, 500)}\n\nRAW (last 300 chars):\n${raw.slice(-300)}`,
         raw_length: raw.length,
       });
     }
