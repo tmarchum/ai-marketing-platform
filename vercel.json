@@ -18,7 +18,19 @@
     },
     {
       "path": "/api/cron/publish",
-      "schedule": "0 * * * *"
+      "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/publish",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/publish",
+      "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/publish",
+      "schedule": "0 17 * * *"
     }
   ],
   "framework": "vite",
