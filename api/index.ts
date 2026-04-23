@@ -1139,52 +1139,63 @@ ${eventsText}${trendsText}
 
 חוקים: day — מספר יום בחודש (1-28), מרווחים הגיוניים, ימי ב׳-ה׳ עדיפים. אין שדות נוספים.`;
 
-    // Helper: parse Claude calendar JSON (handles markdown, truncation, extra text)
-    function parseCalendarJson(raw: string): any {
-      let clean = raw.replace(/```json\n?|```/g, '').trim();
-      // 1. Direct parse
-      try { return JSON.parse(clean); } catch {}
-      // 2. Extract outermost braces
-      const firstBrace = clean.indexOf('{');
-      const lastBrace = clean.lastIndexOf('}');
-      if (firstBrace >= 0 && lastBrace > firstBrace) {
-        clean = clean.slice(firstBrace, lastBrace + 1);
-        try { return JSON.parse(clean); } catch {}
-        // 3. Truncated — close at last complete post
-        const lastCompletePost = clean.lastIndexOf('},');
-        if (lastCompletePost > 0) {
-          try { return JSON.parse(clean.slice(0, lastCompletePost + 1) + ']}'); } catch {}
-        }
-      }
-      return null;
-    }
+    // Force Claude to return structured JSON via tool_use — no string parsing needed
+    const calendarSchema = {
+      type: 'object',
+      properties: {
+        posts: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            properties: {
+              day: { type: 'integer', minimum: 1, maximum: 28, description: 'יום בחודש (1-28)' },
+              theme: { type: 'string', maxLength: 120, description: 'נושא קצר של הפוסט' },
+              type: { type: 'string', maxLength: 120, description: 'סוג הפוסט (תוכן חינוכי, עדות, אירוע וכו)' },
+              media_type: { type: 'string', enum: ['image', 'video'], description: 'image לרוב, video ל-20-30% מהפוסטים' },
+              caption_short: { type: 'string', maxLength: 200, description: 'משפט פתיחה או כותרת' },
+              hook: { type: 'string', maxLength: 150, description: 'הוק — שורה שמושכת תשומת לב' },
+              visual_concept: { type: 'string', maxLength: 300, description: 'סצנה קונקרטית: מי, איפה, מה עושים, תאורה' },
+            },
+            required: ['day', 'theme', 'type', 'media_type', 'caption_short', 'hook', 'visual_concept'],
+          },
+        },
+      },
+      required: ['posts'],
+    };
 
-    // Use high token budget — 10 posts can exceed 4k tokens
     console.log(`[calendar] prompt length: ${prompt.length} chars`);
-    let raw = await callClaude(prompt, claudeKey, 16000);
-    console.log(`[calendar] raw response length: ${raw.length} chars, first 200: ${raw.slice(0, 200)}`);
-    let calendar: any = parseCalendarJson(raw);
+    let calendar: any;
+    try {
+      calendar = await callClaudeForJson(prompt, calendarSchema, claudeKey, 16000);
+      console.log(`[calendar] got ${calendar?.posts?.length || 0} posts via tool_use`);
+    } catch (firstErr: any) {
+      // Retry with stripped-down prompt (no KB, no trends, no events)
+      console.log(`[calendar] first attempt failed: ${firstErr.message}, retrying with simpler prompt`);
+      const simplePrompt = `צור ${posts_count} פוסטים מגוונים לעסק "${biz.name}" (${biz.description || ''}) לחודש ${targetMonth}/${targetYear}.
 
-    // Retry once with a stripped-down prompt if first attempt failed
-    if (!calendar || !Array.isArray(calendar?.posts) || calendar.posts.length === 0) {
-      console.log('[calendar] first attempt failed, retrying with simpler prompt');
-      const simplePrompt = `צור ${posts_count} פוסטים לעסק "${biz.name}" (${biz.description || ''}) לחודש ${targetMonth}/${targetYear}.
-
-החזר JSON בלבד. אין טקסט לפני או אחרי. אין markdown.
-
-{"posts":[{"day":1,"theme":"...","type":"...","media_type":"image","caption_short":"...","hook":"...","visual_concept":"..."}]}
-
-חוקים: day 1-28, ${posts_count} פוסטים, media_type הוא "image" או "video" (20% video), כל שדה עד 100 תווים.`;
-      raw = await callClaude(simplePrompt, claudeKey, 8000);
-      console.log(`[calendar] retry response length: ${raw.length} chars`);
-      calendar = parseCalendarJson(raw);
+לכל פוסט:
+- day: יום בחודש (1-28), מפוזרים
+- theme + type: סוג וכותרת
+- media_type: רוב "image", ~20% "video"
+- caption_short: משפט פתיחה
+- hook: שורת פתיחה מושכת
+- visual_concept: סצנה קונקרטית — אנשים אמיתיים, פעולה, מיקום`;
+      try {
+        calendar = await callClaudeForJson(simplePrompt, calendarSchema, claudeKey, 8000);
+        console.log(`[calendar] retry got ${calendar?.posts?.length || 0} posts`);
+      } catch (retryErr: any) {
+        return res.status(500).json({
+          error: 'Claude structured output failed',
+          details: `First: ${firstErr.message}\nRetry: ${retryErr.message}`,
+        });
+      }
     }
 
     if (!calendar || !Array.isArray(calendar?.posts) || calendar.posts.length === 0) {
       return res.status(500).json({
-        error: 'Claude returned invalid JSON',
-        details: `Failed to parse after 2 attempts.\n\nRAW (first 500 chars):\n${raw.slice(0, 500)}\n\nRAW (last 300 chars):\n${raw.slice(-300)}`,
-        raw_length: raw.length,
+        error: 'Claude returned empty calendar',
+        details: `posts array was missing or empty. Got: ${JSON.stringify(calendar).slice(0, 300)}`,
       });
     }
 
@@ -2616,6 +2627,41 @@ async function callClaude(prompt: string, apiKey: string, maxTokens = 1200): Pro
     } catch (e: any) { lastErr = `${model}: ${e.message}`; }
   }
   throw new Error(`Claude API failed — ${lastErr}`);
+}
+
+// Helper: call Claude and force structured JSON output via tool_use
+// Guaranteed to return an object matching the schema — no prompt-based JSON coaxing needed.
+async function callClaudeForJson(
+  prompt: string,
+  schema: any,
+  apiKey: string,
+  maxTokens = 8000
+): Promise<any> {
+  const MODELS = ['claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-3-5-sonnet-20241022'];
+  let lastErr = '';
+  for (const model of MODELS) {
+    try {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          max_tokens: maxTokens,
+          tools: [{ name: 'return_structured_data', description: 'Return the structured data the user requested', input_schema: schema }],
+          tool_choice: { type: 'tool', name: 'return_structured_data' },
+          messages: [{ role: 'user', content: prompt }],
+        }),
+      });
+      const d = await r.json() as any;
+      if (d.error) { lastErr = `${model}: ${d.error.message || JSON.stringify(d.error)}`; continue; }
+      if (!r.ok) { lastErr = `${model}: HTTP ${r.status}`; continue; }
+      // Find tool_use block
+      const toolUse = (d.content || []).find((c: any) => c.type === 'tool_use');
+      if (toolUse?.input) return toolUse.input;
+      lastErr = `${model}: no tool_use in response (stop_reason=${d.stop_reason})`;
+    } catch (e: any) { lastErr = `${model}: ${e.message}`; }
+  }
+  throw new Error(`Claude structured JSON failed — ${lastErr}`);
 }
 
 // Claude call with system prompt caching (for expensive contexts like KB + visual_identity)

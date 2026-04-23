@@ -7,11 +7,16 @@ import LandingPage from './components/LandingPage.jsx'
 import LeadFormPage from './components/LeadFormPage.jsx'
 import { supabase } from './lib/supabase'
 
-// ── L5: Register service worker for PWA ──
+// ── Unregister any existing service worker + clear caches ──
+// The previous cache-first SW was serving stale JS bundles after deploys.
+// Run this on every page load so users auto-recover on their next visit.
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
-  });
+  navigator.serviceWorker.getRegistrations()
+    .then(regs => regs.forEach(r => r.unregister()))
+    .catch(() => {});
+  if ('caches' in window) {
+    caches.keys().then(keys => keys.forEach(k => caches.delete(k))).catch(() => {});
+  }
 }
 
 // ── Route detection ──
