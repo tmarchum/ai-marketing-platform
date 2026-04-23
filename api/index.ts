@@ -1258,18 +1258,35 @@ app.post('/api/calendars/approve', async (req: any, res) => {
       .is('published_at', null);
     const takenSlots = new Set((existingScheduled || []).map((p: any) => new Date(p.scheduled_at).toISOString()));
 
+    // Israel is UTC+2 (IST winter) / UTC+3 (IDT summer — last Fri of Mar to last Sun of Oct).
+    // Vercel servers run in UTC, so business schedule times (entered as Israel-local) must
+    // be converted to UTC for storage. Approximate: DST from Mar 27 to Oct 27.
+    function israelOffsetHoursForDate(d: Date): number {
+      const m = d.getUTCMonth() + 1, day = d.getUTCDate();
+      const inDst = (m > 3 && m < 10) || (m === 3 && day >= 27) || (m === 10 && day < 27);
+      return inDst ? 3 : 2;
+    }
+
     const created: any[] = [];
     for (const cp of calendarPosts) {
       let scheduledAt = cp.date;
       if (useBizSlots) {
-        // Snap to next business slot ≥ desired date
+        // Snap to next business slot ≥ desired date, interpreting slot times as Israel-local
         const desired = new Date(cp.date);
         for (let d = 0; d < 60; d++) {
-          const day = new Date(desired); day.setDate(day.getDate() + d);
-          if (!slotDays.includes(day.getDay())) continue;
+          const day = new Date(desired); day.setUTCDate(day.getUTCDate() + d);
+          // Business "day of week" is Israel-local (Sun=0...Sat=6).
+          // Get IL-local day by shifting UTC date by the IL offset and reading getUTCDay.
+          const offH = israelOffsetHoursForDate(day);
+          const ilDay = new Date(day.getTime() + offH * 3600_000);
+          if (!slotDays.includes(ilDay.getUTCDay())) continue;
           for (const t of slotTimes) {
             const [h, m] = t.split(':').map(Number);
-            const slot = new Date(day); slot.setHours(h, m, 0, 0);
+            // Build UTC timestamp for "h:m Israel time" on ilDay
+            const slot = new Date(Date.UTC(
+              ilDay.getUTCFullYear(), ilDay.getUTCMonth(), ilDay.getUTCDate(),
+              h - offH, m, 0, 0
+            ));
             if (slot < new Date()) continue;
             if (takenSlots.has(slot.toISOString())) continue;
             scheduledAt = slot.toISOString();
