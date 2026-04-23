@@ -1099,7 +1099,9 @@ app.post('/api/calendars/generate', async (req: any, res) => {
       ? '\n\n🔥 טרנדים חמים בישראל היום (שקול לשלב פוסט אחד שמתייחס באופן יצירתי לאחד מהם, אם רלוונטי לעסק):\n' + trends.slice(0, 8).map(t => `- ${t}`).join('\n')
       : '';
 
-    const prompt = `אתה מתכנן תוכן לעסק "${biz.name}". תאריך עברי: ${targetMonth}/${targetYear}.
+    const prompt = `החזר JSON בלבד. אין טקסט לפני או אחרי. אין markdown. אין הסברים. התחל מיד עם { וסיים עם }.
+
+אתה מתכנן תוכן לעסק "${biz.name}". תאריך עברי: ${targetMonth}/${targetYear}.
 
 פרטי העסק:
 - שם: ${biz.name}
@@ -1166,7 +1168,11 @@ ${eventsText}${trendsText}
         throw new Error('No posts array in response');
       }
     } catch (e: any) {
-      return res.status(500).json({ error: 'Claude returned invalid JSON', details: e.message, raw: raw.slice(0, 800) });
+      return res.status(500).json({
+        error: 'Claude returned invalid JSON',
+        details: `${e.message}\n\nRAW (first 500 chars):\n${raw.slice(0, 500)}\n\nRAW (last 300 chars):\n${raw.slice(-300)}`,
+        raw_length: raw.length,
+      });
     }
 
     // Enrich posts with actual dates
@@ -2577,8 +2583,9 @@ async function runApify(actorId: string, input: any, apifyToken: string): Promis
 }
 
 // Helper: call Claude — throws on API error so callers get a meaningful message
+// Tries newest model first, falls back to older ones if any API error
 async function callClaude(prompt: string, apiKey: string, maxTokens = 1200): Promise<string> {
-  const MODELS = ['claude-sonnet-4-5', 'claude-3-5-sonnet-20241022'];
+  const MODELS = ['claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-3-5-sonnet-20241022'];
   let lastErr = '';
   for (const model of MODELS) {
     try {
