@@ -1,10 +1,10 @@
-// AI Marketing Platform — Service Worker (cache-first for assets, network-first for API)
-const CACHE = 'marketing-ai-v2';
-const PRECACHE = ['/', '/index.html'];
+// AI Marketing Platform — Service Worker
+// Strategy: network-first for app shell (HTML/JS/CSS), cache fallback only when offline.
+// This guarantees users always get the latest deploy instead of stale cached bundles.
+const CACHE = 'marketing-ai-v5';
 
 self.addEventListener('install', e => {
   self.skipWaiting();
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(PRECACHE).catch(() => {})));
 });
 
 self.addEventListener('activate', e => {
@@ -19,19 +19,20 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
 
-  // Always network-first for API and auth
+  // Never intercept API, short-links, or landing-page routes — always go to network
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/s/') || url.pathname.startsWith('/l/')) return;
 
+  // Network-first for everything else (HTML, JS, CSS, assets).
+  // Falls back to cached copy only if the network fails (offline).
   e.respondWith(
-    caches.match(e.request).then(cached => {
-      const fresh = fetch(e.request).then(r => {
+    fetch(e.request)
+      .then(r => {
         if (r && r.status === 200 && r.type !== 'opaque') {
-          caches.open(CACHE).then(c => c.put(e.request, r.clone()));
+          const copy = r.clone();
+          caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {});
         }
         return r;
-      }).catch(() => cached);
-      // Return cached immediately, refresh in background
-      return cached || fresh;
-    })
+      })
+      .catch(() => caches.match(e.request))
   );
 });
