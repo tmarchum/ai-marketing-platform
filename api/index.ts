@@ -1527,46 +1527,69 @@ app.post('/api/posts/:id/generate-media', async (req: any, res) => {
     const geminiKey = await getUserKey(sb, req.userId, 'GEMINI_API_KEY');
     if (!geminiKey) return res.status(503).json({ error: 'GEMINI_API_KEY not set' });
 
-    // 1. Enhance prompt with Claude (using visual identity)
+    // Pull the headline up front — we pass it directly to the image model
+    // so it draws the exact Hebrew letters instead of inventing gibberish.
+    const calMeta = (post.performance || {}).calendar_meta || {};
+    const overlayCandidate =
+      (req.body?.overlay_text as string) ||
+      (calMeta.headline as string) ||
+      (calMeta.theme as string) ||
+      ((post.content || '').split(/[\n.!?]/)[0] || '').trim();
+    const hebrewHeadline = (overlayCandidate || '').slice(0, 70);
+    const brandColor = biz?.color || '#1a1a2e';
+
     const topic = post.image_prompt || (post.content || '').slice(0, 300);
     const vi = biz?.visual_identity || '';
     const bizDescription = biz?.description || '';
     const bizName = biz?.name || '';
-    const enhancedPrompt = claudeKey
+
+    // ── Step 1: Claude writes a SHORT English scene description (no text, no logos)
+    //    The scene description is then combined with an explicit Hebrew text
+    //    instruction in the next step — Nano Banana renders Hebrew correctly only
+    //    when given the exact letters to draw, not when guessing.
+    const sceneDescription = claudeKey
       ? await (async () => {
-          const claudeMessage = `You are directing a REALISTIC, PHOTOJOURNALISTIC image for a Facebook post.
+          const claudeMessage = `Describe a single photorealistic candid lifestyle scene (NOT an advertisement) for a social-media image.
 
 BUSINESS: ${bizName} — ${bizDescription}
+BRAND MOOD: ${vi || 'warm, modern, Israeli lifestyle'}
+POST THEME: ${topic}
 
-BRAND LOOK (style guide only — colors/mood/aesthetic):
-"""
-${vi || 'Warm, professional photography.'}
-"""
+OUTPUT: 2-3 sentences, English, describing ONE concrete scene with people. Israeli-looking subjects (Mediterranean features, modern Israeli casual attire), real-world location, natural lighting, candid documentary photography vibe (NOT staged ad).
 
-POST TOPIC / VISUAL BRIEF:
-"""
-${topic}
-"""
+⛔ Do NOT describe: airplanes, airline tails, billboards, signs, store fronts, T-shirts with prints, phone/laptop screens, brand logos, posters, road signs, tickets, passports — anything that naturally contains text. Pick a clean text-free scene.
 
-⚠️ CRITICAL RULES:
-1. Generate a PHOTOREALISTIC scene showing ACTUAL people performing ACTUAL activities related to ${bizName}.
-2. ❌ FORBIDDEN: abstract concepts, symbolic imagery, floating spheres, icons, geometric shapes, question marks as objects, infographic-style layouts, 3D renders of metaphors, glowing orbs, hexagonal grids.
-3. ✅ REQUIRED: Describe a SPECIFIC scene like a photographer would — who is in frame, what they're doing, where (real location), lighting, mood, camera angle.
-4. If the topic is abstract ("community question", "insights"), invent a REAL SCENE that captures the feeling — e.g. "group of 40 people sitting in a circle at a corporate event, smiling and raising hands" NOT "floating question mark with connected spheres".
-5. Match brand mood/colors but AVOID brand metaphors.
-6. People must look ISRAELI (Middle Eastern / Mediterranean features, mixed light/dark hair, modern Israeli casual attire). Setting should look like an Israeli location (Tel Aviv / Jerusalem / Israeli cafe / Israeli office) OR a relevant travel destination.
-7. ⛔⛔⛔ NEVER DESCRIBE OBJECTS THAT NATURALLY HAVE TEXT/LOGOS ON THEM. The AI image model will try to draw text and produce gibberish. To eliminate this: DO NOT describe scenes containing airplanes, airline tails, billboards, advertisement boards, store signs, magazine covers, books, newspapers, T-shirts with prints, computer/phone screens displaying interfaces, menus, name tags, brand logos, banners, posters, road signs, flight tickets, boarding passes, passports open to the photo page, building signage, restaurant signs.
-   ✅ INSTEAD describe text-free alternatives:
-   - For travel topics: people walking on a beach at sunset (back view), a couple holding hands in a foreign city street, a hand reaching out a plane window towards clouds (no airline logo visible), feet in sand, suitcases being rolled (plain solid color, no brand), sunrise over mountains, a family laughing at a vacation rental balcony with a city skyline behind them.
-   - For business topics: people in conversation around a table (no laptops/phones with screens visible), hands cupping coffee, a smiling face close-up, two people shaking hands.
-8. ABSOLUTELY ZERO TEXT, LETTERS, NUMBERS, OR SYMBOLS in the image. Any incidental signs/screens must be described as "blurred beyond recognition", "out-of-focus", "obscured by lens flare", "behind the subject and not visible". The phrase "no text, no logos, no signage, no typography of any kind" must appear at the end of your prompt as a hard constraint.
-9. Single paragraph, 70-120 words, in English.
+Examples for a flight-deals business: "A young Israeli couple stands on a quiet beach at sunset, holding hands, looking out at the horizon." / "A father lifts his laughing daughter onto his shoulders at a Mediterranean overlook, golden-hour light." / "A traveler's bare feet rest on a balcony railing with a blurred European skyline beyond, holding a coffee."
 
-Output ONLY the image prompt description (no explanations):`;
-          try { return (await callClaude(claudeMessage, claudeKey, 600)).trim(); }
+Output ONLY the 2-3 sentence scene description, no labels:`;
+          try { return (await callClaude(claudeMessage, claudeKey, 200)).trim(); }
           catch { return topic; }
         })()
       : topic;
+
+    // ── Step 2: Build the FINAL image-model prompt — explicit Hebrew letters
+    //    + scene description. Nano Banana renders Hebrew text correctly when
+    //    given the exact string to draw inside quotes.
+    function buildImagePrompt(scene: string, hebrew: string): string {
+      const banner = hebrew
+        ? `
+
+Then, add a clean horizontal banner overlay across the bottom 20% of the image with this EXACT Hebrew text (right-to-left, spelled letter-for-letter):
+
+«${hebrew}»
+
+Banner styling: solid white background, brand color accent (${brandColor}), bold modern Hebrew sans-serif typography (Heebo or Assistant style), large readable letters, perfectly sharp and legible, NO spelling mistakes, NO extra letters, NO gibberish characters. Spell every Hebrew character exactly as written between the « » marks.`
+        : '';
+      return `Generate a photorealistic candid lifestyle photograph, square format (1:1):
+
+${scene}
+
+The scene itself should contain NO text, NO logos, NO signs, NO writing of any kind — only people, places, and natural objects.${banner}
+
+Render the image in a clean documentary photography style — warm natural lighting, real-world location, candid mood. Israeli-looking people, modern Israeli aesthetic.`;
+    }
+
+    const finalPrompt = buildImagePrompt(sceneDescription, hebrewHeadline);
 
     // 2. Generate N image variants via Gemini (default 3)
     const numVariants = Math.min(Math.max(Number(req.query.variants || req.body?.variants || 3), 1), 4);
@@ -1574,9 +1597,9 @@ Output ONLY the image prompt description (no explanations):`;
 
     async function generateOne(seed: number): Promise<{ base64: string | null; contentType: string; error: string }> {
       let lastError = '';
-      // Add slight variation to prompt for diversity
-      const promptWithSeed = seed > 0 ? `${enhancedPrompt}\n\n(variation ${seed + 1}: slightly different angle/composition)` : enhancedPrompt;
-      const models = ['gemini-3-pro-image-preview', 'gemini-2.5-flash-image'];
+      const promptWithSeed = seed > 0 ? `${finalPrompt}\n\n(slightly different angle/composition)` : finalPrompt;
+      // Nano Banana (gemini-2.5-flash-image) handles Hebrew text rendering best — try it first.
+      const models = ['gemini-2.5-flash-image', 'gemini-3-pro-image-preview'];
       for (const model of models) {
         try {
           const ac = new AbortController();
@@ -1628,27 +1651,18 @@ Output ONLY the image prompt description (no explanations):`;
       return res.status(500).json({ error: 'All variants failed', details: results[0]?.error });
     }
 
-    // Pick a short Hebrew caption to overlay on the image
-    // Priority: explicit overlay_text > calendar_meta.theme > first sentence of post.content
-    const calMeta = (post.performance || {}).calendar_meta || {};
-    const overlayCandidate =
-      (req.body?.overlay_text as string) ||
-      (calMeta.headline as string) ||
-      (calMeta.theme as string) ||
-      ((post.content || '').split(/[\n.!?]/)[0] || '').trim();
-    const overlayText = (overlayCandidate || '').slice(0, 90); // keep short
-    const brandColor = biz?.color || '#1a1a2e';
-
-    // Upload all successful variants to Storage (with Hebrew overlay)
+    // The Hebrew text is rendered BY the image model (Nano Banana) directly into
+    // the image, since the prompt explicitly contains the exact Hebrew letters.
+    // No canvas/overlay post-processing is needed — that was a workaround when we
+    // were forcing the model to produce a clean image and then stamping text on top.
     await sb.storage.createBucket('media', { public: true }).catch(() => {});
     const uploaded: string[] = [];
     for (let i = 0; i < successful.length; i++) {
       const r = successful[i];
-      const rawBuffer = Buffer.from(r.base64!, 'base64');
-      // Apply Hebrew text overlay (real font, perfect Hebrew rendering)
-      const finalBuffer = await addHebrewOverlay(rawBuffer, overlayText, brandColor);
-      const fileName = `media/${post.user_id || 'anon'}/${Date.now()}-${postId}-v${i + 1}.jpg`;
-      const { error: upErr } = await sb.storage.from('media').upload(fileName, finalBuffer, { contentType: 'image/jpeg', upsert: true });
+      const buffer = Buffer.from(r.base64!, 'base64');
+      const ext = r.contentType.includes('jpeg') || r.contentType.includes('jpg') ? 'jpg' : 'png';
+      const fileName = `media/${post.user_id || 'anon'}/${Date.now()}-${postId}-v${i + 1}.${ext}`;
+      const { error: upErr } = await sb.storage.from('media').upload(fileName, buffer, { contentType: r.contentType, upsert: true });
       if (upErr) continue;
       const { data: urlData } = sb.storage.from('media').getPublicUrl(fileName);
       uploaded.push(urlData.publicUrl);
@@ -1661,7 +1675,7 @@ Output ONLY the image prompt description (no explanations):`;
     // Save: first as primary, rest in image_variants
     await sb.from('content_posts').update({
       image_url: uploaded[0],
-      image_prompt: enhancedPrompt,
+      image_prompt: finalPrompt,
       image_variants: uploaded,
     }).eq('id', postId);
 
@@ -1670,7 +1684,7 @@ Output ONLY the image prompt description (no explanations):`;
       url: uploaded[0],
       variants: uploaded,
       count: uploaded.length,
-      prompt: enhancedPrompt,
+      prompt: finalPrompt,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
