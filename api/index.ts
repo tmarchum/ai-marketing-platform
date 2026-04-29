@@ -42,6 +42,88 @@ async function authMiddleware(req: any, res: any, next: any) {
 }
 app.use(authMiddleware);
 
+// ── Hebrew text overlay on images ──
+// AI image models can't reliably render Hebrew. We generate clean (no-text) images
+// then composite a real Hebrew text caption on top using sharp + SVG.
+// Sharp's text renderer (librsvg+pango) on Vercel includes fonts that handle Hebrew correctly.
+function escapeXml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+// Wrap Hebrew text into N lines that fit a given width. Approximate — chars per line.
+function wrapHebrew(text: string, charsPerLine: number, maxLines: number): string[] {
+  const words = text.trim().split(/\s+/);
+  const lines: string[] = [];
+  let cur = '';
+  for (const w of words) {
+    const candidate = cur ? cur + ' ' + w : w;
+    if (candidate.length <= charsPerLine) {
+      cur = candidate;
+    } else {
+      if (cur) lines.push(cur);
+      cur = w;
+      if (lines.length >= maxLines) break;
+    }
+  }
+  if (cur && lines.length < maxLines) lines.push(cur);
+  return lines.slice(0, maxLines);
+}
+
+async function addHebrewOverlay(imageBuffer: Buffer, hebrewText: string, brandColor = '#1a1a2e'): Promise<Buffer> {
+  if (!hebrewText || hebrewText.trim().length < 3) return imageBuffer;
+  try {
+    const sharpMod = (await import('sharp')).default;
+    const meta = await sharpMod(imageBuffer).metadata();
+    const W = meta.width || 1024;
+    const H = meta.height || 1024;
+
+    // Pick text size relative to image — bigger images = bigger text
+    const fontSize = Math.round(W / 22);  // e.g. 1024px → 47px
+    const lineHeight = Math.round(fontSize * 1.35);
+    const padX = Math.round(W * 0.05);
+    const padY = Math.round(W * 0.04);
+
+    // Wrap Hebrew text — roughly 28-32 chars per line at fontSize/22
+    const lines = wrapHebrew(hebrewText, 32, 3);
+    if (!lines.length) return imageBuffer;
+
+    const boxH = lineHeight * lines.length + padY * 2;
+    const boxY = H - boxH - Math.round(H * 0.04);
+    const boxW = W - Math.round(W * 0.08);
+    const boxX = Math.round(W * 0.04);
+
+    const tspans = lines.map((line, i) =>
+      `<tspan x="${W / 2}" dy="${i === 0 ? 0 : lineHeight}">${escapeXml(line)}</tspan>`
+    ).join('');
+
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="${Math.round(fontSize * 0.05)}" stdDeviation="${Math.round(fontSize * 0.08)}" flood-color="#000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+  <rect x="${boxX}" y="${boxY}" width="${boxW}" height="${boxH}" rx="${Math.round(fontSize * 0.6)}"
+        fill="rgba(255,255,255,0.92)" stroke="${brandColor}" stroke-width="${Math.round(fontSize * 0.06)}"/>
+  <text x="${W / 2}" y="${boxY + padY + fontSize * 0.85}" text-anchor="middle"
+        font-family="Heebo, Assistant, 'Noto Sans Hebrew', 'DejaVu Sans', Arial, sans-serif"
+        font-size="${fontSize}" font-weight="700" fill="${brandColor}" direction="rtl"
+        filter="url(#shadow)">${tspans}</text>
+</svg>`;
+
+    const out = await sharpMod(imageBuffer)
+      .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
+      .jpeg({ quality: 92 })
+      .toBuffer();
+    return out;
+  } catch (e) {
+    // If sharp fails for any reason, return original image rather than break the pipeline
+    console.error('[overlay] failed:', (e as any).message);
+    return imageBuffer;
+  }
+}
+
 // ── Health ──
 app.get('/api/health', (_req, res) => {
   const sb = getSupabase();
@@ -1348,7 +1430,14 @@ Return ONLY JSON: {"content": "full post text in Hebrew", "hashtags": ["#tag1", 
         image_prompt: cp.visual_concept || null,
         motion_prompt: cp.media_type === 'video' ? (cp.visual_concept || null) : null,
         performance: {
-          calendar_meta: { theme: cp.theme, rationale: cp.rationale, type: cp.type, media_type: cp.media_type || 'image' }
+          calendar_meta: {
+            theme: cp.theme,
+            rationale: cp.rationale,
+            type: cp.type,
+            media_type: cp.media_type || 'image',
+            // headline = short Hebrew text we overlay on the generated image (real font, perfect rendering)
+            headline: cp.caption_short || cp.hook || cp.theme,
+          }
         },
       };
       if (req.userId) row.user_id = req.userId;
@@ -1484,15 +1573,27 @@ Output ONLY the image prompt description (no explanations):`;
       return res.status(500).json({ error: 'All variants failed', details: results[0]?.error });
     }
 
-    // Upload all successful variants to Storage
+    // Pick a short Hebrew caption to overlay on the image
+    // Priority: explicit overlay_text > calendar_meta.theme > first sentence of post.content
+    const calMeta = (post.performance || {}).calendar_meta || {};
+    const overlayCandidate =
+      (req.body?.overlay_text as string) ||
+      (calMeta.headline as string) ||
+      (calMeta.theme as string) ||
+      ((post.content || '').split(/[\n.!?]/)[0] || '').trim();
+    const overlayText = (overlayCandidate || '').slice(0, 90); // keep short
+    const brandColor = biz?.color || '#1a1a2e';
+
+    // Upload all successful variants to Storage (with Hebrew overlay)
     await sb.storage.createBucket('media', { public: true }).catch(() => {});
     const uploaded: string[] = [];
     for (let i = 0; i < successful.length; i++) {
       const r = successful[i];
-      const buffer = Buffer.from(r.base64!, 'base64');
-      const ext = r.contentType.includes('jpeg') || r.contentType.includes('jpg') ? 'jpg' : 'png';
-      const fileName = `media/${post.user_id || 'anon'}/${Date.now()}-${postId}-v${i + 1}.${ext}`;
-      const { error: upErr } = await sb.storage.from('media').upload(fileName, buffer, { contentType: r.contentType, upsert: true });
+      const rawBuffer = Buffer.from(r.base64!, 'base64');
+      // Apply Hebrew text overlay (real font, perfect Hebrew rendering)
+      const finalBuffer = await addHebrewOverlay(rawBuffer, overlayText, brandColor);
+      const fileName = `media/${post.user_id || 'anon'}/${Date.now()}-${postId}-v${i + 1}.jpg`;
+      const { error: upErr } = await sb.storage.from('media').upload(fileName, finalBuffer, { contentType: 'image/jpeg', upsert: true });
       if (upErr) continue;
       const { data: urlData } = sb.storage.from('media').getPublicUrl(fileName);
       uploaded.push(urlData.publicUrl);
