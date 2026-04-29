@@ -188,6 +188,54 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString(), supabase: Boolean(sb), build: 'tool_use_calendar_v1' });
 });
 
+// Debug: render a test overlay so we can see exactly what canvas + Heebo produces.
+app.get('/api/debug/overlay-test', async (_req, res) => {
+  try {
+    const fontStatus = await ensureHebrewFont();
+    const { createCanvas, GlobalFonts } = await import('@napi-rs/canvas');
+    const W = 1024, H = 400;
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+    // White background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, H);
+    // Try drawing Hebrew + English in different ways to see what works
+    ctx.fillStyle = '#000000';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Line 1: English with Heebo
+    ctx.font = 'bold 48px Heebo, sans-serif';
+    ctx.fillText('English-Test-123', W / 2, 60);
+
+    // Line 2: Hebrew with Heebo, no direction set
+    ctx.font = 'bold 48px Heebo, sans-serif';
+    ctx.fillText('שלום עולם', W / 2, 130);
+
+    // Line 3: Hebrew with rtl direction
+    ctx.direction = 'rtl';
+    ctx.fillText('שלום עולם RTL', W / 2, 200);
+    ctx.direction = 'ltr';
+
+    // Line 4: Hebrew without specifying font (system default)
+    ctx.font = 'bold 48px sans-serif';
+    ctx.fillText('שלום עולם default', W / 2, 270);
+
+    // Line 5: Mixed Hebrew + Latin numbers
+    ctx.font = 'bold 48px Heebo, sans-serif';
+    ctx.fillText('מצאנו לך טיסה ב-199₪!', W / 2, 340);
+
+    const png = canvas.toBuffer('image/png');
+    const fonts = GlobalFonts.families.map((f: any) => f.family).slice(0, 30);
+    res.set('Content-Type', 'image/png');
+    res.set('X-Font-Status', JSON.stringify(fontStatus));
+    res.set('X-Registered-Families', fonts.join(','));
+    res.send(png);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════
 // BUSINESSES
 // ══════════════════════════════════════════════════════════════
