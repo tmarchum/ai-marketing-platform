@@ -239,7 +239,7 @@ function pcmToWav(pcm: Buffer, sampleRate = 24000): Buffer {
 async function generateHebrewTTS(
   text: string,
   apiKey: string,
-  voice = 'Leda'
+  voice = 'Sulafat'
 ): Promise<{ wav: Buffer; source: string } | { wav: null; source: 'failed'; error: string }> {
   if (!text || text.trim().length < 2) return { wav: null, source: 'failed', error: 'empty text' };
   const errors: string[] = [];
@@ -314,13 +314,14 @@ async function generateHebrewTTS(
 }
 
 // Mux a WAV audio buffer onto an MP4 video buffer.
-// Output duration = video length. Audio is trimmed/padded to fit, with a soft
-// fade-out at the end so cut-offs sound natural rather than abrupt.
-async function muxAudioOnVideo(videoBuffer: Buffer, audioBuffer: Buffer, videoDurationSec = 8): Promise<Buffer | null> {
+// Returns { buffer, error? } so callers can surface mux failures.
+async function muxAudioOnVideo(videoBuffer: Buffer, audioBuffer: Buffer, videoDurationSec = 8): Promise<{ buffer: Buffer | null; error?: string; ffmpegPath?: string }> {
+  let ffmpegPath: string | null = null;
   try {
-    const ffmpegStatic = (await import('ffmpeg-static')).default as unknown as string;
-    const ffmpegPath = ffmpegStatic;
-    if (!ffmpegPath) { console.error('[mux] ffmpeg-static path missing'); return null; }
+    const mod: any = await import('ffmpeg-static');
+    ffmpegPath = (mod.default || mod) as string;
+    if (!ffmpegPath) return { buffer: null, error: 'ffmpeg-static returned no path' };
+    if (!fs.existsSync(ffmpegPath)) return { buffer: null, error: `ffmpeg binary not found at ${ffmpegPath}`, ffmpegPath };
 
     const ts = Date.now();
     const tmpDir = '/tmp';
@@ -331,14 +332,14 @@ async function muxAudioOnVideo(videoBuffer: Buffer, audioBuffer: Buffer, videoDu
     await fs.promises.writeFile(inV, videoBuffer);
     await fs.promises.writeFile(inA, audioBuffer);
 
-    // Audio filter: ensure mono → stereo, normalize loudness, fade-out last 0.5s
-    // so the natural end of the voiceover sounds smooth even when trimmed.
+    // Simpler audio filter — just stereo conversion + fade-out. Drop loudnorm
+    // which is complex and can fail in serverless environments.
     const fadeStart = Math.max(0, videoDurationSec - 0.6);
-    const audioFilter = `aformat=sample_rates=48000:channel_layouts=stereo,loudnorm=I=-16:LRA=11:TP=-1.5,afade=t=out:st=${fadeStart}:d=0.6`;
+    const audioFilter = `aformat=channel_layouts=stereo,afade=t=out:st=${fadeStart}:d=0.6`;
 
     const { spawn } = await import('node:child_process');
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn(ffmpegPath, [
+    const result = await new Promise<{ ok: boolean; err: string }>((resolve) => {
+      const proc = spawn(ffmpegPath as string, [
         '-y',
         '-i', inV,
         '-i', inA,
@@ -353,18 +354,23 @@ async function muxAudioOnVideo(videoBuffer: Buffer, audioBuffer: Buffer, videoDu
       ], { stdio: ['ignore', 'pipe', 'pipe'] });
       let err = '';
       proc.stderr?.on('data', (c) => { err += c.toString(); });
-      proc.on('error', reject);
-      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}: ${err.slice(-500)}`)));
+      proc.on('error', (e) => resolve({ ok: false, err: `spawn error: ${e.message}` }));
+      proc.on('close', (code) => resolve({ ok: code === 0, err: code === 0 ? '' : `ffmpeg exit ${code}: ${err.slice(-800)}` }));
     });
 
-    const result = await fs.promises.readFile(out);
+    if (!result.ok) {
+      fs.promises.unlink(inV).catch(() => {});
+      fs.promises.unlink(inA).catch(() => {});
+      return { buffer: null, error: result.err, ffmpegPath };
+    }
+
+    const outBuf = await fs.promises.readFile(out);
     fs.promises.unlink(inV).catch(() => {});
     fs.promises.unlink(inA).catch(() => {});
     fs.promises.unlink(out).catch(() => {});
-    return result;
+    return { buffer: outBuf, ffmpegPath };
   } catch (e: any) {
-    console.error('[mux] failed:', e.message);
-    return null;
+    return { buffer: null, error: e.message, ffmpegPath: ffmpegPath || undefined };
   }
 }
 
@@ -2006,7 +2012,7 @@ Output ONLY the video prompt:`;
 
     let videoUrl: string | null = null;
     let lastError = '';
-    let ttsStatus: { source: string; muxed: boolean; error?: string } = { source: 'skipped', muxed: false };
+    let ttsStatus: { source: string; muxed: boolean; error?: string; ffmpegPath?: string } = { source: 'skipped', muxed: false };
     const TIMEOUT = 55_000;
 
     for (const model of veoModels) {
@@ -2049,19 +2055,19 @@ Output ONLY the video prompt:`;
 
               // Generate Hebrew voiceover via Gemini TTS, then mux onto video
               let finalBuffer = veoBuffer;
-              // Diagnostics: track TTS + mux status so we can surface failures
               ttsStatus = { source: 'skipped', muxed: false };
               if (hebrewVO) {
                 const ttsResult = await generateHebrewTTS(hebrewVO, geminiKey);
                 ttsStatus.source = ttsResult.source;
                 if ('error' in ttsResult) ttsStatus.error = ttsResult.error;
                 if (ttsResult.wav) {
-                  const muxed = await muxAudioOnVideo(veoBuffer, ttsResult.wav, durationSeconds);
-                  if (muxed) {
-                    finalBuffer = muxed;
+                  const muxResult = await muxAudioOnVideo(veoBuffer, ttsResult.wav, durationSeconds);
+                  if (muxResult.ffmpegPath) ttsStatus.ffmpegPath = muxResult.ffmpegPath;
+                  if (muxResult.buffer) {
+                    finalBuffer = muxResult.buffer;
                     ttsStatus.muxed = true;
                   } else {
-                    ttsStatus.error = (ttsStatus.error ? ttsStatus.error + ' | ' : '') + 'mux returned null';
+                    ttsStatus.error = (ttsStatus.error ? ttsStatus.error + ' | ' : '') + `mux: ${muxResult.error || 'unknown'}`;
                   }
                 }
               }
