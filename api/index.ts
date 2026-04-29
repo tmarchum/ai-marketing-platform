@@ -232,11 +232,52 @@ function pcmToWav(pcm: Buffer, sampleRate = 24000): Buffer {
   return Buffer.concat([header, pcm]);
 }
 
-// Generate Hebrew voiceover via Gemini's TTS model.
-// Returns a WAV buffer ready for ffmpeg to mux, or null on failure.
-// Default voice: Leda (warm female, sounds clearly feminine in Hebrew).
-async function generateHebrewTTS(text: string, apiKey: string, voice = 'Leda'): Promise<Buffer | null> {
-  if (!text || text.trim().length < 2) return null;
+// Generate Hebrew voiceover. Tries Google Cloud TTS first (explicit Hebrew
+// female voice he-IL-Wavenet-A — much more reliable for Hebrew than Gemini TTS),
+// falls back to Gemini TTS if Cloud TTS isn't enabled on the project.
+// Returns { wav, source, error? } so callers can surface diagnostics.
+async function generateHebrewTTS(
+  text: string,
+  apiKey: string,
+  voice = 'Leda'
+): Promise<{ wav: Buffer; source: string } | { wav: null; source: 'failed'; error: string }> {
+  if (!text || text.trim().length < 2) return { wav: null, source: 'failed', error: 'empty text' };
+  const errors: string[] = [];
+
+  // 1. Google Cloud Text-to-Speech (best for Hebrew — explicit gendered native voices)
+  try {
+    const r = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input: { text },
+        voice: {
+          languageCode: 'he-IL',
+          name: 'he-IL-Wavenet-A',     // adult female, native Hebrew speaker
+          ssmlGender: 'FEMALE',
+        },
+        audioConfig: {
+          audioEncoding: 'LINEAR16',    // raw PCM, 24kHz default
+          sampleRateHertz: 24000,
+          speakingRate: 1.05,           // slight uptempo for energetic marketing feel
+          pitch: 0,
+        },
+      }),
+    });
+    const d = await r.json() as any;
+    if (d.error) {
+      errors.push(`cloud-tts: ${d.error.message}`);
+    } else if (d.audioContent) {
+      const pcm = Buffer.from(d.audioContent, 'base64');
+      return { wav: pcmToWav(pcm, 24000), source: 'cloud-tts:he-IL-Wavenet-A' };
+    } else {
+      errors.push('cloud-tts: no audioContent in response');
+    }
+  } catch (e: any) {
+    errors.push(`cloud-tts exception: ${e.message}`);
+  }
+
+  // 2. Gemini TTS fallback (if Cloud TTS is not enabled)
   const models = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'];
   for (const model of models) {
     try {
@@ -255,21 +296,21 @@ async function generateHebrewTTS(text: string, apiKey: string, voice = 'Leda'): 
         }
       );
       const d = await r.json() as any;
-      if (d.error) { console.error(`[tts] ${model} error:`, d.error.message); continue; }
+      if (d.error) { errors.push(`gemini-tts ${model}: ${d.error.message}`); continue; }
       const audioPart = d.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.mimeType?.startsWith('audio/'));
       const b64 = audioPart?.inlineData?.data;
-      if (!b64) { console.error(`[tts] ${model}: no audio in response`); continue; }
+      if (!b64) { errors.push(`gemini-tts ${model}: no audio`); continue; }
       const pcm = Buffer.from(b64, 'base64');
-      // Detect sample rate from mimeType if it includes ?rate=NNNNN; fallback 24000
       const mt: string = audioPart.inlineData.mimeType || '';
       const rateMatch = mt.match(/rate=(\d+)/);
       const sampleRate = rateMatch ? Number(rateMatch[1]) : 24000;
-      return pcmToWav(pcm, sampleRate);
+      return { wav: pcmToWav(pcm, sampleRate), source: `gemini-tts:${model}:${voice}` };
     } catch (e: any) {
-      console.error(`[tts] ${model} exception:`, e.message);
+      errors.push(`gemini-tts ${model} exception: ${e.message}`);
     }
   }
-  return null;
+
+  return { wav: null, source: 'failed', error: errors.join(' | ') };
 }
 
 // Mux a WAV audio buffer onto an MP4 video buffer.
@@ -1945,7 +1986,12 @@ ${topic}
 3. ✅ REQUIRED: Specific people in specific location, one clear action that unfolds over 8 seconds, natural camera movement (slow push-in / handheld / static / slow pan), realistic lighting.
 4. If topic is abstract, invent a REAL SCENE — e.g. "camera slowly pushes in on a host with microphone standing before a cheering crowd, hands raising in the air" NOT "abstract question mark floating with glowing orbs".
 5. People must look ISRAELI (Middle Eastern/Mediterranean features, modern Israeli casual attire, Israeli locations).
-6. ⛔ ABSOLUTELY ZERO ON-SCREEN TEXT. No subtitles, no captions, no titles, no signage with readable text, no T-shirt prints, no phone screens with text, no whiteboards, no books with titles. Veo butchers non-Latin scripts → any "Hebrew" it draws comes out as gibberish letters. Describe any signs/screens in the scene as "blurred", "blank", or "out-of-focus".
+6. ⛔⛔⛔ ABSOLUTELY ZERO ON-SCREEN TEXT — THE MOST IMPORTANT RULE.
+   - No subtitles, no captions, no title cards, no end-cards, no chyrons, no lower-thirds.
+   - No signage with readable text — any signs in the background MUST be blurred beyond recognition or out-of-focus.
+   - No T-shirt prints with words/logos. No phone or laptop screens showing text/UI. No whiteboards. No menus. No books with titles. No street signs. No store fronts. No billboards. No magazines. No tickets. No passports.
+   - DO NOT describe any object that naturally contains text. If unavoidable, describe it as "completely blurred", "out of frame", "covered by hand".
+   - Veo cannot render Hebrew letters correctly — any text it draws comes out as gibberish characters. Choose scenes that have NO text whatsoever.
 7. 🔇 NO SPOKEN DIALOGUE. The video must NOT contain any spoken voice / narration / dialogue / lip-sync. People in frame should NOT appear to be speaking to camera. Allowed audio: ambient sound only (room tone, footsteps, door open, light music, nature sounds, cafe murmur in the background — no understandable words). A clean Hebrew voiceover will be added separately in post-production, so the video itself MUST come back silent except for ambient sound and music.
 8. 80-140 words, English description. End with: "no spoken dialogue, no narration, no on-screen text, only ambient sound and subtle music".
 
@@ -1960,6 +2006,7 @@ Output ONLY the video prompt:`;
 
     let videoUrl: string | null = null;
     let lastError = '';
+    let ttsStatus: { source: string; muxed: boolean; error?: string } = { source: 'skipped', muxed: false };
     const TIMEOUT = 55_000;
 
     for (const model of veoModels) {
@@ -2002,12 +2049,20 @@ Output ONLY the video prompt:`;
 
               // Generate Hebrew voiceover via Gemini TTS, then mux onto video
               let finalBuffer = veoBuffer;
+              // Diagnostics: track TTS + mux status so we can surface failures
+              ttsStatus = { source: 'skipped', muxed: false };
               if (hebrewVO) {
-                // Voice: Leda (warm female, clearer than Kore for Hebrew marketing)
-                const ttsAudio = await generateHebrewTTS(hebrewVO, geminiKey, 'Leda');
-                if (ttsAudio) {
-                  const muxed = await muxAudioOnVideo(veoBuffer, ttsAudio, durationSeconds);
-                  if (muxed) finalBuffer = muxed;
+                const ttsResult = await generateHebrewTTS(hebrewVO, geminiKey);
+                ttsStatus.source = ttsResult.source;
+                if ('error' in ttsResult) ttsStatus.error = ttsResult.error;
+                if (ttsResult.wav) {
+                  const muxed = await muxAudioOnVideo(veoBuffer, ttsResult.wav, durationSeconds);
+                  if (muxed) {
+                    finalBuffer = muxed;
+                    ttsStatus.muxed = true;
+                  } else {
+                    ttsStatus.error = (ttsStatus.error ? ttsStatus.error + ' | ' : '') + 'mux returned null';
+                  }
                 }
               }
 
@@ -2035,7 +2090,7 @@ Output ONLY the video prompt:`;
       motion_prompt: enhancedPrompt,
     }).eq('id', postId);
 
-    res.json({ ok: true, url: videoUrl, prompt: enhancedPrompt, voiceover: hebrewVO });
+    res.json({ ok: true, url: videoUrl, prompt: enhancedPrompt, voiceover: hebrewVO, tts: ttsStatus });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
