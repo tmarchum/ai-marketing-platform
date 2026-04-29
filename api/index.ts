@@ -141,48 +141,51 @@ async function addHebrewOverlay(imageBuffer: Buffer, hebrewText: string, brandCo
     const W = meta.width || 1024;
     const H = meta.height || 1024;
 
-    // BIG, bold overlay — banner across the bottom
-    const fontSize = Math.round(W / 16);                // ~64px on 1024
-    const lineHeight = Math.round(fontSize * 1.25);
-    const padX = Math.round(W * 0.06);
-    const padY = Math.round(W * 0.05);
-
-    const lines = wrapHebrew(hebrewText, 28, 3);
+    // Designer overlay — gradient fade + white bold headline + brand accent line.
+    // No white banner; text floats on the photo for a magazine/ad poster look.
+    const fontSize = Math.round(W / 14);                 // ~73px on 1024
+    const lineHeight = Math.round(fontSize * 1.18);
+    const lines = wrapHebrew(hebrewText, 26, 3);
     if (!lines.length) return imageBuffer;
 
-    const boxH = lineHeight * lines.length + padY * 2;
-    const boxW = W;                                      // full width banner
-    const boxX = 0;
-    const boxY = H - boxH;                               // flush bottom
+    const totalTextH = lines.length * lineHeight;
+    // Gradient zone covers bottom 45% of the image — provides text legibility
+    const gradH = Math.round(H * 0.45);
+    const gradY = H - gradH;
 
-    // Render the overlay onto a transparent canvas
     const canvas = createCanvas(W, H);
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, W, H);
 
-    // Solid white banner at the bottom
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(boxX, boxY, boxW, boxH);
+    // 1. Vertical gradient — transparent at top, ~75% black at bottom
+    const grad = ctx.createLinearGradient(0, gradY, 0, H);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(0.4, 'rgba(0,0,0,0.35)');
+    grad.addColorStop(1, 'rgba(0,0,0,0.78)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, gradY, W, gradH);
 
-    // Brand-colored top edge of the banner (5% of font height)
-    const edgeH = Math.max(4, Math.round(fontSize * 0.1));
+    // 2. Brand-color accent bar above the headline (short, decorative)
+    const accentY = H - totalTextH - Math.round(H * 0.12);
+    const accentW = Math.round(W * 0.12);
+    const accentH = Math.max(3, Math.round(fontSize * 0.08));
+    const accentX = Math.round((W - accentW) / 2);
     ctx.fillStyle = brandColor;
-    ctx.fillRect(boxX, boxY, boxW, edgeH);
+    ctx.fillRect(accentX, accentY, accentW, accentH);
 
-    // Hebrew text — pure black for max contrast
+    // 3. Hebrew headline — bold white with soft drop shadow for legibility
     ctx.font = `bold ${fontSize}px Heebo, sans-serif`;
-    ctx.fillStyle = '#0a0a0a';
-    ctx.strokeStyle = '#0a0a0a';
-    ctx.lineWidth = Math.max(1, Math.round(fontSize * 0.04));
+    ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.direction = 'rtl';
+    ctx.shadowColor = 'rgba(0,0,0,0.85)';
+    ctx.shadowBlur = Math.round(fontSize * 0.4);
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = Math.round(fontSize * 0.08);
 
-    const totalTextH = lines.length * lineHeight;
-    let textY = boxY + (boxH - totalTextH) / 2 + lineHeight / 2;
+    let textY = H - totalTextH - Math.round(H * 0.05) + lineHeight / 2;
     for (const line of lines) {
-      // Stroke first (faint outline) then fill — gives extra weight
-      ctx.strokeText(line, W / 2, textY);
       ctx.fillText(line, W / 2, textY);
       textY += lineHeight;
     }
@@ -1636,15 +1639,15 @@ Output ONLY the 2-3 sentence scene description, no labels:`;
     //    (it renders correctly-shaped Hebrew letters but the wrong words). So we
     //    handle the headline ourselves with a real font overlay after generation.
     function buildImagePrompt(scene: string): string {
-      return `Generate a photorealistic candid lifestyle photograph, square format (1:1):
+      return `Generate a cinematic, photorealistic editorial photograph, square format (1:1):
 
 ${scene}
 
+Style: magazine-cover / professional ad photography — rich color grading, shallow depth of field, dramatic natural lighting (golden hour, soft window light, etc.), strong composition. Israeli-looking subjects (Mediterranean features, modern Israeli casual attire), modern Israeli aesthetic.
+
 The image must contain ABSOLUTELY NO text, NO writing, NO letters, NO numbers, NO logos, NO signs, NO captions, NO banners — only people, places, and natural objects. Any incidental signs/screens in the background must be blurred or out-of-focus.
 
-Render in clean documentary photography style — warm natural lighting, real-world location, candid mood. Israeli-looking people (Mediterranean features, modern Israeli casual attire), modern Israeli aesthetic.
-
-Reserve the bottom 20% of the frame as visually simple/uncluttered space (e.g. a beach, a sky, a smooth wall, a blurred floor) — leave that area calm and uniform with no important details, faces, or text.`;
+Composition: position the main subjects in the upper-2/3 of the frame and keep the lower area visually clean (calm sky, blurred bokeh, smooth surface, gentle out-of-focus background) — a designer headline will be placed there, so it should not compete with faces or important detail.`;
     }
 
     const finalPrompt = buildImagePrompt(sceneDescription);
