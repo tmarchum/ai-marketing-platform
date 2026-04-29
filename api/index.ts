@@ -234,7 +234,8 @@ function pcmToWav(pcm: Buffer, sampleRate = 24000): Buffer {
 
 // Generate Hebrew voiceover via Gemini's TTS model.
 // Returns a WAV buffer ready for ffmpeg to mux, or null on failure.
-async function generateHebrewTTS(text: string, apiKey: string, voice = 'Kore'): Promise<Buffer | null> {
+// Default voice: Leda (warm female, sounds clearly feminine in Hebrew).
+async function generateHebrewTTS(text: string, apiKey: string, voice = 'Leda'): Promise<Buffer | null> {
   if (!text || text.trim().length < 2) return null;
   const models = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'];
   for (const model of models) {
@@ -272,8 +273,9 @@ async function generateHebrewTTS(text: string, apiKey: string, voice = 'Kore'): 
 }
 
 // Mux a WAV audio buffer onto an MP4 video buffer.
-// Replaces the original audio track and trims to the shorter of the two.
-async function muxAudioOnVideo(videoBuffer: Buffer, audioBuffer: Buffer): Promise<Buffer | null> {
+// Output duration = video length. Audio is trimmed/padded to fit, with a soft
+// fade-out at the end so cut-offs sound natural rather than abrupt.
+async function muxAudioOnVideo(videoBuffer: Buffer, audioBuffer: Buffer, videoDurationSec = 8): Promise<Buffer | null> {
   try {
     const ffmpegStatic = (await import('ffmpeg-static')).default as unknown as string;
     const ffmpegPath = ffmpegStatic;
@@ -288,6 +290,11 @@ async function muxAudioOnVideo(videoBuffer: Buffer, audioBuffer: Buffer): Promis
     await fs.promises.writeFile(inV, videoBuffer);
     await fs.promises.writeFile(inA, audioBuffer);
 
+    // Audio filter: ensure mono → stereo, normalize loudness, fade-out last 0.5s
+    // so the natural end of the voiceover sounds smooth even when trimmed.
+    const fadeStart = Math.max(0, videoDurationSec - 0.6);
+    const audioFilter = `aformat=sample_rates=48000:channel_layouts=stereo,loudnorm=I=-16:LRA=11:TP=-1.5,afade=t=out:st=${fadeStart}:d=0.6`;
+
     const { spawn } = await import('node:child_process');
     await new Promise<void>((resolve, reject) => {
       const proc = spawn(ffmpegPath, [
@@ -296,10 +303,11 @@ async function muxAudioOnVideo(videoBuffer: Buffer, audioBuffer: Buffer): Promis
         '-i', inA,
         '-map', '0:v:0',
         '-map', '1:a:0',
+        '-af', audioFilter,
         '-c:v', 'copy',
         '-c:a', 'aac',
         '-b:a', '192k',
-        '-shortest',
+        '-t', String(videoDurationSec),
         out,
       ], { stdio: ['ignore', 'pipe', 'pipe'] });
       let err = '';
@@ -309,7 +317,6 @@ async function muxAudioOnVideo(videoBuffer: Buffer, audioBuffer: Buffer): Promis
     });
 
     const result = await fs.promises.readFile(out);
-    // Cleanup
     fs.promises.unlink(inV).catch(() => {});
     fs.promises.unlink(inA).catch(() => {});
     fs.promises.unlink(out).catch(() => {});
@@ -1894,14 +1901,22 @@ app.post('/api/posts/:id/generate-video', async (req: any, res) => {
     const vi = biz?.visual_identity || '';
 
     // ── Hebrew voiceover line — synthesized separately by Gemini TTS, then muxed
-    //    onto the silent Veo video. Pulled from the same headline used for image overlay.
+    //    onto the silent Veo video. Must speak comfortably in 8 seconds (~14 words max
+    //    for Hebrew at conversational pace), so we cap at 60 chars.
     const calMetaV = (post.performance || {}).calendar_meta || {};
     const ttsCandidate =
       (req.body?.tts_text as string) ||
       (calMetaV.headline as string) ||
       (calMetaV.theme as string) ||
       ((post.content || '').split(/[\n.!?]/)[0] || '').trim();
-    const hebrewVO = (ttsCandidate || '').slice(0, 90);
+    // Truncate at last word boundary under 60 chars to avoid mid-word cuts
+    function truncateHebrew(s: string, maxChars: number): string {
+      if (s.length <= maxChars) return s;
+      const cut = s.slice(0, maxChars);
+      const lastSpace = cut.lastIndexOf(' ');
+      return (lastSpace > maxChars * 0.6 ? cut.slice(0, lastSpace) : cut).trim();
+    }
+    const hebrewVO = truncateHebrew(ttsCandidate || '', 60);
 
     // Enhance prompt for video — VISUALS + AMBIENT ONLY, no spoken dialogue
     // (we'll mux a clean Hebrew voiceover from Gemini TTS afterward).
@@ -1988,9 +2003,10 @@ Output ONLY the video prompt:`;
               // Generate Hebrew voiceover via Gemini TTS, then mux onto video
               let finalBuffer = veoBuffer;
               if (hebrewVO) {
-                const ttsAudio = await generateHebrewTTS(hebrewVO, geminiKey, 'Kore');
+                // Voice: Leda (warm female, clearer than Kore for Hebrew marketing)
+                const ttsAudio = await generateHebrewTTS(hebrewVO, geminiKey, 'Leda');
                 if (ttsAudio) {
-                  const muxed = await muxAudioOnVideo(veoBuffer, ttsAudio);
+                  const muxed = await muxAudioOnVideo(veoBuffer, ttsAudio, durationSeconds);
                   if (muxed) finalBuffer = muxed;
                 }
               }
