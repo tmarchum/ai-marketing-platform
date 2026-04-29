@@ -51,27 +51,14 @@ import path from 'node:path';
 import fs from 'node:fs';
 
 let _hebrewFontRegistered = false;
-let _hebrewFontError = '';
 let _hebrewFontBuffer: Buffer | null = null;
-async function ensureHebrewFont(): Promise<{ ok: boolean; via: string; err?: string }> {
+async function ensureHebrewFont(): Promise<{ ok: boolean; via: string; err?: string; families?: string[] }> {
   if (_hebrewFontRegistered) return { ok: true, via: 'cached' };
+  const attempts: string[] = [];
   try {
     const { GlobalFonts } = await import('@napi-rs/canvas');
-    // 1. Try CDN fetch first (most reliable — disk paths vary on Vercel cold starts)
-    if (!_hebrewFontBuffer) {
-      try {
-        const r = await fetch('https://cdn.jsdelivr.net/gh/googlefonts/heebo@main/fonts/ttf/Heebo-Bold.ttf');
-        if (r.ok) {
-          _hebrewFontBuffer = Buffer.from(await r.arrayBuffer());
-        }
-      } catch {}
-    }
-    if (_hebrewFontBuffer) {
-      GlobalFonts.register(_hebrewFontBuffer, 'Heebo');
-      _hebrewFontRegistered = true;
-      return { ok: true, via: `cdn (${_hebrewFontBuffer.length} bytes)` };
-    }
-    // 2. Fallback to disk (in case CDN is blocked)
+
+    // Attempt 1: disk paths (bundled with function)
     const candidates = [
       path.join(process.cwd(), 'api', 'fonts', 'heebo-bold.ttf'),
       path.join(process.cwd(), 'fonts', 'heebo-bold.ttf'),
@@ -80,16 +67,47 @@ async function ensureHebrewFont(): Promise<{ ok: boolean; via: string; err?: str
     ];
     for (const fp of candidates) {
       if (fs.existsSync(fp)) {
-        GlobalFonts.registerFromPath(fp, 'Heebo');
-        _hebrewFontRegistered = true;
-        return { ok: true, via: `disk:${fp}` };
+        const ok = GlobalFonts.registerFromPath(fp, 'Heebo');
+        attempts.push(`disk:${fp} → ${ok}`);
+        if (ok) {
+          _hebrewFontRegistered = true;
+          return { ok: true, via: `disk:${fp}`, families: GlobalFonts.families.map((f: any) => f.family) };
+        }
+      } else {
+        attempts.push(`disk:${fp} → not found`);
       }
     }
-    _hebrewFontError = 'no font source available';
-    return { ok: false, via: 'none', err: _hebrewFontError };
+
+    // Attempt 2: CDN fetch as buffer
+    if (!_hebrewFontBuffer) {
+      const urls = [
+        'https://cdn.jsdelivr.net/gh/googlefonts/heebo@main/fonts/ttf/Heebo-Bold.ttf',
+        'https://github.com/googlefonts/heebo/raw/main/fonts/ttf/Heebo-Bold.ttf',
+      ];
+      for (const url of urls) {
+        try {
+          const r = await fetch(url);
+          if (r.ok) {
+            _hebrewFontBuffer = Buffer.from(await r.arrayBuffer());
+            attempts.push(`cdn:${url} → ${_hebrewFontBuffer.length}b`);
+            break;
+          }
+          attempts.push(`cdn:${url} → HTTP ${r.status}`);
+        } catch (e: any) { attempts.push(`cdn:${url} → ${e.message}`); }
+      }
+    }
+    if (_hebrewFontBuffer) {
+      const ok = GlobalFonts.register(_hebrewFontBuffer, 'Heebo');
+      attempts.push(`register(buffer) → ${ok}`);
+      if (ok) {
+        _hebrewFontRegistered = true;
+        return { ok: true, via: `cdn-buffer (${_hebrewFontBuffer.length}b)`, families: GlobalFonts.families.map((f: any) => f.family) };
+      }
+    }
+
+    return { ok: false, via: 'all-failed', err: attempts.join(' | '), families: GlobalFonts.families.map((f: any) => f.family) };
   } catch (e: any) {
-    _hebrewFontError = e.message;
-    return { ok: false, via: 'error', err: e.message };
+    return { ok: false, via: 'exception', err: `${e.message} | attempts: ${attempts.join(' | ')}` };
   }
 }
 
