@@ -620,8 +620,15 @@ CRITICAL RULES:
 4. Match the BRAND VISUAL IDENTITY below for style, palette, mood, and recurring motifs — so all media from this brand looks consistent.
 5. Include: specific subject (most important), ${isVideo ? "camera movement, action, " : "composition, camera angle, "}lighting, color palette, mood, style, setting, small authentic details.
 6. ${isVideo ? "Aspect: vertical 9:16 for mobile social media." : ""}
-7. NO text, NO typography, NO logos, NO captions, NO subtitles, NO watermarks anywhere in the ${isVideo ? "video" : "image"}.
-8. Keep under ${isVideo ? "140" : "120"} words. Output ONLY the final prompt text — no preamble, no labels.
+7. People shown must look ISRAELI (Middle Eastern/Mediterranean features, modern Israeli casual attire, Israeli locations like Tel Aviv/Jerusalem).
+8. NO text overlays, NO typography, NO logos, NO captions, NO subtitles, NO watermarks. If any signage is visible in the scene (storefront sign, T-shirt print, screen text, menu, billboard), it MUST be written in **HEBREW (Israeli Hebrew, right-to-left script)** — never English, never Latin letters. Spell out the literal Hebrew text in your prompt.
+${isVideo ? `9. 🔊 AUDIO LANGUAGE — CRITICAL FOR VEO 3:
+   - All spoken dialogue / voiceover MUST be in **HEBREW (native Israeli accent)** — never English.
+   - Write the dialogue line(s) literally in Hebrew script in the prompt, e.g. \`The host says in Hebrew: "ברוכים הבאים לחידון!"\`.
+   - Keep dialogue ≤ 12 Hebrew words for an 8-second clip.
+   - Explicitly state in the prompt: "spoken in fluent native Hebrew (Israeli accent)".
+   - Background ambient sounds (chatter, street noise) should also sound Israeli (Hebrew background voices).
+10. Keep under 160 words.` : `9. Keep under 120 words.`} Output ONLY the final prompt text — no preamble, no labels.
 
 Business context: ${biz.name || ""} — ${biz.description || biz.industry || ""}${visualIdentity}
 

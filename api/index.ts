@@ -1414,8 +1414,9 @@ ${topic}
 3. ✅ REQUIRED: Describe a SPECIFIC scene like a photographer would — who is in frame, what they're doing, where (real location), lighting, mood, camera angle.
 4. If the topic is abstract ("community question", "insights"), invent a REAL SCENE that captures the feeling — e.g. "group of 40 people sitting in a circle at a corporate event, smiling and raising hands" NOT "floating question mark with connected spheres".
 5. Match brand mood/colors but AVOID brand metaphors.
-6. NO text, NO typography, NO logos.
-7. Single paragraph, 70-120 words, in English.
+6. People must look ISRAELI (Middle Eastern / Mediterranean features, mixed light/dark hair, modern Israeli casual attire). Setting should look like an Israeli location (Tel Aviv / Jerusalem / Israeli cafe / Israeli office).
+7. NO text overlays of any kind. NO typography. NO logos. NO captions. NO subtitle bars. If there's any signage visible in the scene (storefront, T-shirt print, screen text), it MUST be written in **Hebrew (Israeli Hebrew, right-to-left script)** — never English, never Latin letters. Spell it out in your prompt as the literal Hebrew text that should appear.
+8. Single paragraph, 70-120 words, in English (the prompt language is English; only on-screen text in the image should be Hebrew).
 
 Output ONLY the image prompt description (no explanations):`;
           try { return (await callClaude(claudeMessage, claudeKey, 600)).trim(); }
@@ -1564,8 +1565,15 @@ ${topic}
 2. ❌ FORBIDDEN: abstract visuals, floating symbols, icons, geometric animations, metaphorical shapes, 3D renders of concepts.
 3. ✅ REQUIRED: Specific people in specific location, one clear action that unfolds over 8 seconds, natural camera movement (slow push-in / handheld / static / slow pan), realistic lighting.
 4. If topic is abstract, invent a REAL SCENE — e.g. "camera slowly pushes in on a host with microphone standing before a cheering crowd, hands raising in the air" NOT "abstract question mark floating with glowing orbs".
-5. NO text overlays, NO typography.
-6. 60-120 words, single paragraph, English.
+5. People must look ISRAELI (Middle Eastern/Mediterranean features, modern Israeli casual attire, Israeli locations).
+6. NO text overlays, NO typography, NO subtitles. Any signage shown in the scene must be in HEBREW (Israeli Hebrew, right-to-left).
+7. 🔊 LANGUAGE — CRITICAL FOR VEO 3 AUDIO:
+   - All spoken dialogue/voiceover MUST be in **HEBREW (Israeli Hebrew, native-speaker accent)** — never English, never any other language.
+   - Write the dialogue line(s) literally in Hebrew script inside the prompt, prefixed by the character (e.g. \`The host says in Hebrew: "..."\`).
+   - Keep dialogue short (≤ 12 Hebrew words total for an 8-second clip) so it fits naturally.
+   - Specify: "spoken in fluent native Hebrew (Israeli accent)" so Veo generates Hebrew audio rather than defaulting to English.
+   - Ambient sounds (cafe chatter, street noise) should also sound Israeli (Hebrew background voices, no English).
+8. 80-140 words, single paragraph, English description — but the dialogue lines INSIDE the description are written in Hebrew script.
 
 Output ONLY the video prompt:`;
         enhancedPrompt = (await callClaude(claudeMessage, claudeKey, 600)).trim();
