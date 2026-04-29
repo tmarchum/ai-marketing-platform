@@ -51,12 +51,27 @@ import path from 'node:path';
 import fs from 'node:fs';
 
 let _hebrewFontRegistered = false;
+let _hebrewFontError = '';
 let _hebrewFontBuffer: Buffer | null = null;
-async function ensureHebrewFont(): Promise<void> {
-  if (_hebrewFontRegistered) return;
+async function ensureHebrewFont(): Promise<{ ok: boolean; via: string; err?: string }> {
+  if (_hebrewFontRegistered) return { ok: true, via: 'cached' };
   try {
     const { GlobalFonts } = await import('@napi-rs/canvas');
-    // 1. Try local file paths (bundled with the function)
+    // 1. Try CDN fetch first (most reliable — disk paths vary on Vercel cold starts)
+    if (!_hebrewFontBuffer) {
+      try {
+        const r = await fetch('https://cdn.jsdelivr.net/gh/googlefonts/heebo@main/fonts/ttf/Heebo-Bold.ttf');
+        if (r.ok) {
+          _hebrewFontBuffer = Buffer.from(await r.arrayBuffer());
+        }
+      } catch {}
+    }
+    if (_hebrewFontBuffer) {
+      GlobalFonts.register(_hebrewFontBuffer, 'Heebo');
+      _hebrewFontRegistered = true;
+      return { ok: true, via: `cdn (${_hebrewFontBuffer.length} bytes)` };
+    }
+    // 2. Fallback to disk (in case CDN is blocked)
     const candidates = [
       path.join(process.cwd(), 'api', 'fonts', 'heebo-bold.ttf'),
       path.join(process.cwd(), 'fonts', 'heebo-bold.ttf'),
@@ -67,22 +82,14 @@ async function ensureHebrewFont(): Promise<void> {
       if (fs.existsSync(fp)) {
         GlobalFonts.registerFromPath(fp, 'Heebo');
         _hebrewFontRegistered = true;
-        console.log(`[overlay] registered Heebo from disk: ${fp}`);
-        return;
+        return { ok: true, via: `disk:${fp}` };
       }
     }
-    // 2. Fallback: fetch from jsDelivr CDN (cached after first cold-start)
-    if (!_hebrewFontBuffer) {
-      console.log('[overlay] font not on disk, fetching from CDN…');
-      const r = await fetch('https://cdn.jsdelivr.net/gh/googlefonts/heebo@main/fonts/ttf/Heebo-Bold.ttf');
-      if (!r.ok) throw new Error(`CDN HTTP ${r.status}`);
-      _hebrewFontBuffer = Buffer.from(await r.arrayBuffer());
-    }
-    GlobalFonts.register(_hebrewFontBuffer, 'Heebo');
-    _hebrewFontRegistered = true;
-    console.log(`[overlay] registered Heebo from CDN (${_hebrewFontBuffer.length} bytes)`);
+    _hebrewFontError = 'no font source available';
+    return { ok: false, via: 'none', err: _hebrewFontError };
   } catch (e: any) {
-    console.error('[overlay] font registration failed:', e.message);
+    _hebrewFontError = e.message;
+    return { ok: false, via: 'error', err: e.message };
   }
 }
 
@@ -1567,29 +1574,24 @@ Output ONLY the 2-3 sentence scene description, no labels:`;
         })()
       : topic;
 
-    // ── Step 2: Build the FINAL image-model prompt — explicit Hebrew letters
-    //    + scene description. Nano Banana renders Hebrew text correctly when
-    //    given the exact string to draw inside quotes.
-    function buildImagePrompt(scene: string, hebrew: string): string {
-      const banner = hebrew
-        ? `
-
-Then, add a clean horizontal banner overlay across the bottom 20% of the image with this EXACT Hebrew text (right-to-left, spelled letter-for-letter):
-
-«${hebrew}»
-
-Banner styling: solid white background, brand color accent (${brandColor}), bold modern Hebrew sans-serif typography (Heebo or Assistant style), large readable letters, perfectly sharp and legible, NO spelling mistakes, NO extra letters, NO gibberish characters. Spell every Hebrew character exactly as written between the « » marks.`
-        : '';
+    // ── Step 2: Ask Nano Banana for a CLEAN scene only (no banner, no text).
+    //    The model proved it can produce clean Israeli lifestyle scenes well; what
+    //    it can NOT do is reliably reproduce a specific Hebrew string letter-for-letter
+    //    (it renders correctly-shaped Hebrew letters but the wrong words). So we
+    //    handle the headline ourselves with a real font overlay after generation.
+    function buildImagePrompt(scene: string): string {
       return `Generate a photorealistic candid lifestyle photograph, square format (1:1):
 
 ${scene}
 
-The scene itself should contain NO text, NO logos, NO signs, NO writing of any kind — only people, places, and natural objects.${banner}
+The image must contain ABSOLUTELY NO text, NO writing, NO letters, NO numbers, NO logos, NO signs, NO captions, NO banners — only people, places, and natural objects. Any incidental signs/screens in the background must be blurred or out-of-focus.
 
-Render the image in a clean documentary photography style — warm natural lighting, real-world location, candid mood. Israeli-looking people, modern Israeli aesthetic.`;
+Render in clean documentary photography style — warm natural lighting, real-world location, candid mood. Israeli-looking people (Mediterranean features, modern Israeli casual attire), modern Israeli aesthetic.
+
+Reserve the bottom 20% of the frame as visually simple/uncluttered space (e.g. a beach, a sky, a smooth wall, a blurred floor) — leave that area calm and uniform with no important details, faces, or text.`;
     }
 
-    const finalPrompt = buildImagePrompt(sceneDescription, hebrewHeadline);
+    const finalPrompt = buildImagePrompt(sceneDescription);
 
     // 2. Generate N image variants via Gemini (default 3)
     const numVariants = Math.min(Math.max(Number(req.query.variants || req.body?.variants || 3), 1), 4);
@@ -1651,18 +1653,21 @@ Render the image in a clean documentary photography style — warm natural light
       return res.status(500).json({ error: 'All variants failed', details: results[0]?.error });
     }
 
-    // The Hebrew text is rendered BY the image model (Nano Banana) directly into
-    // the image, since the prompt explicitly contains the exact Hebrew letters.
-    // No canvas/overlay post-processing is needed — that was a workaround when we
-    // were forcing the model to produce a clean image and then stamping text on top.
+    // Image models render Hebrew letter-shapes correctly but mangle the actual
+    // words (they "imagine" Hebrew rather than reproduce a string letter-for-letter).
+    // So we ask the model for a CLEAN scene only, then composite the headline with
+    // a real Heebo font. That guarantees 100% correct Hebrew spelling.
+    const fontStatus = await ensureHebrewFont();
     await sb.storage.createBucket('media', { public: true }).catch(() => {});
     const uploaded: string[] = [];
     for (let i = 0; i < successful.length; i++) {
       const r = successful[i];
-      const buffer = Buffer.from(r.base64!, 'base64');
-      const ext = r.contentType.includes('jpeg') || r.contentType.includes('jpg') ? 'jpg' : 'png';
-      const fileName = `media/${post.user_id || 'anon'}/${Date.now()}-${postId}-v${i + 1}.${ext}`;
-      const { error: upErr } = await sb.storage.from('media').upload(fileName, buffer, { contentType: r.contentType, upsert: true });
+      const rawBuffer = Buffer.from(r.base64!, 'base64');
+      const finalBuffer = hebrewHeadline
+        ? await addHebrewOverlay(rawBuffer, hebrewHeadline, brandColor)
+        : rawBuffer;
+      const fileName = `media/${post.user_id || 'anon'}/${Date.now()}-${postId}-v${i + 1}.jpg`;
+      const { error: upErr } = await sb.storage.from('media').upload(fileName, finalBuffer, { contentType: 'image/jpeg', upsert: true });
       if (upErr) continue;
       const { data: urlData } = sb.storage.from('media').getPublicUrl(fileName);
       uploaded.push(urlData.publicUrl);
@@ -1685,6 +1690,8 @@ Render the image in a clean documentary photography style — warm natural light
       variants: uploaded,
       count: uploaded.length,
       prompt: finalPrompt,
+      headline: hebrewHeadline,
+      font: fontStatus,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
