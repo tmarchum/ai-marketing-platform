@@ -203,6 +203,123 @@ async function addHebrewOverlay(imageBuffer: Buffer, hebrewText: string, brandCo
   }
 }
 
+// ── Hebrew TTS (via Gemini) + audio/video muxing (ffmpeg-static) ──
+// Veo's built-in Hebrew TTS is unreliable, so we generate clean visuals + ambient
+// from Veo, then synthesize a proper Hebrew voiceover via Gemini's TTS model and
+// mux it onto the video using ffmpeg-static.
+
+function pcmToWav(pcm: Buffer, sampleRate = 24000): Buffer {
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const byteRate = sampleRate * numChannels * bitsPerSample / 8;
+  const blockAlign = numChannels * bitsPerSample / 8;
+  const dataSize = pcm.length;
+  const fileSize = 36 + dataSize;
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(fileSize, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(numChannels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(dataSize, 40);
+  return Buffer.concat([header, pcm]);
+}
+
+// Generate Hebrew voiceover via Gemini's TTS model.
+// Returns a WAV buffer ready for ffmpeg to mux, or null on failure.
+async function generateHebrewTTS(text: string, apiKey: string, voice = 'Kore'): Promise<Buffer | null> {
+  if (!text || text.trim().length < 2) return null;
+  const models = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'];
+  for (const model of models) {
+    try {
+      const r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text }] }],
+            generationConfig: {
+              responseModalities: ['AUDIO'],
+              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
+            },
+          }),
+        }
+      );
+      const d = await r.json() as any;
+      if (d.error) { console.error(`[tts] ${model} error:`, d.error.message); continue; }
+      const audioPart = d.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.mimeType?.startsWith('audio/'));
+      const b64 = audioPart?.inlineData?.data;
+      if (!b64) { console.error(`[tts] ${model}: no audio in response`); continue; }
+      const pcm = Buffer.from(b64, 'base64');
+      // Detect sample rate from mimeType if it includes ?rate=NNNNN; fallback 24000
+      const mt: string = audioPart.inlineData.mimeType || '';
+      const rateMatch = mt.match(/rate=(\d+)/);
+      const sampleRate = rateMatch ? Number(rateMatch[1]) : 24000;
+      return pcmToWav(pcm, sampleRate);
+    } catch (e: any) {
+      console.error(`[tts] ${model} exception:`, e.message);
+    }
+  }
+  return null;
+}
+
+// Mux a WAV audio buffer onto an MP4 video buffer.
+// Replaces the original audio track and trims to the shorter of the two.
+async function muxAudioOnVideo(videoBuffer: Buffer, audioBuffer: Buffer): Promise<Buffer | null> {
+  try {
+    const ffmpegStatic = (await import('ffmpeg-static')).default as unknown as string;
+    const ffmpegPath = ffmpegStatic;
+    if (!ffmpegPath) { console.error('[mux] ffmpeg-static path missing'); return null; }
+
+    const ts = Date.now();
+    const tmpDir = '/tmp';
+    const inV = `${tmpDir}/v-${ts}.mp4`;
+    const inA = `${tmpDir}/a-${ts}.wav`;
+    const out = `${tmpDir}/o-${ts}.mp4`;
+
+    await fs.promises.writeFile(inV, videoBuffer);
+    await fs.promises.writeFile(inA, audioBuffer);
+
+    const { spawn } = await import('node:child_process');
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(ffmpegPath, [
+        '-y',
+        '-i', inV,
+        '-i', inA,
+        '-map', '0:v:0',
+        '-map', '1:a:0',
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-shortest',
+        out,
+      ], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let err = '';
+      proc.stderr?.on('data', (c) => { err += c.toString(); });
+      proc.on('error', reject);
+      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}: ${err.slice(-500)}`)));
+    });
+
+    const result = await fs.promises.readFile(out);
+    // Cleanup
+    fs.promises.unlink(inV).catch(() => {});
+    fs.promises.unlink(inA).catch(() => {});
+    fs.promises.unlink(out).catch(() => {});
+    return result;
+  } catch (e: any) {
+    console.error('[mux] failed:', e.message);
+    return null;
+  }
+}
+
 // ── Health ──
 app.get('/api/health', (_req, res) => {
   const sb = getSupabase();
@@ -1776,7 +1893,18 @@ app.post('/api/posts/:id/generate-video', async (req: any, res) => {
     const topic = post.motion_prompt || post.image_prompt || (post.content || '').slice(0, 200);
     const vi = biz?.visual_identity || '';
 
-    // Enhance prompt for video (describes motion + scene)
+    // ── Hebrew voiceover line — synthesized separately by Gemini TTS, then muxed
+    //    onto the silent Veo video. Pulled from the same headline used for image overlay.
+    const calMetaV = (post.performance || {}).calendar_meta || {};
+    const ttsCandidate =
+      (req.body?.tts_text as string) ||
+      (calMetaV.headline as string) ||
+      (calMetaV.theme as string) ||
+      ((post.content || '').split(/[\n.!?]/)[0] || '').trim();
+    const hebrewVO = (ttsCandidate || '').slice(0, 90);
+
+    // Enhance prompt for video — VISUALS + AMBIENT ONLY, no spoken dialogue
+    // (we'll mux a clean Hebrew voiceover from Gemini TTS afterward).
     let enhancedPrompt = topic;
     if (claudeKey) {
       try {
@@ -1802,15 +1930,9 @@ ${topic}
 3. ✅ REQUIRED: Specific people in specific location, one clear action that unfolds over 8 seconds, natural camera movement (slow push-in / handheld / static / slow pan), realistic lighting.
 4. If topic is abstract, invent a REAL SCENE — e.g. "camera slowly pushes in on a host with microphone standing before a cheering crowd, hands raising in the air" NOT "abstract question mark floating with glowing orbs".
 5. People must look ISRAELI (Middle Eastern/Mediterranean features, modern Israeli casual attire, Israeli locations).
-6. ⛔ ABSOLUTELY ZERO ON-SCREEN TEXT. No subtitles, no captions, no titles, no signage with readable text, no T-shirt prints, no phone screens with text, no whiteboards, no books with titles. Veo butchers non-Latin scripts (Hebrew, Arabic) → any "Hebrew" it draws comes out as gibberish letters. Describe any signs/screens in the scene as "blurred", "blank", or "out-of-focus". Hebrew text lives in the post caption, NOT in the video frame.
-7. 🔊 SPOKEN AUDIO — CRITICAL FOR VEO 3:
-   - All spoken dialogue/voiceover MUST be in **HEBREW (Israeli Hebrew, native-speaker accent)** — never English.
-   - Write dialogue lines literally in Hebrew script: \`The host says in Hebrew: "ברוכים הבאים!"\`.
-   - Use SIMPLE everyday Hebrew words — short sentences, common vocabulary, nothing technical/literary. Veo's Hebrew TTS pronounces simple words better than complex ones.
-   - Keep dialogue ≤ 10 Hebrew words for an 8-second clip.
-   - Explicitly write in the prompt: "spoken in fluent native modern Hebrew with Israeli accent, clear pronunciation, natural cadence".
-   - Ambient sounds (cafe chatter, street noise) should be Hebrew background voices.
-8. 80-140 words, English description — Hebrew dialogue lines embedded inline. End the prompt with: "absolutely no text on screen, no subtitles, no captions, no readable signage anywhere in frame".
+6. ⛔ ABSOLUTELY ZERO ON-SCREEN TEXT. No subtitles, no captions, no titles, no signage with readable text, no T-shirt prints, no phone screens with text, no whiteboards, no books with titles. Veo butchers non-Latin scripts → any "Hebrew" it draws comes out as gibberish letters. Describe any signs/screens in the scene as "blurred", "blank", or "out-of-focus".
+7. 🔇 NO SPOKEN DIALOGUE. The video must NOT contain any spoken voice / narration / dialogue / lip-sync. People in frame should NOT appear to be speaking to camera. Allowed audio: ambient sound only (room tone, footsteps, door open, light music, nature sounds, cafe murmur in the background — no understandable words). A clean Hebrew voiceover will be added separately in post-production, so the video itself MUST come back silent except for ambient sound and music.
+8. 80-140 words, English description. End with: "no spoken dialogue, no narration, no on-screen text, only ambient sound and subtle music".
 
 Output ONLY the video prompt:`;
         enhancedPrompt = (await callClaude(claudeMessage, claudeKey, 600)).trim();
@@ -1859,12 +1981,23 @@ Output ONLY the video prompt:`;
             const video = pD.response?.generateVideoResponse?.generatedSamples?.[0]?.video;
             const videoUri = video?.uri;
             if (videoUri) {
-              // Download video → upload to storage
+              // Download silent video from Veo
               const vR = await fetch(`${videoUri}&key=${geminiKey}`);
-              const buffer = Buffer.from(await vR.arrayBuffer());
+              const veoBuffer = Buffer.from(await vR.arrayBuffer());
+
+              // Generate Hebrew voiceover via Gemini TTS, then mux onto video
+              let finalBuffer = veoBuffer;
+              if (hebrewVO) {
+                const ttsAudio = await generateHebrewTTS(hebrewVO, geminiKey, 'Kore');
+                if (ttsAudio) {
+                  const muxed = await muxAudioOnVideo(veoBuffer, ttsAudio);
+                  if (muxed) finalBuffer = muxed;
+                }
+              }
+
               const fileName = `media/${post.user_id || 'anon'}/${Date.now()}-${postId}.mp4`;
               await sb.storage.createBucket('media', { public: true }).catch(() => {});
-              const { error: upErr } = await sb.storage.from('media').upload(fileName, buffer, { contentType: 'video/mp4', upsert: true });
+              const { error: upErr } = await sb.storage.from('media').upload(fileName, finalBuffer, { contentType: 'video/mp4', upsert: true });
               if (upErr) { lastError = `${model} upload: ${upErr.message}`; break; }
               const { data: urlData } = sb.storage.from('media').getPublicUrl(fileName);
               videoUrl = urlData.publicUrl;
@@ -1886,7 +2019,7 @@ Output ONLY the video prompt:`;
       motion_prompt: enhancedPrompt,
     }).eq('id', postId);
 
-    res.json({ ok: true, url: videoUrl, prompt: enhancedPrompt });
+    res.json({ ok: true, url: videoUrl, prompt: enhancedPrompt, voiceover: hebrewVO });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
