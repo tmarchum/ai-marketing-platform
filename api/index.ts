@@ -1415,8 +1415,8 @@ ${topic}
 4. If the topic is abstract ("community question", "insights"), invent a REAL SCENE that captures the feeling — e.g. "group of 40 people sitting in a circle at a corporate event, smiling and raising hands" NOT "floating question mark with connected spheres".
 5. Match brand mood/colors but AVOID brand metaphors.
 6. People must look ISRAELI (Middle Eastern / Mediterranean features, mixed light/dark hair, modern Israeli casual attire). Setting should look like an Israeli location (Tel Aviv / Jerusalem / Israeli cafe / Israeli office).
-7. NO text overlays of any kind. NO typography. NO logos. NO captions. NO subtitle bars. If there's any signage visible in the scene (storefront, T-shirt print, screen text), it MUST be written in **Hebrew (Israeli Hebrew, right-to-left script)** — never English, never Latin letters. Spell it out in your prompt as the literal Hebrew text that should appear.
-8. Single paragraph, 70-120 words, in English (the prompt language is English; only on-screen text in the image should be Hebrew).
+7. ⛔ ABSOLUTELY ZERO TEXT IN THE IMAGE. No letters, no numbers, no symbols, no typography, no logos, no captions, no signage with readable text, no T-shirt prints with words, no menu boards with text, no phone screens showing text, no book covers with titles, no street signs, no stickers with words. If a sign or screen would naturally appear in the scene, describe it as "blurred", "out-of-focus", "blank", or "covered" — never with readable letters. Image-generation models butcher non-Latin scripts (Hebrew, Arabic), so banning text entirely produces a clean professional image. Hebrew copy lives in the post caption, NOT in the image.
+8. Single paragraph, 70-120 words, in English. Explicitly include the phrase "no text anywhere in frame, all signage blurred or absent" near the end of the prompt.
 
 Output ONLY the image prompt description (no explanations):`;
           try { return (await callClaude(claudeMessage, claudeKey, 600)).trim(); }
@@ -1566,14 +1566,15 @@ ${topic}
 3. ✅ REQUIRED: Specific people in specific location, one clear action that unfolds over 8 seconds, natural camera movement (slow push-in / handheld / static / slow pan), realistic lighting.
 4. If topic is abstract, invent a REAL SCENE — e.g. "camera slowly pushes in on a host with microphone standing before a cheering crowd, hands raising in the air" NOT "abstract question mark floating with glowing orbs".
 5. People must look ISRAELI (Middle Eastern/Mediterranean features, modern Israeli casual attire, Israeli locations).
-6. NO text overlays, NO typography, NO subtitles. Any signage shown in the scene must be in HEBREW (Israeli Hebrew, right-to-left).
-7. 🔊 LANGUAGE — CRITICAL FOR VEO 3 AUDIO:
-   - All spoken dialogue/voiceover MUST be in **HEBREW (Israeli Hebrew, native-speaker accent)** — never English, never any other language.
-   - Write the dialogue line(s) literally in Hebrew script inside the prompt, prefixed by the character (e.g. \`The host says in Hebrew: "..."\`).
-   - Keep dialogue short (≤ 12 Hebrew words total for an 8-second clip) so it fits naturally.
-   - Specify: "spoken in fluent native Hebrew (Israeli accent)" so Veo generates Hebrew audio rather than defaulting to English.
-   - Ambient sounds (cafe chatter, street noise) should also sound Israeli (Hebrew background voices, no English).
-8. 80-140 words, single paragraph, English description — but the dialogue lines INSIDE the description are written in Hebrew script.
+6. ⛔ ABSOLUTELY ZERO ON-SCREEN TEXT. No subtitles, no captions, no titles, no signage with readable text, no T-shirt prints, no phone screens with text, no whiteboards, no books with titles. Veo butchers non-Latin scripts (Hebrew, Arabic) → any "Hebrew" it draws comes out as gibberish letters. Describe any signs/screens in the scene as "blurred", "blank", or "out-of-focus". Hebrew text lives in the post caption, NOT in the video frame.
+7. 🔊 SPOKEN AUDIO — CRITICAL FOR VEO 3:
+   - All spoken dialogue/voiceover MUST be in **HEBREW (Israeli Hebrew, native-speaker accent)** — never English.
+   - Write dialogue lines literally in Hebrew script: \`The host says in Hebrew: "ברוכים הבאים!"\`.
+   - Use SIMPLE everyday Hebrew words — short sentences, common vocabulary, nothing technical/literary. Veo's Hebrew TTS pronounces simple words better than complex ones.
+   - Keep dialogue ≤ 10 Hebrew words for an 8-second clip.
+   - Explicitly write in the prompt: "spoken in fluent native modern Hebrew with Israeli accent, clear pronunciation, natural cadence".
+   - Ambient sounds (cafe chatter, street noise) should be Hebrew background voices.
+8. 80-140 words, English description — Hebrew dialogue lines embedded inline. End the prompt with: "absolutely no text on screen, no subtitles, no captions, no readable signage anywhere in frame".
 
 Output ONLY the video prompt:`;
         enhancedPrompt = (await callClaude(claudeMessage, claudeKey, 600)).trim();

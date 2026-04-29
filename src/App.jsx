@@ -621,14 +621,17 @@ CRITICAL RULES:
 5. Include: specific subject (most important), ${isVideo ? "camera movement, action, " : "composition, camera angle, "}lighting, color palette, mood, style, setting, small authentic details.
 6. ${isVideo ? "Aspect: vertical 9:16 for mobile social media." : ""}
 7. People shown must look ISRAELI (Middle Eastern/Mediterranean features, modern Israeli casual attire, Israeli locations like Tel Aviv/Jerusalem).
-8. NO text overlays, NO typography, NO logos, NO captions, NO subtitles, NO watermarks. If any signage is visible in the scene (storefront sign, T-shirt print, screen text, menu, billboard), it MUST be written in **HEBREW (Israeli Hebrew, right-to-left script)** — never English, never Latin letters. Spell out the literal Hebrew text in your prompt.
+8. ⛔ ABSOLUTELY ZERO TEXT IN THE FRAME. No letters, no numbers, no symbols, no typography, no logos, no captions, no subtitles, no watermarks, no signage with readable text, no T-shirt prints with words, no phone screens with text, no menu boards, no book titles, no street signs. Image/video models render non-Latin scripts (Hebrew, Arabic) as gibberish — banning all text gives a clean professional result. Describe any signs/screens as "blurred", "blank", or "out-of-focus". Hebrew copy lives in the post caption, NOT in the visual.
 ${isVideo ? `9. 🔊 AUDIO LANGUAGE — CRITICAL FOR VEO 3:
    - All spoken dialogue / voiceover MUST be in **HEBREW (native Israeli accent)** — never English.
-   - Write the dialogue line(s) literally in Hebrew script in the prompt, e.g. \`The host says in Hebrew: "ברוכים הבאים לחידון!"\`.
-   - Keep dialogue ≤ 12 Hebrew words for an 8-second clip.
-   - Explicitly state in the prompt: "spoken in fluent native Hebrew (Israeli accent)".
-   - Background ambient sounds (chatter, street noise) should also sound Israeli (Hebrew background voices).
-10. Keep under 160 words.` : `9. Keep under 120 words.`} Output ONLY the final prompt text — no preamble, no labels.
+   - Write dialogue lines literally in Hebrew script: \`The host says in Hebrew: "ברוכים הבאים!"\`.
+   - Use SIMPLE everyday Hebrew words — short sentences, common vocabulary. Avoid technical/literary words (Veo's Hebrew TTS struggles with rare words).
+   - Keep dialogue ≤ 10 Hebrew words for an 8-second clip.
+   - Explicitly state: "spoken in fluent native modern Hebrew with Israeli accent, clear pronunciation, natural cadence".
+   - Background ambient sounds (chatter) should be Hebrew background voices.
+10. End the prompt with: "absolutely no text on screen, no subtitles, no captions, no readable signage anywhere".
+11. Keep under 160 words.` : `9. End the prompt with: "no text anywhere in frame, all signage blurred or absent".
+10. Keep under 120 words.`} Output ONLY the final prompt text — no preamble, no labels.
 
 Business context: ${biz.name || ""} — ${biz.description || biz.industry || ""}${visualIdentity}
 
@@ -651,8 +654,9 @@ Now write the ${isVideo ? "video" : "image"} prompt:`;
     });
     const d = await r.json();
     enhanced = (d.text || "").trim() || post.content;
-    // Always append a hard no-text constraint as insurance
-    enhanced += " No text, no letters, no typography, no logos, no captions anywhere in the frame.";
+    // Hard insurance — appended even if Claude ignored the rule above.
+    // Models still try to draw text unless told repeatedly.
+    enhanced += " ABSOLUTELY NO TEXT IN THE IMAGE OR VIDEO: no letters of any alphabet, no numbers, no symbols, no typography, no logos, no captions, no subtitles, no readable signage. All signs, T-shirts, phone screens, menus, books, billboards must be blurred, blank, or out-of-focus.";
   } catch {
     enhanced = post.content;
   }
