@@ -43,15 +43,40 @@ async function authMiddleware(req: any, res: any, next: any) {
 app.use(authMiddleware);
 
 // ── Hebrew text overlay on images ──
-// AI image models can't reliably render Hebrew. We generate clean (no-text) images
-// then composite a real Hebrew text caption on top using sharp + SVG.
-// Sharp's text renderer (librsvg+pango) on Vercel includes fonts that handle Hebrew correctly.
-function escapeXml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+// AI image models can't reliably render Hebrew script. We keep the AI image clean
+// of all text, then use @napi-rs/canvas (with an embedded Heebo TTF font) to draw
+// a perfect Hebrew caption box on top. Canvas + custom font = guaranteed correct rendering.
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import fs from 'node:fs';
+
+let _hebrewFontRegistered = false;
+async function ensureHebrewFont(): Promise<void> {
+  if (_hebrewFontRegistered) return;
+  try {
+    const { GlobalFonts } = await import('@napi-rs/canvas');
+    // The compiled api/index.js sits next to api/fonts/heebo-bold.ttf in the bundle
+    const candidates = [
+      path.join(process.cwd(), 'api', 'fonts', 'heebo-bold.ttf'),
+      path.join(process.cwd(), 'fonts', 'heebo-bold.ttf'),
+      path.join(path.dirname(fileURLToPath(import.meta.url)), 'fonts', 'heebo-bold.ttf'),
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fonts', 'heebo-bold.ttf'),
+    ];
+    for (const fp of candidates) {
+      if (fs.existsSync(fp)) {
+        GlobalFonts.registerFromPath(fp, 'Heebo');
+        _hebrewFontRegistered = true;
+        console.log(`[overlay] registered Heebo font from ${fp}`);
+        return;
+      }
+    }
+    console.error('[overlay] heebo-bold.ttf not found in any candidate path');
+  } catch (e: any) {
+    console.error('[overlay] font registration failed:', e.message);
+  }
 }
 
-// Wrap Hebrew text into N lines that fit a given width. Approximate — chars per line.
+// Wrap Hebrew text into N lines that fit a given width.
 function wrapHebrew(text: string, charsPerLine: number, maxLines: number): string[] {
   const words = text.trim().split(/\s+/);
   const lines: string[] = [];
@@ -73,18 +98,19 @@ function wrapHebrew(text: string, charsPerLine: number, maxLines: number): strin
 async function addHebrewOverlay(imageBuffer: Buffer, hebrewText: string, brandColor = '#1a1a2e'): Promise<Buffer> {
   if (!hebrewText || hebrewText.trim().length < 3) return imageBuffer;
   try {
+    await ensureHebrewFont();
     const sharpMod = (await import('sharp')).default;
+    const { createCanvas } = await import('@napi-rs/canvas');
+
     const meta = await sharpMod(imageBuffer).metadata();
     const W = meta.width || 1024;
     const H = meta.height || 1024;
 
-    // Pick text size relative to image — bigger images = bigger text
-    const fontSize = Math.round(W / 22);  // e.g. 1024px → 47px
+    const fontSize = Math.round(W / 22);
     const lineHeight = Math.round(fontSize * 1.35);
     const padX = Math.round(W * 0.05);
     const padY = Math.round(W * 0.04);
 
-    // Wrap Hebrew text — roughly 28-32 chars per line at fontSize/22
     const lines = wrapHebrew(hebrewText, 32, 3);
     if (!lines.length) return imageBuffer;
 
@@ -93,32 +119,63 @@ async function addHebrewOverlay(imageBuffer: Buffer, hebrewText: string, brandCo
     const boxW = W - Math.round(W * 0.08);
     const boxX = Math.round(W * 0.04);
 
-    const tspans = lines.map((line, i) =>
-      `<tspan x="${W / 2}" dy="${i === 0 ? 0 : lineHeight}">${escapeXml(line)}</tspan>`
-    ).join('');
+    // Render the overlay as a transparent PNG using canvas (real Hebrew font)
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
 
-    const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}">
-  <defs>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="${Math.round(fontSize * 0.05)}" stdDeviation="${Math.round(fontSize * 0.08)}" flood-color="#000" flood-opacity="0.55"/>
-    </filter>
-  </defs>
-  <rect x="${boxX}" y="${boxY}" width="${boxW}" height="${boxH}" rx="${Math.round(fontSize * 0.6)}"
-        fill="rgba(255,255,255,0.92)" stroke="${brandColor}" stroke-width="${Math.round(fontSize * 0.06)}"/>
-  <text x="${W / 2}" y="${boxY + padY + fontSize * 0.85}" text-anchor="middle"
-        font-family="Heebo, Assistant, 'Noto Sans Hebrew', 'DejaVu Sans', Arial, sans-serif"
-        font-size="${fontSize}" font-weight="700" fill="${brandColor}" direction="rtl"
-        filter="url(#shadow)">${tspans}</text>
-</svg>`;
+    // Drop shadow under the box
+    ctx.shadowColor = 'rgba(0,0,0,0.45)';
+    ctx.shadowBlur = Math.round(fontSize * 0.5);
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = Math.round(fontSize * 0.15);
+
+    // White rounded box with brand-colored border
+    const radius = Math.round(fontSize * 0.65);
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.strokeStyle = brandColor;
+    ctx.lineWidth = Math.round(fontSize * 0.08);
+    ctx.beginPath();
+    ctx.moveTo(boxX + radius, boxY);
+    ctx.lineTo(boxX + boxW - radius, boxY);
+    ctx.quadraticCurveTo(boxX + boxW, boxY, boxX + boxW, boxY + radius);
+    ctx.lineTo(boxX + boxW, boxY + boxH - radius);
+    ctx.quadraticCurveTo(boxX + boxW, boxY + boxH, boxX + boxW - radius, boxY + boxH);
+    ctx.lineTo(boxX + radius, boxY + boxH);
+    ctx.quadraticCurveTo(boxX, boxY + boxH, boxX, boxY + boxH - radius);
+    ctx.lineTo(boxX, boxY + radius);
+    ctx.quadraticCurveTo(boxX, boxY, boxX + radius, boxY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Reset shadow before drawing text
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+
+    // Draw Hebrew text — RTL with embedded Heebo font
+    ctx.font = `bold ${fontSize}px Heebo, sans-serif`;
+    ctx.fillStyle = brandColor;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.direction = 'rtl';
+
+    const totalTextH = lines.length * lineHeight;
+    let textY = boxY + (boxH - totalTextH) / 2 + lineHeight / 2;
+    for (const line of lines) {
+      ctx.fillText(line, W / 2, textY);
+      textY += lineHeight;
+    }
+
+    const overlayPng = canvas.toBuffer('image/png');
 
     const out = await sharpMod(imageBuffer)
-      .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
+      .composite([{ input: overlayPng, top: 0, left: 0 }])
       .jpeg({ quality: 92 })
       .toBuffer();
     return out;
   } catch (e) {
-    // If sharp fails for any reason, return original image rather than break the pipeline
     console.error('[overlay] failed:', (e as any).message);
     return imageBuffer;
   }
