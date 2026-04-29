@@ -51,11 +51,12 @@ import path from 'node:path';
 import fs from 'node:fs';
 
 let _hebrewFontRegistered = false;
+let _hebrewFontBuffer: Buffer | null = null;
 async function ensureHebrewFont(): Promise<void> {
   if (_hebrewFontRegistered) return;
   try {
     const { GlobalFonts } = await import('@napi-rs/canvas');
-    // The compiled api/index.js sits next to api/fonts/heebo-bold.ttf in the bundle
+    // 1. Try local file paths (bundled with the function)
     const candidates = [
       path.join(process.cwd(), 'api', 'fonts', 'heebo-bold.ttf'),
       path.join(process.cwd(), 'fonts', 'heebo-bold.ttf'),
@@ -66,11 +67,20 @@ async function ensureHebrewFont(): Promise<void> {
       if (fs.existsSync(fp)) {
         GlobalFonts.registerFromPath(fp, 'Heebo');
         _hebrewFontRegistered = true;
-        console.log(`[overlay] registered Heebo font from ${fp}`);
+        console.log(`[overlay] registered Heebo from disk: ${fp}`);
         return;
       }
     }
-    console.error('[overlay] heebo-bold.ttf not found in any candidate path');
+    // 2. Fallback: fetch from jsDelivr CDN (cached after first cold-start)
+    if (!_hebrewFontBuffer) {
+      console.log('[overlay] font not on disk, fetching from CDN…');
+      const r = await fetch('https://cdn.jsdelivr.net/gh/googlefonts/heebo@main/fonts/ttf/Heebo-Bold.ttf');
+      if (!r.ok) throw new Error(`CDN HTTP ${r.status}`);
+      _hebrewFontBuffer = Buffer.from(await r.arrayBuffer());
+    }
+    GlobalFonts.register(_hebrewFontBuffer, 'Heebo');
+    _hebrewFontRegistered = true;
+    console.log(`[overlay] registered Heebo from CDN (${_hebrewFontBuffer.length} bytes)`);
   } catch (e: any) {
     console.error('[overlay] font registration failed:', e.message);
   }
@@ -106,57 +116,39 @@ async function addHebrewOverlay(imageBuffer: Buffer, hebrewText: string, brandCo
     const W = meta.width || 1024;
     const H = meta.height || 1024;
 
-    const fontSize = Math.round(W / 22);
-    const lineHeight = Math.round(fontSize * 1.35);
-    const padX = Math.round(W * 0.05);
-    const padY = Math.round(W * 0.04);
+    // BIG, bold overlay — banner across the bottom
+    const fontSize = Math.round(W / 16);                // ~64px on 1024
+    const lineHeight = Math.round(fontSize * 1.25);
+    const padX = Math.round(W * 0.06);
+    const padY = Math.round(W * 0.05);
 
-    const lines = wrapHebrew(hebrewText, 32, 3);
+    const lines = wrapHebrew(hebrewText, 28, 3);
     if (!lines.length) return imageBuffer;
 
     const boxH = lineHeight * lines.length + padY * 2;
-    const boxY = H - boxH - Math.round(H * 0.04);
-    const boxW = W - Math.round(W * 0.08);
-    const boxX = Math.round(W * 0.04);
+    const boxW = W;                                      // full width banner
+    const boxX = 0;
+    const boxY = H - boxH;                               // flush bottom
 
-    // Render the overlay as a transparent PNG using canvas (real Hebrew font)
+    // Render the overlay onto a transparent canvas
     const canvas = createCanvas(W, H);
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, W, H);
 
-    // Drop shadow under the box
-    ctx.shadowColor = 'rgba(0,0,0,0.45)';
-    ctx.shadowBlur = Math.round(fontSize * 0.5);
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = Math.round(fontSize * 0.15);
+    // Solid white banner at the bottom
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(boxX, boxY, boxW, boxH);
 
-    // White rounded box with brand-colored border
-    const radius = Math.round(fontSize * 0.65);
-    ctx.fillStyle = 'rgba(255,255,255,0.95)';
-    ctx.strokeStyle = brandColor;
-    ctx.lineWidth = Math.round(fontSize * 0.08);
-    ctx.beginPath();
-    ctx.moveTo(boxX + radius, boxY);
-    ctx.lineTo(boxX + boxW - radius, boxY);
-    ctx.quadraticCurveTo(boxX + boxW, boxY, boxX + boxW, boxY + radius);
-    ctx.lineTo(boxX + boxW, boxY + boxH - radius);
-    ctx.quadraticCurveTo(boxX + boxW, boxY + boxH, boxX + boxW - radius, boxY + boxH);
-    ctx.lineTo(boxX + radius, boxY + boxH);
-    ctx.quadraticCurveTo(boxX, boxY + boxH, boxX, boxY + boxH - radius);
-    ctx.lineTo(boxX, boxY + radius);
-    ctx.quadraticCurveTo(boxX, boxY, boxX + radius, boxY);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    // Reset shadow before drawing text
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetY = 0;
-
-    // Draw Hebrew text — RTL with embedded Heebo font
-    ctx.font = `bold ${fontSize}px Heebo, sans-serif`;
+    // Brand-colored top edge of the banner (5% of font height)
+    const edgeH = Math.max(4, Math.round(fontSize * 0.1));
     ctx.fillStyle = brandColor;
+    ctx.fillRect(boxX, boxY, boxW, edgeH);
+
+    // Hebrew text — pure black for max contrast
+    ctx.font = `bold ${fontSize}px Heebo, sans-serif`;
+    ctx.fillStyle = '#0a0a0a';
+    ctx.strokeStyle = '#0a0a0a';
+    ctx.lineWidth = Math.max(1, Math.round(fontSize * 0.04));
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.direction = 'rtl';
@@ -164,6 +156,8 @@ async function addHebrewOverlay(imageBuffer: Buffer, hebrewText: string, brandCo
     const totalTextH = lines.length * lineHeight;
     let textY = boxY + (boxH - totalTextH) / 2 + lineHeight / 2;
     for (const line of lines) {
+      // Stroke first (faint outline) then fill — gives extra weight
+      ctx.strokeText(line, W / 2, textY);
       ctx.fillText(line, W / 2, textY);
       textY += lineHeight;
     }
@@ -1560,9 +1554,13 @@ ${topic}
 3. ✅ REQUIRED: Describe a SPECIFIC scene like a photographer would — who is in frame, what they're doing, where (real location), lighting, mood, camera angle.
 4. If the topic is abstract ("community question", "insights"), invent a REAL SCENE that captures the feeling — e.g. "group of 40 people sitting in a circle at a corporate event, smiling and raising hands" NOT "floating question mark with connected spheres".
 5. Match brand mood/colors but AVOID brand metaphors.
-6. People must look ISRAELI (Middle Eastern / Mediterranean features, mixed light/dark hair, modern Israeli casual attire). Setting should look like an Israeli location (Tel Aviv / Jerusalem / Israeli cafe / Israeli office).
-7. ⛔ ABSOLUTELY ZERO TEXT IN THE IMAGE. No letters, no numbers, no symbols, no typography, no logos, no captions, no signage with readable text, no T-shirt prints with words, no menu boards with text, no phone screens showing text, no book covers with titles, no street signs, no stickers with words. If a sign or screen would naturally appear in the scene, describe it as "blurred", "out-of-focus", "blank", or "covered" — never with readable letters. Image-generation models butcher non-Latin scripts (Hebrew, Arabic), so banning text entirely produces a clean professional image. Hebrew copy lives in the post caption, NOT in the image.
-8. Single paragraph, 70-120 words, in English. Explicitly include the phrase "no text anywhere in frame, all signage blurred or absent" near the end of the prompt.
+6. People must look ISRAELI (Middle Eastern / Mediterranean features, mixed light/dark hair, modern Israeli casual attire). Setting should look like an Israeli location (Tel Aviv / Jerusalem / Israeli cafe / Israeli office) OR a relevant travel destination.
+7. ⛔⛔⛔ NEVER DESCRIBE OBJECTS THAT NATURALLY HAVE TEXT/LOGOS ON THEM. The AI image model will try to draw text and produce gibberish. To eliminate this: DO NOT describe scenes containing airplanes, airline tails, billboards, advertisement boards, store signs, magazine covers, books, newspapers, T-shirts with prints, computer/phone screens displaying interfaces, menus, name tags, brand logos, banners, posters, road signs, flight tickets, boarding passes, passports open to the photo page, building signage, restaurant signs.
+   ✅ INSTEAD describe text-free alternatives:
+   - For travel topics: people walking on a beach at sunset (back view), a couple holding hands in a foreign city street, a hand reaching out a plane window towards clouds (no airline logo visible), feet in sand, suitcases being rolled (plain solid color, no brand), sunrise over mountains, a family laughing at a vacation rental balcony with a city skyline behind them.
+   - For business topics: people in conversation around a table (no laptops/phones with screens visible), hands cupping coffee, a smiling face close-up, two people shaking hands.
+8. ABSOLUTELY ZERO TEXT, LETTERS, NUMBERS, OR SYMBOLS in the image. Any incidental signs/screens must be described as "blurred beyond recognition", "out-of-focus", "obscured by lens flare", "behind the subject and not visible". The phrase "no text, no logos, no signage, no typography of any kind" must appear at the end of your prompt as a hard constraint.
+9. Single paragraph, 70-120 words, in English.
 
 Output ONLY the image prompt description (no explanations):`;
           try { return (await callClaude(claudeMessage, claudeKey, 600)).trim(); }
