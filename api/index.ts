@@ -3346,17 +3346,19 @@ Website content: ${websiteContent.slice(0, 500)}`, claudeKey, 500);
 // FACEBOOK OAUTH — connect pages via official flow
 // ══════════════════════════════════════════════════════════════
 
-const FB_APP_ID = process.env.FB_APP_ID || '';
-const FB_APP_SECRET = process.env.FB_APP_SECRET || '';
+// Env vars sometimes have trailing whitespace/newlines — trim defensively
+const FB_APP_ID = (process.env.FB_APP_ID || '').trim();
+const FB_APP_SECRET = (process.env.FB_APP_SECRET || '').trim();
 const PROD_URL = 'https://dashboard-steel-delta-52.vercel.app';
 
 // Step 1: Redirect user to Facebook login dialog
+// Accepts user_id via query (?u=...) or auth header so we can attribute pages
+// even when the browser navigates here directly (no Bearer header).
 app.get('/api/auth/facebook', (req: any, res) => {
   if (!FB_APP_ID) return res.status(503).json({ error: 'FB_APP_ID not configured' });
   const redirectUri = `${PROD_URL}/api/auth/facebook/callback`;
   const scopes = 'pages_manage_posts,pages_manage_engagement,pages_read_engagement,pages_show_list,pages_read_user_content,instagram_basic,instagram_content_publish,instagram_manage_insights';
-  // Pass user_id in state so we know who to assign tokens to
-  const state = req.userId || 'anon';
+  const state = (req.query.u as string) || req.userId || 'anon';
   const fbUrl = `https://www.facebook.com/v25.0/dialog/oauth?client_id=${FB_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scopes}&state=${state}&response_type=code`;
   res.redirect(fbUrl);
 });
