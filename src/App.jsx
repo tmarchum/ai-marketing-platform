@@ -3076,14 +3076,18 @@ function Businesses({ businesses, setBusinesses, posts }) {
                 {/* Facebook OAuth connect button */}
                 <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
                   {biz.social?.facebook?.connected && biz.social?.facebook?.tokens?.META_ACCESS_TOKEN
-                    ? <div style={{display:"flex",alignItems:"center",gap:6,background:"#10B98110",border:"1px solid #10B98122",borderRadius:8,padding:"4px 10px"}}>
+                    ? <button
+                        onClick={()=>{ if(confirm(`לחבר מחדש את ${biz.social.facebook.pageName||'הדף'} (כולל הרשאות Instagram)?`)) window.location.href='/api/auth/facebook'; }}
+                        title="לחץ לחיבור מחדש עם הרשאות אינסטגרם"
+                        style={{display:"flex",alignItems:"center",gap:6,background:"#10B98110",border:"1px solid #10B98122",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontFamily:"inherit"}}>
                         <span style={{color:"#10B981",fontSize:10}}>●</span>
                         <span style={{color:"#10B981",fontSize:11,fontWeight:600}}>📘 {biz.social.facebook.pageName || biz.social.facebook.tokens.META_PAGE_ID}</span>
-                      </div>
+                        <span style={{color:"#10B981",fontSize:10,opacity:0.7}}>↻</span>
+                      </button>
                     : <button onClick={()=>window.location.href='/api/auth/facebook'}
                         style={{background:"linear-gradient(135deg,#1877F2,#42A5F5)",color:"#fff",border:"none",borderRadius:8,
                           padding:"6px 14px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
-                        <span>📘</span> חבר פייסבוק
+                        <span>📘</span> חבר פייסבוק + אינסטגרם
                       </button>
                   }
                   {biz.social?.instagram?.connected && biz.social?.instagram?.accountId
@@ -3092,9 +3096,10 @@ function Businesses({ businesses, setBusinesses, posts }) {
                         <span style={{color:"#E1306C",fontSize:11,fontWeight:600}}>📸 @{biz.social.instagram.username}</span>
                       </div>
                     : biz.social?.facebook?.connected
-                      ? <div style={{background:"#E1306C10",border:"1px dashed #E1306C44",borderRadius:8,padding:"4px 10px",fontSize:10,color:"#E1306C"}}>
-                          📸 Instagram: חבר IG לדף FB ולחץ "חבר פייסבוק" שוב
-                        </div>
+                      ? <button onClick={()=>window.location.href='/api/auth/facebook'}
+                          style={{background:"#E1306C10",border:"1px dashed #E1306C66",borderRadius:8,padding:"4px 10px",fontSize:10,color:"#E1306C",cursor:"pointer",fontFamily:"inherit",fontWeight:600}}>
+                          📸 חבר אינסטגרם — לחץ לאישור הרשאות
+                        </button>
                       : null
                   }
                 </div>
