@@ -53,18 +53,23 @@ const SOCIAL_PLATFORMS = [
   ]},
 ];
 
+// Navigation grouped into logical sections — separators appear between groups in the sidebar
 const NAV_ITEMS = [
-  { id:"dashboard", icon:"📊", label:"דשבורד" },
-  { id:"businesses",icon:"🏪", label:"עסקים" },
-  { id:"sources",   icon:"🌐", label:"מקורות" },
-  { id:"content",   icon:"✍️", label:"תוכן" },
-  { id:"media",     icon:"🖼️", label:"מדיה AI" },
-  { id:"agents",    icon:"🤖", label:"סוכנים" },
-  { id:"publish",   icon:"📡", label:"פרסום" },
-  { id:"schedule",  icon:"📅", label:"תזמון" },
-  { id:"analytics", icon:"📈", label:"ניתוח" },
-  { id:"admin",     icon:"⚙️", label:"ניהול" },
-  { id:"superadmin",icon:"👑", label:"ניהול פלטפורמה", adminOnly:true },
+  { id:"dashboard", icon:"📊", label:"דשבורד", group:"main" },
+  // Setup
+  { id:"businesses",icon:"🏪", label:"עסקים", group:"setup" },
+  { id:"sources",   icon:"🌐", label:"מקורות", group:"setup" },
+  // Create
+  { id:"content",   icon:"✍️", label:"תוכן", group:"create" },
+  { id:"media",     icon:"🖼️", label:"מדיה AI", group:"create" },
+  { id:"agents",    icon:"🤖", label:"סוכנים", group:"create" },
+  // Publish + Track
+  { id:"publish",   icon:"📡", label:"פרסום", group:"distribute" },
+  { id:"schedule",  icon:"📅", label:"תזמון", group:"distribute" },
+  { id:"analytics", icon:"📈", label:"ניתוח", group:"distribute" },
+  // System
+  { id:"admin",     icon:"⚙️", label:"ניהול", group:"system" },
+  { id:"superadmin",icon:"👑", label:"ניהול פלטפורמה", adminOnly:true, group:"system" },
 ];
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -1258,7 +1263,7 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
 // ═══════════════════════════════════════════════════════════════════
 
 // DASHBOARD
-function Dashboard({ posts, sources, businesses }) {
+function Dashboard({ posts, sources, businesses, session }) {
   const published = posts.filter(p=>p.published).length;
   const withMedia = posts.filter(p=>p.pipeline?.done).length;
   const [metricsLoading, setMetricsLoading] = useState(false);
@@ -1307,8 +1312,72 @@ function Dashboard({ posts, sources, businesses }) {
     { label:"פורסמו", value:published, color:"#1877F2", icon:"📡" },
     { label:"עם מדיה AI", value:withMedia, color:"#F59E0B", icon:"🖼️" },
   ];
+  // ── System Status — surface broken/incomplete things so the user sees them at a glance ──
+  const sysIssues = [];
+  const now = new Date();
+  for (const b of (businesses||[])) {
+    const fb = b.social?.facebook;
+    const ig = b.social?.instagram;
+    if (fb?.connected && !ig?.accountId) {
+      sysIssues.push({
+        sev:"warn", icon:"📸",
+        title:`${b.name}: אינסטגרם לא מחובר`,
+        body:`הדף של פייסבוק מחובר, אבל IG Business Account ID חסר. הפוסטים יופיעו רק בפייסבוק.`,
+        action:"חבר אינסטגרם", actionFn:()=>window.location.href=`/api/auth/facebook?u=${encodeURIComponent(session?.user?.id||"")}`
+      });
+    }
+    if (!fb?.connected) {
+      sysIssues.push({
+        sev:"err", icon:"📘",
+        title:`${b.name}: פייסבוק לא מחובר`,
+        body:`בלי חיבור פייסבוק לא יוצאים פוסטים אוטומטית.`,
+        action:"חבר פייסבוק", actionFn:()=>window.location.href=`/api/auth/facebook?u=${encodeURIComponent(session?.user?.id||"")}`
+      });
+    }
+  }
+  // Overdue scheduled posts
+  const overdue = (posts||[]).filter(p=>p.scheduled_at && !p.published_at && new Date(p.scheduled_at) < now);
+  if (overdue.length > 0) {
+    sysIssues.push({
+      sev:"warn", icon:"⏰",
+      title:`${overdue.length} פוסטים בעיכוב`,
+      body:`תוזמנו לפני זמן ועוד לא פורסמו. ה-cron הבא ינסה שוב, או שיש בעיה בטוקן/מדיה.`,
+    });
+  }
+  // Posts without media that should have it
+  const missingMedia = (posts||[]).filter(p=>!p.published_at && p.scheduled_at && !p.image_url && !p.video_url && !p.media);
+  if (missingMedia.length > 0) {
+    sysIssues.push({
+      sev:"warn", icon:"🖼️",
+      title:`${missingMedia.length} פוסטים בלי מדיה`,
+      body:`תוזמנו אבל אין להם תמונה או סרטון. ב-Content/לוח פרסומים — לחץ "צור מדיה".`,
+    });
+  }
+
   return <div style={{animation:"fadeUp 0.3s ease"}}>
     <SectionTitle sub="סקירה כללית של המערכת">דשבורד</SectionTitle>
+
+    {/* System Status panel — only shows when there are actionable issues */}
+    {sysIssues.length > 0 && <Card style={{marginBottom:20,padding:0,overflow:"hidden",border:"1px solid #F59E0B33"}}>
+      <div style={{padding:"10px 16px",background:"linear-gradient(90deg,#F59E0B22,#F59E0B11)",borderBottom:"1px solid #F59E0B22",display:"flex",alignItems:"center",gap:8}}>
+        <span style={{fontSize:16}}>⚠️</span>
+        <div style={{color:"#92400E",fontSize:12,fontWeight:700}}>פעולות שדורשות תשומת לב ({sysIssues.length})</div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column"}}>
+        {sysIssues.map((iss,i)=>{
+          const tone = iss.sev==="err"?{bg:"#FEF2F2",border:"#FECACA",color:"#991B1B"}:{bg:"#FFFBEB",border:"#FDE68A",color:"#92400E"};
+          return <div key={i} style={{padding:"12px 16px",borderBottom:i<sysIssues.length-1?`1px solid ${T.borderLight}`:"none",display:"flex",alignItems:"center",gap:12,background:tone.bg}}>
+            <div style={{fontSize:20}}>{iss.icon}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{color:tone.color,fontSize:12,fontWeight:700}}>{iss.title}</div>
+              <div style={{color:tone.color,fontSize:11,opacity:0.85,marginTop:2}}>{iss.body}</div>
+            </div>
+            {iss.action && iss.actionFn && <button onClick={iss.actionFn} style={{background:tone.color,color:"#fff",border:"none",borderRadius:8,padding:"6px 12px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>{iss.action}</button>}
+          </div>;
+        })}
+      </div>
+    </Card>}
+
     <div className="stats-grid" style={{display:"grid",gap:12,marginBottom:28}}>
       {stats.map(s=><Card key={s.label} style={{textAlign:"center",padding:16}}>
         <div style={{fontSize:24}}>{s.icon}</div>
@@ -5662,20 +5731,27 @@ export default function App({ session }) {
           </div>
         </div>
 
-        {/* Nav */}
+        {/* Nav — grouped with subtle separators between sections */}
         <nav style={{flex:1,padding:"12px 8px",overflowY:"auto"}}>
-          {NAV_ITEMS.filter(item=>!item.adminOnly||isAdmin).map(item=><button key={item.id} onClick={()=>setPage(item.id)} style={{
-            width:"100%",display:"flex",alignItems:"center",gap:10,
-            background:page===item.id?T.accent+"10":"transparent",
-            border:`1px solid ${page===item.id?T.accent+"22":"transparent"}`,
-            borderRadius:10,padding:"10px 12px",cursor:"pointer",
-            color:page===item.id?T.accent:T.textMuted,fontWeight:page===item.id?600:400,
-            fontSize:13,fontFamily:"inherit",marginBottom:2,transition:"all 0.15s",
-            textAlign:"right",justifyContent:"flex-start"
-          }}>
-            <span style={{fontSize:15}}>{item.icon}</span>
-            {item.label}
-          </button>)}
+          {NAV_ITEMS.filter(item=>!item.adminOnly||isAdmin).map((item,i,arr)=>{
+            const prev = arr[i-1];
+            const showSeparator = prev && prev.group !== item.group;
+            return <div key={item.id}>
+              {showSeparator && <div style={{height:1,background:T.borderLight,margin:"8px 4px",opacity:0.6}}/>}
+              <button onClick={()=>setPage(item.id)} style={{
+                width:"100%",display:"flex",alignItems:"center",gap:10,
+                background:page===item.id?T.accent+"10":"transparent",
+                border:`1px solid ${page===item.id?T.accent+"22":"transparent"}`,
+                borderRadius:10,padding:"10px 12px",cursor:"pointer",
+                color:page===item.id?T.accent:T.textMuted,fontWeight:page===item.id?600:400,
+                fontSize:13,fontFamily:"inherit",marginBottom:2,transition:"all 0.15s",
+                textAlign:"right",justifyContent:"flex-start"
+              }}>
+                <span style={{fontSize:15}}>{item.icon}</span>
+                {item.label}
+              </button>
+            </div>;
+          })}
         </nav>
 
         {/* Status */}
@@ -5802,7 +5878,7 @@ export default function App({ session }) {
         </div>}
 
         <div style={{padding:"20px",maxWidth:920,margin:"0 auto"}}>
-          {page==="dashboard"&&<Dashboard posts={posts} sources={sources} businesses={businesses}/>}
+          {page==="dashboard"&&<Dashboard posts={posts} sources={sources} businesses={businesses} session={session}/>}
           {page==="businesses"&&<Businesses businesses={businesses} setBusinesses={setBusinesses} posts={posts}/>}
           {page==="sources"&&<Sources sources={sources} setSources={setSources}/>}
           {page==="content"&&<Content posts={posts} setPosts={setPosts} sources={sources} businesses={businesses} setBusinesses={setBusinesses} analyticsData={analyticsData}/>}
