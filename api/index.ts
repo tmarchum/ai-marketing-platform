@@ -4572,20 +4572,35 @@ app.post('/api/leads', async (req, res) => {
 </div></body></html>`;
       await sendEmail(ownerEmail, `🔔 ליד חדש: ${name} — ${bizRow.name}`, html);
 
-      // ── WhatsApp alert (#14) — fire-and-forget. Uses CallMeBot HTTP API.
-      // User registers their phone once at callmebot.com/blog/free-api-whatsapp-messages
-      // and saves their API key as CALLMEBOT_API_KEY in admin keys.
+      // ── Lead alert (#14) — fire-and-forget. Two delivery channels:
+      // 1. Telegram (recommended) — user creates a bot via @BotFather and saves
+      //    TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID in admin keys.
+      // 2. CallMeBot WhatsApp (legacy) — user registers phone at callmebot.com
+      //    and saves CALLMEBOT_API_KEY in admin keys.
+      const lines = [
+        `🔔 ליד חדש — ${bizRow.name}`,
+        `👤 ${name}`,
+        phone ? `📱 ${phone}` : '',
+        email ? `📧 ${email}` : '',
+        message ? `💬 ${message.slice(0, 200)}` : '',
+      ].filter(Boolean).join('\n');
+
+      // Telegram
+      const tgToken = await getUserKey(sb, bizRow.user_id, 'TELEGRAM_BOT_TOKEN');
+      const tgChatId = await getUserKey(sb, bizRow.user_id, 'TELEGRAM_CHAT_ID');
+      if (tgToken && tgChatId) {
+        fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: tgChatId, text: lines, parse_mode: 'HTML' }),
+        }).catch(() => {});
+      }
+
+      // CallMeBot WhatsApp (legacy fallback)
       const callmebotKey = await getUserKey(sb, bizRow.user_id, 'CALLMEBOT_API_KEY');
       const notifPhone = await getUserKey(sb, bizRow.user_id, 'NOTIFICATION_PHONE');
       if (callmebotKey && notifPhone) {
         const cleanPhone = notifPhone.replace(/[^0-9]/g, '');
-        const lines = [
-          `🔔 ליד חדש — ${bizRow.name}`,
-          `👤 ${name}`,
-          phone ? `📱 ${phone}` : '',
-          email ? `📧 ${email}` : '',
-          message ? `💬 ${message.slice(0, 200)}` : '',
-        ].filter(Boolean).join('\n');
         const waUrl = `https://api.callmebot.com/whatsapp.php?phone=${cleanPhone}&text=${encodeURIComponent(lines)}&apikey=${callmebotKey}`;
         fetch(waUrl).catch(() => {});
       }
