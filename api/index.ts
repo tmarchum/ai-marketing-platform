@@ -1978,7 +1978,12 @@ app.post('/api/posts/:id/generate-media', async (req: any, res) => {
     const hebrewHeadline = (overlayCandidate || '').slice(0, 70);
     const brandColor = biz?.color || '#1a1a2e';
 
-    const topic = post.image_prompt || (post.content || '').slice(0, 300);
+    // CACHE NOTE: `topic` feeds the cache key, so it MUST be deterministic from the
+    // post itself — never from `post.image_prompt`, which we overwrite with the LLM-
+    // expanded English prompt at the end of this handler. If we read image_prompt
+    // here, the second generation for the same post would compute a different cache
+    // key (English finalPrompt vs original Hebrew content) and miss every time.
+    const topic = (post.content || '').slice(0, 300) || (post.image_prompt || '').slice(0, 300);
     const vi = biz?.visual_identity || '';
     const bizDescription = biz?.description || '';
     const bizName = biz?.name || '';
@@ -2164,7 +2169,11 @@ app.post('/api/posts/:id/generate-video', async (req: any, res) => {
     const cloudTtsKey = await getUserKey(sb, req.userId, 'CLOUD_TTS_API_KEY');
     if (!geminiKey) return res.status(503).json({ error: 'GEMINI_API_KEY not set' });
 
-    const topic = post.motion_prompt || post.image_prompt || (post.content || '').slice(0, 200);
+    // CACHE NOTE: `topic` feeds the cache key. Same bug as image generator —
+    // `motion_prompt` and `image_prompt` get overwritten with LLM-enhanced English
+    // versions at the end of their respective handlers, so they are non-deterministic
+    // across runs. Always derive from `post.content`, which the user owns.
+    const topic = (post.content || '').slice(0, 200) || post.motion_prompt || post.image_prompt || '';
     const vi = biz?.visual_identity || '';
 
     // ── Hebrew voiceover line — synthesized separately by Gemini TTS, then muxed
