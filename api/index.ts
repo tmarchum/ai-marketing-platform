@@ -66,8 +66,24 @@ app.get('/api/debug/errors', (req: any, res) => {
   res.json({ count: _errorLog.length, errors: _errorLog.slice(-50).reverse() });
 });
 
-// One-shot helper to save the CLOUD_TTS_API_KEY for the primary user. Idempotent,
-// safe to call once and ignore after. Will be removed in next cleanup pass.
+// Helper to save any single key/value to user_api_keys via API. No auth so it's
+// a temporary endpoint — remove in next cleanup pass.
+app.post('/api/debug/save-key', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json({ error: 'no db' });
+  const { user_id, key_name, key_value } = req.body;
+  if (!user_id || !key_name || !key_value) return res.json({ error: 'user_id + key_name + key_value required' });
+  try {
+    const { error } = await sb.from('user_api_keys').upsert(
+      { user_id, key_name, key_value, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id,key_name' }
+    );
+    if (error) return res.json({ error: error.message });
+    res.json({ ok: true, saved: key_name });
+  } catch (e: any) { res.json({ error: e.message }); }
+});
+
+// Backward-compat alias for the cloud TTS save
 app.post('/api/debug/save-cloud-tts-key', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.json({ error: 'no db' });
