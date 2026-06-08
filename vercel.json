@@ -50,7 +50,23 @@
     },
     {
       "path": "/api/cron/dm-replies",
-      "schedule": "0 */4 * * *"
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/dm-replies",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/dm-replies",
+      "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/dm-replies",
+      "schedule": "0 16 * * *"
+    },
+    {
+      "path": "/api/cron/dm-replies",
+      "schedule": "0 20 * * *"
     }
   ],
   "framework": "vite",
