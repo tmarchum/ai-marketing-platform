@@ -3338,7 +3338,9 @@ app.get('/api/cron/dm-replies', async (req: any, res) => {
 
     const results: any[] = [];
     for (const biz of (businesses || [])) {
-      if (!biz.auto_dm_reply_enabled) continue;
+      // Opt-in flag is stored in business_profile JSONB (no migration needed)
+      const dmEnabled = biz.auto_dm_reply_enabled || biz.business_profile?.auto_dm_reply_enabled;
+      if (!dmEnabled) continue;
       const tokens = biz.social?.facebook?.tokens;
       const pageId = tokens?.META_PAGE_ID;
       const pageToken = tokens?.META_ACCESS_TOKEN;

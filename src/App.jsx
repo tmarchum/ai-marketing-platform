@@ -2968,6 +2968,25 @@ function Businesses({ businesses, setBusinesses, posts }) {
               <div style={{color:T.textDim,fontSize:10,marginTop:6}}>💡 טקסט באנגלית. ככל שיותר ספציפי ("wooden bakery counter with fresh sourdough loaves, warm golden light, hands kneading dough") — התמונות יהיו יותר מדויקות</div>
             </div>
 
+            {/* AI Messenger auto-reply toggle (#13) */}
+            <div style={{background:"#0EA5E908",border:`1px solid #0EA5E933`,borderRadius:10,padding:12,marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                <div>
+                  <div style={{color:"#0EA5E9",fontSize:11,fontWeight:700,marginBottom:2}}>🤖 מענה אוטומטי ב-Messenger</div>
+                  <div style={{color:T.textMuted,fontSize:10}}>AI יענה ללקוחות שכותבים לדף Facebook עם הטון של העסק + הידע מבסיס הנתונים</div>
+                </div>
+                <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                  <input type="checkbox" checked={!!biz.business_profile?.auto_dm_reply_enabled}
+                    onChange={async e=>{
+                      const bp = {...(biz.business_profile||{}), auto_dm_reply_enabled: e.target.checked};
+                      updateBiz(biz.id, {business_profile: bp});
+                      try { await authFetch(`/api/businesses/${biz.id}`, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({business_profile: bp})}); } catch {}
+                    }}/>
+                  <span style={{color:T.textSec,fontSize:11,fontWeight:600}}>{biz.business_profile?.auto_dm_reply_enabled ? "פעיל" : "כבוי"}</span>
+                </label>
+              </div>
+            </div>
+
             {/* Publish schedule per business */}
             <div style={{background:"#F59E0B08",border:`1px solid #F59E0B33`,borderRadius:10,padding:12,marginBottom:14}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8,flexWrap:"wrap"}}>
