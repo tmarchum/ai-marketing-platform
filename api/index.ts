@@ -83,6 +83,40 @@ app.post('/api/debug/save-key', async (req: any, res) => {
   } catch (e: any) { res.json({ error: e.message }); }
 });
 
+// Debug: check what notification keys are stored for a user
+app.get('/api/debug/notif-keys', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json({ error: 'no db' });
+  const user_id = (req.query.user_id as string) || '702b86ed-4ce5-4e70-98d0-50a55dbf4af6';
+  const names = ['TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID','NOTIFICATION_EMAIL','NOTIFICATION_PHONE','CALLMEBOT_API_KEY','GMAIL_USER','GMAIL_APP_PASSWORD'];
+  const { data } = await sb.from('user_api_keys').select('key_name, key_value').eq('user_id', user_id).in('key_name', names);
+  const result: Record<string,string> = {};
+  for (const r of (data || [])) {
+    const v = r.key_value || '';
+    result[r.key_name] = v.length > 15 ? v.slice(0,8) + '...' + v.slice(-4) + ` (len ${v.length})` : v;
+  }
+  res.json({ user_id, found: Object.keys(result), values: result });
+});
+
+// Debug: try to send a test message via the SAME code path the leads use
+app.get('/api/debug/test-telegram', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json({ error: 'no db' });
+  const user_id = (req.query.user_id as string) || '702b86ed-4ce5-4e70-98d0-50a55dbf4af6';
+  const tgToken = await getUserKey(sb, user_id, 'TELEGRAM_BOT_TOKEN');
+  const tgChatId = await getUserKey(sb, user_id, 'TELEGRAM_CHAT_ID');
+  if (!tgToken || !tgChatId) return res.json({ error: 'keys missing', has_token: !!tgToken, has_chat_id: !!tgChatId });
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: tgChatId, text: '🧪 בדיקת telegram מהשרת — אם אתה רואה את זה, החיבור פעיל' }),
+    });
+    const d = await r.json() as any;
+    res.json({ http: r.status, ok: d.ok, error: d.description || null, chat_id_used: tgChatId, token_prefix: tgToken.slice(0,15) });
+  } catch (e: any) { res.json({ exception: e.message }); }
+});
+
 // Backward-compat alias for the cloud TTS save
 app.post('/api/debug/save-cloud-tts-key', async (req: any, res) => {
   const sb = getSupabase();
