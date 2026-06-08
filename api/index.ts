@@ -1914,10 +1914,10 @@ Composition: position the main subjects in the upper-2/3 of the frame and keep t
       return { base64: null, contentType: 'image/png', error: lastError };
     }
 
-    // ── CACHE LOOKUP — skip Imagen entirely if the same prompt + headline already
-    //    produced an image for this business. Saves ~$0.04 per hit per variant.
+    // ── CACHE LOOKUP — use deterministic input (topic + headline + brand color),
+    //    not the LLM-enhanced finalPrompt (which is non-deterministic).
     const wantFresh = req.query.force === '1' || req.body?.force === true;
-    const imageCacheKey = mediaCacheKey('image', [post.business_id || post.business_name, finalPrompt, hebrewHeadline, brandColor]);
+    const imageCacheKey = mediaCacheKey('image', [post.business_id || post.business_name, topic.slice(0, 500), hebrewHeadline, brandColor]);
     let cacheHit = false;
     let uploaded: string[] = [];
     if (!wantFresh) {
@@ -2072,11 +2072,11 @@ Output ONLY the video prompt:`;
     let cacheHit = false;
     const TIMEOUT = 55_000;
 
-    // ── CACHE LOOKUP — skip Veo entirely if the exact same prompt+TTS combo
-    //    already produced a video for this business. Saves ~$0.50 per hit.
-    //    Pass ?force=1 to bypass cache (e.g. for variety in marketing posts).
+    // ── CACHE LOOKUP — skip Veo entirely if the exact same INPUTS already
+    //    produced a video. Saves ~$0.50 per hit. Use the deterministic INPUT
+    //    (topic + voiceover), NOT the LLM-enhanced prompt (which is non-deterministic).
     const wantFresh = req.query.force === '1' || req.body?.force === true;
-    const videoCacheKey = mediaCacheKey('video', [post.business_id || post.business_name, enhancedPrompt, hebrewVO, durationSeconds, '9:16']);
+    const videoCacheKey = mediaCacheKey('video', [post.business_id || post.business_name, topic.slice(0, 500), hebrewVO, durationSeconds, '9:16']);
     if (!wantFresh) {
       const cachedUrl = await getCachedMediaUrl(sb, 'video', videoCacheKey, 'mp4');
       if (cachedUrl) {
