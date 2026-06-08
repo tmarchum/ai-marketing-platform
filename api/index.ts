@@ -4245,7 +4245,7 @@ app.get('/api/auth/facebook', (req: any, res) => {
   if (!FB_APP_ID) return res.status(503).json({ error: 'FB_APP_ID not configured' });
   const redirectUri = `${PROD_URL}/api/auth/facebook/callback`;
   // Verified scope names (Meta UI shows "instagram_content_publishing" but actual OAuth scope is "instagram_content_publish")
-  const scopes = 'pages_manage_posts,pages_read_engagement,pages_show_list,business_management,instagram_basic,instagram_content_publish';
+  const scopes = 'pages_manage_posts,pages_read_engagement,pages_show_list,business_management,instagram_basic,instagram_content_publish,pages_messaging,pages_manage_metadata';
   const state = (req.query.u as string) || req.userId || 'anon';
   const fbUrl = `https://www.facebook.com/v25.0/dialog/oauth?client_id=${FB_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scopes}&state=${state}&response_type=code`;
   res.redirect(fbUrl);
