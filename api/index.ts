@@ -3398,15 +3398,17 @@ ${post.content}
     };
     let variants: any;
     try {
-      variants = await callTextForJson(prompt, schema, claudeKey, geminiKey, 1500);
+      variants = await callTextForJson(prompt, schema, claudeKey, geminiKey, 3000);
     } catch (jsonErr: any) {
-      // Fallback: free-form text + best-effort parse
-      const raw = await callText(prompt, claudeKey, geminiKey, 1500);
+      const raw = await callText(prompt, claudeKey, geminiKey, 3000);
       let clean = (raw || '').replace(/```json\n?|```/g, '').trim();
-      const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
-      if (fb < 0 || lb < fb) throw new Error(`No JSON in response (${raw.slice(0, 200)}…)`);
-      clean = clean.slice(fb, lb + 1);
-      variants = JSON.parse(clean);
+      const fb = clean.indexOf('{');
+      let lb = clean.lastIndexOf('}');
+      if (fb < 0) throw new Error(`No JSON in response (${raw.slice(0, 300)}…)`);
+      if (lb < fb) clean = clean.slice(fb) + '"}}';
+      else clean = clean.slice(fb, lb + 1);
+      try { variants = JSON.parse(clean); }
+      catch { throw new Error(`JSON parse failed: ${clean.slice(0, 300)}…`); }
     }
 
     await sb.from('content_posts').update({
@@ -3460,14 +3462,19 @@ Return ONLY JSON: {"content": "alternate Hebrew text", "hashtags": ["#tag1", "#t
     };
     let parsed: any;
     try {
-      parsed = await callTextForJson(variantPrompt, schema, claudeKey, geminiKey, 800);
-    } catch {
-      const raw = await callText(variantPrompt, claudeKey, geminiKey, 800);
+      parsed = await callTextForJson(variantPrompt, schema, claudeKey, geminiKey, 2000);
+    } catch (jsonErr: any) {
+      // Fallback: free-form text. Be generous with tokens so JSON doesn't get cut mid-stream.
+      const raw = await callText(variantPrompt, claudeKey, geminiKey, 2000);
       let clean = (raw || '').replace(/```json\n?|```/g, '').trim();
-      const fb2 = clean.indexOf('{'); const lb2 = clean.lastIndexOf('}');
-      if (fb2 < 0 || lb2 < fb2) throw new Error(`No JSON in response (${raw.slice(0, 200)}…)`);
-      clean = clean.slice(fb2, lb2 + 1);
-      parsed = JSON.parse(clean);
+      const fb2 = clean.indexOf('{');
+      let lb2 = clean.lastIndexOf('}');
+      if (fb2 < 0) throw new Error(`No JSON in response (${raw.slice(0, 300)}…)`);
+      // Try to repair truncated JSON: if no closing brace, append one
+      if (lb2 < fb2) clean = clean.slice(fb2) + '"}';
+      else clean = clean.slice(fb2, lb2 + 1);
+      try { parsed = JSON.parse(clean); }
+      catch { throw new Error(`JSON parse failed: ${clean.slice(0, 300)}…`); }
     }
 
     const existing = post.content_variants || [];
