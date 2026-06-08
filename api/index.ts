@@ -42,6 +42,46 @@ async function authMiddleware(req: any, res: any, next: any) {
 }
 app.use(authMiddleware);
 
+// ── Media generation cache ──
+// AI media gen is expensive (Veo ≈ $0.50/clip, Imagen ≈ $0.04/img). When the same
+// inputs produce the same output (deterministic prompt + same business + same TTS),
+// reuse the existing file from a previous generation instead of paying again.
+//
+// Cache key = SHA-256(kind + business_id + prompt + tts_text + duration + aspectRatio).
+// Storage path = `media-cache/{kind}/{key}.{ext}` — public bucket, dedup automatically.
+import { createHash } from 'node:crypto';
+
+function mediaCacheKey(kind: string, parts: (string | number | undefined | null)[]): string {
+  const payload = `${kind}::${parts.map(p => String(p ?? '')).join('::')}`;
+  return createHash('sha256').update(payload).digest('hex').slice(0, 32);
+}
+
+async function getCachedMediaUrl(sb: any, kind: 'video' | 'image', key: string, ext: string): Promise<string | null> {
+  if (!sb) return null;
+  const path = `cache/${kind}/${key}.${ext}`;
+  try {
+    // List the cache directory and look for the file
+    const { data, error } = await sb.storage.from('media').list(`cache/${kind}`, { limit: 1, search: `${key}.${ext}` });
+    if (error || !data?.length) return null;
+    const found = data.find((f: any) => f.name === `${key}.${ext}`);
+    if (!found) return null;
+    const { data: urlData } = sb.storage.from('media').getPublicUrl(path);
+    return urlData?.publicUrl || null;
+  } catch { return null; }
+}
+
+async function saveCachedMedia(sb: any, kind: 'video' | 'image', key: string, ext: string, buffer: Buffer, contentType: string): Promise<string | null> {
+  if (!sb) return null;
+  const path = `cache/${kind}/${key}.${ext}`;
+  try {
+    await sb.storage.createBucket('media', { public: true }).catch(() => {});
+    const { error } = await sb.storage.from('media').upload(path, buffer, { contentType, upsert: true });
+    if (error) return null;
+    const { data: urlData } = sb.storage.from('media').getPublicUrl(path);
+    return urlData?.publicUrl || null;
+  } catch { return null; }
+}
+
 // ── Hebrew text overlay on images ──
 // AI image models can't reliably render Hebrew script. We keep the AI image clean
 // of all text, then use @napi-rs/canvas (with an embedded Heebo TTF font) to draw
@@ -1799,7 +1839,7 @@ OUTPUT: 2-3 sentences, English, describing ONE concrete scene with people. Israe
 Examples for a flight-deals business: "A young Israeli couple stands on a quiet beach at sunset, holding hands, looking out at the horizon." / "A father lifts his laughing daughter onto his shoulders at a Mediterranean overlook, golden-hour light." / "A traveler's bare feet rest on a balcony railing with a blurred European skyline beyond, holding a coffee."
 
 Output ONLY the 2-3 sentence scene description, no labels:`;
-          try { return (await callClaude(claudeMessage, claudeKey, 200)).trim(); }
+          try { return (await callText(claudeMessage, claudeKey, geminiKey, 200)).trim(); }
           catch { return topic; }
         })()
       : topic;
@@ -1874,13 +1914,27 @@ Composition: position the main subjects in the upper-2/3 of the frame and keep t
       return { base64: null, contentType: 'image/png', error: lastError };
     }
 
-    // Generate in parallel
-    const results = await Promise.all(
+    // ── CACHE LOOKUP — skip Imagen entirely if the same prompt + headline already
+    //    produced an image for this business. Saves ~$0.04 per hit per variant.
+    const wantFresh = req.query.force === '1' || req.body?.force === true;
+    const imageCacheKey = mediaCacheKey('image', [post.business_id || post.business_name, finalPrompt, hebrewHeadline, brandColor]);
+    let cacheHit = false;
+    let uploaded: string[] = [];
+    if (!wantFresh) {
+      const cachedUrl = await getCachedMediaUrl(sb, 'image', imageCacheKey, 'jpg');
+      if (cachedUrl) {
+        uploaded = [cachedUrl];
+        cacheHit = true;
+        console.log(`[cache] image HIT key=${imageCacheKey.slice(0, 12)}`);
+      }
+    }
+
+    // Generate in parallel (skip if cache hit)
+    const successful: { base64: string; contentType: string }[] = cacheHit ? [] : (await Promise.all(
       Array.from({ length: numVariants }, (_, i) => generateOne(i))
-    );
-    const successful = results.filter(r => r.base64);
-    if (successful.length === 0) {
-      return res.status(500).json({ error: 'All variants failed', details: results[0]?.error });
+    )).filter((r): r is { base64: string; contentType: string; error: string } => !!r.base64) as any;
+    if (!cacheHit && successful.length === 0) {
+      return res.status(500).json({ error: 'All variants failed' });
     }
 
     // Image models render Hebrew letter-shapes correctly but mangle the actual
@@ -1889,7 +1943,6 @@ Composition: position the main subjects in the upper-2/3 of the frame and keep t
     // a real Heebo font. That guarantees 100% correct Hebrew spelling.
     const fontStatus = await ensureHebrewFont();
     await sb.storage.createBucket('media', { public: true }).catch(() => {});
-    const uploaded: string[] = [];
     for (let i = 0; i < successful.length; i++) {
       const r = successful[i];
       const rawBuffer = Buffer.from(r.base64!, 'base64');
@@ -1901,6 +1954,8 @@ Composition: position the main subjects in the upper-2/3 of the frame and keep t
       if (upErr) continue;
       const { data: urlData } = sb.storage.from('media').getPublicUrl(fileName);
       uploaded.push(urlData.publicUrl);
+      // Save first successful variant to cache for future identical generations
+      if (i === 0) saveCachedMedia(sb, 'image', imageCacheKey, 'jpg', finalBuffer, 'image/jpeg').catch(() => {});
     }
 
     if (uploaded.length === 0) {
@@ -1922,6 +1977,7 @@ Composition: position the main subjects in the upper-2/3 of the frame and keep t
       prompt: finalPrompt,
       headline: hebrewHeadline,
       font: fontStatus,
+      cache: { hit: cacheHit, key: imageCacheKey.slice(0, 12) },
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2002,7 +2058,7 @@ ${topic}
 8. 80-140 words, English description. End with: "no spoken dialogue, no narration, no on-screen text, only ambient sound and subtle music".
 
 Output ONLY the video prompt:`;
-        enhancedPrompt = (await callClaude(claudeMessage, claudeKey, 600)).trim();
+        enhancedPrompt = (await callText(claudeMessage, claudeKey, geminiKey, 600)).trim();
       } catch {}
     }
 
@@ -2013,9 +2069,24 @@ Output ONLY the video prompt:`;
     let videoUrl: string | null = null;
     let lastError = '';
     let ttsStatus: { source: string; muxed: boolean; error?: string; ffmpegPath?: string } = { source: 'skipped', muxed: false };
+    let cacheHit = false;
     const TIMEOUT = 55_000;
 
-    for (const model of veoModels) {
+    // ── CACHE LOOKUP — skip Veo entirely if the exact same prompt+TTS combo
+    //    already produced a video for this business. Saves ~$0.50 per hit.
+    //    Pass ?force=1 to bypass cache (e.g. for variety in marketing posts).
+    const wantFresh = req.query.force === '1' || req.body?.force === true;
+    const videoCacheKey = mediaCacheKey('video', [post.business_id || post.business_name, enhancedPrompt, hebrewVO, durationSeconds, '9:16']);
+    if (!wantFresh) {
+      const cachedUrl = await getCachedMediaUrl(sb, 'video', videoCacheKey, 'mp4');
+      if (cachedUrl) {
+        videoUrl = cachedUrl;
+        cacheHit = true;
+        console.log(`[cache] video HIT key=${videoCacheKey.slice(0, 12)}`);
+      }
+    }
+
+    for (const model of (cacheHit ? [] : veoModels)) {
       if (videoUrl) break;
       try {
         const ac = new AbortController();
@@ -2064,7 +2135,7 @@ Output ONLY the video prompt:`;
                   const muxResult = await muxAudioOnVideo(veoBuffer, ttsResult.wav, durationSeconds);
                   if (muxResult.ffmpegPath) ttsStatus.ffmpegPath = muxResult.ffmpegPath;
                   if (muxResult.buffer) {
-                    finalBuffer = muxResult.buffer;
+                    finalBuffer = muxResult.buffer as any;
                     ttsStatus.muxed = true;
                   } else {
                     ttsStatus.error = (ttsStatus.error ? ttsStatus.error + ' | ' : '') + `mux: ${muxResult.error || 'unknown'}`;
@@ -2078,6 +2149,8 @@ Output ONLY the video prompt:`;
               if (upErr) { lastError = `${model} upload: ${upErr.message}`; break; }
               const { data: urlData } = sb.storage.from('media').getPublicUrl(fileName);
               videoUrl = urlData.publicUrl;
+              // Store in cache for future identical generations
+              saveCachedMedia(sb, 'video', videoCacheKey, 'mp4', finalBuffer, 'video/mp4').catch(() => {});
             } else {
               lastError = `${model}: no video in response`;
             }
@@ -2096,7 +2169,7 @@ Output ONLY the video prompt:`;
       motion_prompt: enhancedPrompt,
     }).eq('id', postId);
 
-    res.json({ ok: true, url: videoUrl, prompt: enhancedPrompt, voiceover: hebrewVO, tts: ttsStatus });
+    res.json({ ok: true, url: videoUrl, prompt: enhancedPrompt, voiceover: hebrewVO, tts: ttsStatus, cache: cacheHit ? { hit: true, key: videoCacheKey.slice(0, 12) } : { hit: false, key: videoCacheKey.slice(0, 12) } });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -3099,6 +3172,91 @@ async function callClaude(prompt: string, apiKey: string, maxTokens = 1200): Pro
     } catch (e: any) { lastErr = `${model}: ${e.message}`; }
   }
   throw new Error(`Claude API failed — ${lastErr}`);
+}
+
+// Gemini text-generation helper — same API surface as callClaude, half the cost.
+// Used as fallback when Anthropic key isn't set, or as primary when PREFER_GEMINI=1.
+async function callGemini(prompt: string, apiKey: string, maxTokens = 1200): Promise<string> {
+  const MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash'];
+  let lastErr = '';
+  for (const model of MODELS) {
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 },
+        }),
+      });
+      const d = await r.json() as any;
+      if (d.error) { lastErr = `${model}: ${d.error.message || JSON.stringify(d.error)}`; continue; }
+      const text = d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      if (text) return text;
+      lastErr = `${model}: empty response`;
+    } catch (e: any) { lastErr = `${model}: ${e.message}`; }
+  }
+  throw new Error(`Gemini text gen failed — ${lastErr}`);
+}
+
+// Smart text generator — tries Gemini first (cheap), falls back to Claude (high quality).
+// Set PREFER_CLAUDE=1 in env to flip the order for quality-critical calls.
+async function callText(prompt: string, claudeKey: string | null, geminiKey: string | null, maxTokens = 1200): Promise<string> {
+  const preferClaude = process.env.PREFER_CLAUDE === '1';
+  const order = preferClaude
+    ? [{ name: 'claude', key: claudeKey, fn: callClaude }, { name: 'gemini', key: geminiKey, fn: callGemini }]
+    : [{ name: 'gemini', key: geminiKey, fn: callGemini }, { name: 'claude', key: claudeKey, fn: callClaude }];
+  const errs: string[] = [];
+  for (const { name, key, fn } of order) {
+    if (!key) { errs.push(`${name}: no key`); continue; }
+    try { return await fn(prompt, key, maxTokens); }
+    catch (e: any) { errs.push(`${name}: ${e.message}`); }
+  }
+  throw new Error(`All text providers failed — ${errs.join(' | ')}`);
+}
+
+// Gemini structured JSON helper — uses responseMimeType:application/json
+async function callGeminiForJson(prompt: string, schema: any, apiKey: string, maxTokens = 8000): Promise<any> {
+  const MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash'];
+  let lastErr = '';
+  for (const model of MODELS) {
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            maxOutputTokens: maxTokens,
+            temperature: 0.7,
+            responseMimeType: 'application/json',
+            responseSchema: schema,
+          },
+        }),
+      });
+      const d = await r.json() as any;
+      if (d.error) { lastErr = `${model}: ${d.error.message || JSON.stringify(d.error)}`; continue; }
+      const text = d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      if (!text) { lastErr = `${model}: empty response`; continue; }
+      try { return JSON.parse(text); } catch (e: any) { lastErr = `${model}: parse failed — ${e.message}`; }
+    } catch (e: any) { lastErr = `${model}: ${e.message}`; }
+  }
+  throw new Error(`Gemini structured JSON failed — ${lastErr}`);
+}
+
+// Smart structured JSON generator — Gemini first (cheap), Claude fallback.
+async function callTextForJson(prompt: string, schema: any, claudeKey: string | null, geminiKey: string | null, maxTokens = 8000): Promise<any> {
+  const preferClaude = process.env.PREFER_CLAUDE === '1';
+  const order = preferClaude
+    ? [{ name: 'claude', key: claudeKey, fn: callClaudeForJson }, { name: 'gemini', key: geminiKey, fn: callGeminiForJson }]
+    : [{ name: 'gemini', key: geminiKey, fn: callGeminiForJson }, { name: 'claude', key: claudeKey, fn: callClaudeForJson }];
+  const errs: string[] = [];
+  for (const { name, key, fn } of order) {
+    if (!key) { errs.push(`${name}: no key`); continue; }
+    try { return await fn(prompt, schema, key, maxTokens); }
+    catch (e: any) { errs.push(`${name}: ${e.message}`); }
+  }
+  throw new Error(`All JSON providers failed — ${errs.join(' | ')}`);
 }
 
 // Helper: call Claude and force structured JSON output via tool_use
