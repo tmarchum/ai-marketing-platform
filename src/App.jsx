@@ -601,6 +601,14 @@ async function boostPost(postId, accessToken, adAccountId, budget, duration, tar
   } catch(e) { return { error: e.message }; }
 }
 
+// Helper: match a post to a business by ID first (stable), then by name (legacy).
+// Survives business renames — posts saved under an old name still appear after rename.
+function postMatchesBusiness(post, biz) {
+  if (!post || !biz) return false;
+  if (post.business_id && biz.id && post.business_id === biz.id) return true;
+  return post.business === biz.name || post.business_name === biz.name;
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // MEDIA PIPELINE — REAL AI IMAGE GENERATION + PUBLISH
 // ═══════════════════════════════════════════════════════════════════
@@ -783,7 +791,7 @@ function computeNextScheduleSlot(biz, existingPosts) {
   const now = new Date();
   const takenSlots = new Set(
     (existingPosts||[])
-      .filter(p => p.business === biz.name && p.scheduled_at && !p.published)
+      .filter(p => postMatchesBusiness(p, biz) && p.scheduled_at && !p.published)
       .map(p => new Date(p.scheduled_at).toISOString())
   );
   // Look up to 60 days ahead for an available slot
@@ -1583,7 +1591,7 @@ function Content({ posts, setPosts, sources, businesses, setBusinesses, analytic
 
   function updateBiz(id, upd) { setBusinesses?.(p=>p.map(b=>b.id===id?{...b,...upd}:b)); }
 
-  const existingBizPosts = posts.filter(p=>p.business===selBiz?.name);
+  const existingBizPosts = posts.filter(p=>postMatchesBusiness(p, selBiz));
 
   // L4: Load templates
   useEffect(()=>{
@@ -1828,7 +1836,7 @@ ${topCompPosts.map(p=>`- "${p.text?.slice(0,50)}..." → ${p.likes} לייקים
     {/* Business selector */}
     <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
       {BUSINESSES.map(b=>{
-        const cnt = posts.filter(p=>p.business===b.name).length;
+        const cnt = posts.filter(p=>postMatchesBusiness(p, b)).length;
         return <button key={b.id} onClick={()=>setSelBiz(b)} style={{
           display:"flex",alignItems:"center",gap:8,padding:"10px 16px",borderRadius:12,cursor:"pointer",
           background:selBiz?.id===b.id?b.color+"12":T.card,
@@ -2829,7 +2837,7 @@ function Businesses({ businesses, setBusinesses, posts }) {
     <div style={{display:"flex",flexDirection:"column",gap:20}}>
       {businesses.map(biz=>{
         const result = biz.scanResult;
-        const bizPosts = posts?.filter(p=>p.business===biz.name)||[];
+        const bizPosts = posts?.filter(p=>postMatchesBusiness(p, biz))||[];
         const expanded = editId===biz.id;
         return <Card key={biz.id} accent={biz.color+"33"}>
           {/* Header */}
@@ -2933,7 +2941,7 @@ function Businesses({ businesses, setBusinesses, posts }) {
                   onClick={async()=>{
                     setScanning(p=>({...p,[`vi_${biz.id}`]:true}));
                     try {
-                      const historyPosts = (posts||[]).filter(p=>p.business===biz.name).slice(0,10).map(p=>p.content).join("\n---\n");
+                      const historyPosts = (posts||[]).filter(p=>postMatchesBusiness(p, biz)).slice(0,10).map(p=>p.content).join("\n---\n");
                       const r = await authFetch("/api/content/claude", {
                         method:"POST", headers:{"Content-Type":"application/json"},
                         body: JSON.stringify({
@@ -3517,7 +3525,7 @@ function Publish({ posts, setPosts, businesses }) {
   const [boosting, setBoosting] = useState(false);
   const [boostResult, setBoostResult] = useState(null);
   const selBiz = businesses.find(b=>b.id===selBizId);
-  const approved = posts.filter(p=>p.approved && (!selBiz || p.business===selBiz.name));
+  const approved = posts.filter(p=>p.approved && (!selBiz || postMatchesBusiness(p, selBiz)));
   const connectedPlatforms = selBiz ? SOCIAL_PLATFORMS.filter(sp=>{
     const c=selBiz.social?.[sp.id]; return c?.connected && c.tokens && Object.values(c.tokens).some(v=>v);
   }) : [];
@@ -4637,7 +4645,7 @@ function Analytics({ posts, businesses, analyticsData, setAnalyticsData }) {
   const done = posts.filter(p=>p.pipeline?.done).length;
 
   // ── Compute local charts from posts array ──
-  const selBizPosts = posts.filter(p => !selBizId || p.business === selBiz?.name);
+  const selBizPosts = posts.filter(p => !selBizId || postMatchesBusiness(p, selBiz));
   const publishedPosts = selBizPosts.filter(p => p.published && p.publishedAt);
 
   // Weekly posts (last 8 weeks)

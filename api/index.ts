@@ -42,6 +42,71 @@ async function authMiddleware(req: any, res: any, next: any) {
 }
 app.use(authMiddleware);
 
+// ── Lightweight error tracking — last-N-errors ring buffer + daily summary email.
+// No external service (no Sentry). When an endpoint catches an error, push it
+// here. A cron summarizes once a day and emails the user if there were errors.
+const _errorLog: { ts: string; path: string; method: string; userId: string | null; error: string; stack?: string }[] = [];
+const ERR_BUFFER_MAX = 200;
+function trackError(req: any, err: any) {
+  try {
+    _errorLog.push({
+      ts: new Date().toISOString(),
+      path: req?.path || req?.url || '?',
+      method: req?.method || '?',
+      userId: req?.userId || null,
+      error: err?.message || String(err),
+      stack: err?.stack?.slice(0, 800),
+    });
+    if (_errorLog.length > ERR_BUFFER_MAX) _errorLog.shift();
+  } catch {}
+}
+
+// Endpoint to read recent errors (for debugging from dashboard)
+app.get('/api/debug/errors', (req: any, res) => {
+  res.json({ count: _errorLog.length, errors: _errorLog.slice(-50).reverse() });
+});
+
+// Daily error summary cron — emails if any errors in the last 24h
+app.get('/api/cron/error-summary', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json({ skipped: 'no db' });
+  const cutoff = Date.now() - 24 * 3600 * 1000;
+  const recent = _errorLog.filter(e => new Date(e.ts).getTime() > cutoff);
+  if (recent.length === 0) return res.json({ message: 'no errors in last 24h' });
+  try {
+    const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
+    const km: Record<string, string> = {};
+    for (const k of (keys || [])) km[k.key_name] = k.key_value;
+    const to = km.NOTIFICATION_EMAIL || process.env.NOTIFICATION_EMAIL;
+    const gmailUser = km.GMAIL_USER || process.env.GMAIL_USER;
+    const gmailPass = km.GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASSWORD;
+    if (to && gmailUser && gmailPass) {
+      const nodemailer = (await import('nodemailer')).default;
+      const t = nodemailer.createTransport({ service: 'gmail', auth: { user: gmailUser, pass: gmailPass } });
+      // Bucket by error message for de-dup
+      const buckets: Record<string, number> = {};
+      for (const e of recent) buckets[e.error] = (buckets[e.error] || 0) + 1;
+      const rows = Object.entries(buckets).sort((a, b) => b[1] - a[1]).map(([msg, n]) =>
+        `<tr><td style="padding:6px;border-bottom:1px solid #eee">${n}×</td>` +
+        `<td style="padding:6px;border-bottom:1px solid #eee;font-family:monospace;font-size:11px">${msg.slice(0, 200)}</td></tr>`
+      ).join('');
+      await t.sendMail({
+        from: gmailUser, to,
+        subject: `📊 ${recent.length} שגיאות ב-24 השעות האחרונות`,
+        html: `<div style="direction:rtl;font-family:Arial;padding:20px;max-width:600px">
+          <h2>סיכום שגיאות יומי</h2>
+          <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead><tr style="background:#f3f4f6"><th style="padding:8px;text-align:right">כמות</th><th style="padding:8px;text-align:right">שגיאה</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <p style="color:#6b7280;font-size:12px">פירוט מלא ב-/api/debug/errors בדשבורד.</p>
+        </div>`,
+      });
+    }
+    res.json({ message: `Sent summary with ${recent.length} errors` });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Media generation cache ──
 // AI media gen is expensive (Veo ≈ $0.50/clip, Imagen ≈ $0.04/img). When the same
 // inputs produce the same output (deterministic prompt + same business + same TTS),
@@ -2853,13 +2918,130 @@ app.get('/api/cron/publish', async (req: any, res) => {
         if (igPostId) r.ig_post_id = igPostId;
       } catch (e: any) {
         r.error = e.message;
+        trackError(req, e);
       }
       results.push(r);
     }
 
     const published = results.filter(x => x.ok).length;
     const igPublished = results.filter(x => x.ig_post_id).length;
-    res.json({ message: `Published ${published}/${due.length}${igPublished ? ` (${igPublished} also on IG)` : ''}`, published, results });
+    const failed = results.filter(x => !x.ok && x.error);
+
+    // ── EMAIL ALERT on any failure — uses NOTIFICATION_EMAIL from user_api_keys,
+    //    same setup that lead notifications use. Silent in success case.
+    if (failed.length > 0) {
+      try {
+        const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
+        const km: Record<string, string> = {};
+        for (const k of (keys || [])) km[k.key_name] = k.key_value;
+        const to = km.NOTIFICATION_EMAIL || process.env.NOTIFICATION_EMAIL;
+        const gmailUser = km.GMAIL_USER || process.env.GMAIL_USER;
+        const gmailPass = km.GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASSWORD;
+        if (to && gmailUser && gmailPass) {
+          const nodemailer = (await import('nodemailer')).default;
+          const t = nodemailer.createTransport({
+            service: 'gmail',
+            auth: { user: gmailUser, pass: gmailPass },
+          });
+          const rows = failed.map((f: any) =>
+            `<tr><td style="padding:6px;border-bottom:1px solid #eee">${f.business || '-'}</td>` +
+            `<td style="padding:6px;border-bottom:1px solid #eee">${f.id?.slice(0, 8) || '-'}</td>` +
+            `<td style="padding:6px;border-bottom:1px solid #eee;color:#dc2626">${(f.error || '').slice(0, 120)}</td></tr>`
+          ).join('');
+          const html = `<div style="font-family:Arial,sans-serif;direction:rtl;padding:20px;max-width:600px">
+            <h2 style="color:#dc2626">⚠️ ${failed.length} פוסטים נכשלו בפרסום</h2>
+            <p>ה-cron של ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC הריץ ${due.length} פוסטים. ${published} עברו, ${failed.length} נכשלו.</p>
+            <table style="width:100%;border-collapse:collapse;margin-top:12px;font-size:13px">
+              <thead><tr style="background:#f3f4f6"><th style="padding:8px;text-align:right">עסק</th><th style="padding:8px;text-align:right">Post ID</th><th style="padding:8px;text-align:right">שגיאה</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+            <p style="color:#6b7280;font-size:12px;margin-top:16px">בדוק טוקני פייסבוק / אינסטגרם, או היכנס לדשבורד לצפייה במפורט.</p>
+          </div>`;
+          await t.sendMail({
+            from: gmailUser,
+            to,
+            subject: `🚨 ${failed.length}/${due.length} פוסטים נכשלו — Cron Publish`,
+            html,
+          });
+        }
+      } catch (mailErr: any) { console.error('[cron/publish] alert email failed:', mailErr.message); }
+    }
+
+    res.json({ message: `Published ${published}/${due.length}${igPublished ? ` (${igPublished} also on IG)` : ''}`, published, failed: failed.length, results });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// CRON — Refresh Meta Page tokens (run weekly).
+// Long-lived Page tokens last 60 days. Refreshing via fb_exchange_token
+// resets the 60-day window. Without this, tokens silently expire and
+// every publish fails at 60+ days.
+// ══════════════════════════════════════════════════════════════
+
+app.get('/api/cron/refresh-tokens', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
+    const km: Record<string, string> = {};
+    for (const k of (keys || [])) km[k.key_name] = k.key_value;
+    const fbAppId = (km.FB_APP_ID || process.env.FB_APP_ID || '').trim();
+    const fbAppSecret = (km.FB_APP_SECRET || process.env.FB_APP_SECRET || '').trim();
+    if (!fbAppId || !fbAppSecret) return res.status(503).json({ error: 'FB_APP_ID/SECRET missing' });
+
+    const { data: businesses } = await sb.from('businesses').select('id, name, social');
+    const results: any[] = [];
+    for (const b of (businesses || [])) {
+      const fb = b.social?.facebook;
+      const oldToken = fb?.tokens?.META_ACCESS_TOKEN;
+      if (!oldToken) { results.push({ name: b.name, skipped: 'no token' }); continue; }
+      try {
+        const r = await fetch(
+          `https://graph.facebook.com/v25.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${fbAppId}&client_secret=${fbAppSecret}&fb_exchange_token=${oldToken}`
+        );
+        const d: any = await r.json();
+        if (d.error) { results.push({ name: b.name, error: d.error.message }); continue; }
+        const newToken = d.access_token;
+        if (!newToken) { results.push({ name: b.name, error: 'no token in response' }); continue; }
+        // Save refreshed token
+        const social = b.social || {};
+        social.facebook = { ...(social.facebook || {}), tokens: { ...(social.facebook?.tokens || {}), META_ACCESS_TOKEN: newToken } };
+        // IG uses the same token
+        if (social.instagram?.connected) {
+          social.instagram = { ...social.instagram, tokens: { ...(social.instagram.tokens || {}), META_ACCESS_TOKEN: newToken } };
+        }
+        await sb.from('businesses').update({ social }).eq('id', b.id);
+        results.push({ name: b.name, ok: true });
+      } catch (e: any) { results.push({ name: b.name, error: e.message }); }
+    }
+
+    const failed = results.filter(r => r.error);
+    if (failed.length > 0) {
+      try {
+        const to = km.NOTIFICATION_EMAIL || process.env.NOTIFICATION_EMAIL;
+        const gmailUser = km.GMAIL_USER || process.env.GMAIL_USER;
+        const gmailPass = km.GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASSWORD;
+        if (to && gmailUser && gmailPass) {
+          const nodemailer = (await import('nodemailer')).default;
+          const t = nodemailer.createTransport({ service: 'gmail', auth: { user: gmailUser, pass: gmailPass } });
+          const list = failed.map((f: any) => `<li>${f.name}: ${f.error}</li>`).join('');
+          await t.sendMail({
+            from: gmailUser,
+            to,
+            subject: `⚠️ ${failed.length} טוקני Meta לא רוענו`,
+            html: `<div style="direction:rtl;font-family:Arial">
+              <h2>${failed.length} טוקנים נכשלו בריענון</h2>
+              <ul>${list}</ul>
+              <p>טוקנים אלו עלולים לפוג תוך ימים. כנס לדשבורד → עסקים → לחץ "חבר פייסבוק + אינסטגרם" כדי לחדש.</p>
+            </div>`,
+          });
+        }
+      } catch {}
+    }
+
+    res.json({ message: `Refreshed ${results.filter(r => r.ok).length}/${(businesses||[]).length}`, results });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -4452,6 +4634,15 @@ app.get('/api/gbp/status', async (req: any, res) => {
 // ── Catch-all for unknown API routes ──
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'Not found' });
+});
+
+// Global error handler — catches anything that escaped per-endpoint try/catch
+// and records it in the error ring buffer used by /api/cron/error-summary.
+app.use((err: any, req: any, res: any, _next: any) => {
+  trackError(req, err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: err?.message || 'Internal error' });
+  }
 });
 
 export default app;
