@@ -3451,8 +3451,9 @@ app.get('/api/auth/facebook/callback', async (req, res) => {
       }
     }
 
-    // Redirect back to app with pages data in hash
-    const pagesB64 = btoa(JSON.stringify({ type: 'fb-oauth', pages }));
+    // Redirect back to app with pages data in hash.
+    // Use Buffer.from for UTF-8 safety — btoa() throws on non-Latin1 chars (Hebrew page names).
+    const pagesB64 = Buffer.from(JSON.stringify({ type: 'fb-oauth', pages }), 'utf-8').toString('base64');
     res.redirect(`${PROD_URL}/#fb-pages=${pagesB64}`);
   } catch (err: any) {
     res.redirect(`${PROD_URL}/#fb-error=${encodeURIComponent(err.message)}`);
