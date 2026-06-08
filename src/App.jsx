@@ -919,6 +919,8 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
   const [scheduling, setScheduling] = useState(false);
   const [autoSchedulingNow, setAutoSchedulingNow] = useState(false);
   const [abLoading, setAbLoading] = useState(false);
+  const [adaptLoading, setAdaptLoading] = useState(false);
+  const [showPlatforms, setShowPlatforms] = useState(false);
   // L1: performance check
   const [perfChecking, setPerfChecking] = useState(false);
   const [perfResult, setPerfResult] = useState(post.performance?.grade ? post.performance : null);
@@ -1221,18 +1223,34 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
       )}
       {!post.published && typeof post.id === "string" && post.id.length > 20 && <Btn sm bg="#EC489910" color="#EC4899" disabled={abLoading}
         onClick={async()=>{
-          if (!confirm("ליצור גרסה חלופית של הטקסט? הגרסה הנוכחית תישמר כ-variant זמין להחלפה.")) return;
+          if (!confirm("ליצור גרסה חלופית A/B של הטקסט? הגרסה החדשה תשמר כ-variant — תוכל להחליף אליה.")) return;
           setAbLoading(true);
           try {
-            const r = await authFetch(`/api/posts/${post.id}/regenerate-content`,{method:"POST"});
+            const r = await authFetch(`/api/posts/${post.id}/ab-variant`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
             const d = await r.json();
             if (d.ok) {
-              onUpdate(p=>({...p, content: d.content, hashtags: d.hashtags || p.hashtags, content_variants: [...(p.content_variants||[]), {content: p.content, hashtags: p.hashtags, label:"previous"}].slice(-3)}));
+              onUpdate(p=>({...p, content_variants: [...(p.content_variants||[]), d.variant].slice(-5)}));
             } else { alert("שגיאה: " + (d.error || "לא ידוע")); }
           } catch(e) { alert("שגיאה: " + e.message); }
           setAbLoading(false);
         }}>
-        {abLoading ? <><Spinner size={10}/>יוצר...</> : "🎭 גרסה חלופית"}
+        {abLoading ? <><Spinner size={10}/>יוצר...</> : "🎭 גרסה A/B"}
+      </Btn>}
+      {!post.published && typeof post.id === "string" && post.id.length > 20 && <Btn sm bg="#3B82F610" color="#3B82F6" disabled={adaptLoading}
+        onClick={async()=>{
+          if (!confirm("ליצור 4 גרסאות מותאמות לפייסבוק / אינסטגרם / טיקטוק / לינקדאין?")) return;
+          setAdaptLoading(true);
+          try {
+            const r = await authFetch(`/api/posts/${post.id}/adapt-platforms`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+            const d = await r.json();
+            if (d.ok) {
+              onUpdate(p=>({...p, performance: {...(p.performance||{}), platform_variants: d.variants}}));
+              setShowPlatforms(true);
+            } else { alert("שגיאה: " + (d.error || "לא ידוע")); }
+          } catch(e) { alert("שגיאה: " + e.message); }
+          setAdaptLoading(false);
+        }}>
+        {adaptLoading ? <><Spinner size={10}/>מתאים...</> : "📱 4 פלטפורמות"}
       </Btn>}
       {onDelete && <Btn sm bg="#EF444410" color="#EF4444" onClick={()=>{if(confirm("למחוק את הפוסט?"))onDelete(post.id)}}>🗑️</Btn>}
     </div>
@@ -1259,6 +1277,50 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
             </div>
           ))}
         </div>
+      </div>
+    )}
+
+    {/* Platform-adapted variants (FB / IG / TikTok / LinkedIn) */}
+    {post.performance?.platform_variants && Object.keys(post.performance.platform_variants).length > 0 && !post.published && (
+      <div style={{marginTop:10,padding:"10px 12px",background:"#3B82F608",border:"1px solid #3B82F633",borderRadius:10}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,cursor:"pointer"}}
+             onClick={()=>setShowPlatforms(!showPlatforms)}>
+          <div style={{color:"#3B82F6",fontSize:10,fontWeight:700}}>📱 גרסאות לפי פלטפורמה ({Object.keys(post.performance.platform_variants).length})</div>
+          <div style={{color:"#3B82F6",fontSize:11}}>{showPlatforms ? "▲ הסתר" : "▼ הצג"}</div>
+        </div>
+        {showPlatforms && (
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {Object.entries(post.performance.platform_variants).map(([plat, v]) => {
+              const platLabel = {facebook:"📘 פייסבוק",instagram:"📸 אינסטגרם",tiktok:"🎵 טיקטוק",linkedin:"💼 לינקדאין"}[plat] || plat;
+              const platColor = {facebook:"#1877F2",instagram:"#E4405F",tiktok:"#000000",linkedin:"#0A66C2"}[plat] || "#3B82F6";
+              return (
+                <div key={plat} style={{background:T.card,borderRadius:8,padding:10,border:`1px solid ${T.border}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                    <div style={{color:platColor,fontSize:11,fontWeight:700}}>{platLabel}</div>
+                    <button onClick={async()=>{
+                      if (!confirm(`להחליף לטקסט המותאם ל-${plat}?`)) return;
+                      try {
+                        await authFetch(`/api/posts/${post.id}/use-variant`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content: v.content, hashtags: v.hashtags})});
+                        onUpdate(p=>({...p, content: v.content, hashtags: v.hashtags || p.hashtags}));
+                        alert(`✅ הוחלף לגרסת ${plat}`);
+                      } catch(e) { alert("שגיאה: " + e.message); }
+                    }} style={{background:platColor+"15",border:"none",color:platColor,fontSize:10,fontWeight:600,padding:"3px 8px",borderRadius:6,cursor:"pointer",fontFamily:"inherit"}}>
+                      השתמש ←
+                    </button>
+                  </div>
+                  <div style={{color:T.textSec,fontSize:11,direction:"rtl",lineHeight:1.4,whiteSpace:"pre-wrap"}}>
+                    {v.content}
+                  </div>
+                  {Array.isArray(v.hashtags) && v.hashtags.length > 0 && (
+                    <div style={{marginTop:6,color:platColor,fontSize:10,direction:"rtl"}}>
+                      {v.hashtags.map(h=>h.startsWith("#")?h:"#"+h).join(" ")}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     )}
 
