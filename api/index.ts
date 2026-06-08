@@ -66,6 +66,33 @@ app.get('/api/debug/errors', (req: any, res) => {
   res.json({ count: _errorLog.length, errors: _errorLog.slice(-50).reverse() });
 });
 
+// Debug: surface raw Cloud TTS error so we can see which project the GEMINI_API_KEY belongs to.
+app.get('/api/debug/cloud-tts', async (req: any, res) => {
+  const sb = getSupabase();
+  const apiKey = await getUserKey(sb, req.userId, 'GEMINI_API_KEY');
+  if (!apiKey) return res.json({ error: 'no GEMINI_API_KEY' });
+  try {
+    const r = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input: { text: 'בדיקה' },
+        voice: { languageCode: 'he-IL', name: 'he-IL-Wavenet-A', ssmlGender: 'FEMALE' },
+        audioConfig: { audioEncoding: 'LINEAR16', sampleRateHertz: 24000 },
+      }),
+    });
+    const d = await r.json() as any;
+    res.json({
+      http_status: r.status,
+      ok: r.ok,
+      error: d.error || null,
+      has_audio: !!d.audioContent,
+      audio_bytes: d.audioContent ? Buffer.from(d.audioContent, 'base64').length : 0,
+      key_prefix: apiKey.slice(0, 8) + '...',
+    });
+  } catch (e: any) { res.json({ exception: e.message }); }
+});
+
 // Daily error summary cron — emails if any errors in the last 24h
 app.get('/api/cron/error-summary', async (req: any, res) => {
   const sb = getSupabase();
