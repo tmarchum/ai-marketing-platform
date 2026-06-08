@@ -2828,8 +2828,12 @@ app.get('/api/cron/publish', async (req: any, res) => {
         }
         const pageId = fbTokens.META_PAGE_ID;
         const accessToken = fbTokens.META_ACCESS_TOKEN;
-        const hashtags = (post.hashtags || []).map((h: string) => h.startsWith('#') ? h : `#${h}`).join(' ');
-        const message = (post.content || '') + (hashtags ? '\n\n' + hashtags : '');
+        // #15: Use platform-adapted variant if available, else original.
+        const pv = post.performance?.platform_variants?.facebook;
+        const fbContent = pv?.content || post.content || '';
+        const fbTags = (pv?.hashtags?.length ? pv.hashtags : (post.hashtags || []))
+          .map((h: string) => h.startsWith('#') ? h : `#${h}`).join(' ');
+        const message = fbContent + (fbTags ? '\n\n' + fbTags : '');
         const mediaUrl = post.video_url || post.image_url;
         const isVideo = !!post.video_url;
 
@@ -2870,8 +2874,15 @@ app.get('/api/cron/publish', async (req: any, res) => {
             const igAcct = igTokens.META_IG_ACCOUNT_ID;
             const igToken = igTokens.META_ACCESS_TOKEN;
 
+            // #15: IG uses its own adapted variant if available.
+            const igVariant = post.performance?.platform_variants?.instagram;
+            const igContent = igVariant?.content || post.content || '';
+            const igTags = (igVariant?.hashtags?.length ? igVariant.hashtags : (post.hashtags || []))
+              .map((h: string) => h.startsWith('#') ? h : `#${h}`).join(' ');
+            const igCaption = igContent + (igTags ? '\n\n' + igTags : '');
+
             // Instagram requires 2-step: create container, then publish
-            const containerBody: any = { caption: message, access_token: igToken };
+            const containerBody: any = { caption: igCaption, access_token: igToken };
             if (isVideo) {
               containerBody.media_type = 'REELS';
               containerBody.video_url = mediaUrl;
@@ -3241,6 +3252,155 @@ app.get('/api/cron/refresh-tokens', async (req: any, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// AI MESSENGER AGENT (#13) — Auto-reply to Facebook Messenger DMs in
+// the business's voice. Polls /conversations every cron tick, picks up
+// new messages from customers, generates a reply with Claude/Gemini
+// using the business's KB + visual_identity, and sends it via Graph API.
+// User toggles `auto_dm_reply_enabled` per business to opt in.
+// ══════════════════════════════════════════════════════════════
+
+app.get('/api/cron/dm-replies', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json({ skipped: 'no db' });
+  try {
+    const { data: businesses } = await sb.from('businesses').select('*');
+    const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
+    const km: Record<string, string> = {};
+    for (const k of (keys || [])) km[k.key_name] = k.key_value;
+    const claudeKey = km.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || null;
+    const geminiKey = km.GEMINI_API_KEY || process.env.GEMINI_API_KEY || null;
+
+    const results: any[] = [];
+    for (const biz of (businesses || [])) {
+      if (!biz.auto_dm_reply_enabled) continue;
+      const tokens = biz.social?.facebook?.tokens;
+      const pageId = tokens?.META_PAGE_ID;
+      const pageToken = tokens?.META_ACCESS_TOKEN;
+      if (!pageId || !pageToken) { results.push({ biz: biz.name, skipped: 'no FB' }); continue; }
+
+      try {
+        // Get last 10 conversations with last message
+        const convsR = await fetch(
+          `https://graph.facebook.com/v25.0/${pageId}/conversations?fields=participants,updated_time,messages.limit(2){message,from,created_time}&limit=10&access_token=${pageToken}`
+        );
+        const convsD: any = await convsR.json();
+        if (convsD.error) { results.push({ biz: biz.name, error: convsD.error.message }); continue; }
+
+        // KB context for replies
+        const kbContent = await getBizKnowledgeBase(sb, biz.id, 4000);
+
+        let replied = 0;
+        for (const conv of (convsD.data || [])) {
+          const lastMessage = conv.messages?.data?.[0];
+          if (!lastMessage) continue;
+          // Only reply if last message is from a user (not from our page)
+          if (lastMessage.from?.id === pageId) continue;
+
+          const userMsg = lastMessage.message || '';
+          if (!userMsg) continue;
+
+          // De-dup: skip if we already replied recently (track in DB)
+          const replyKey = `dm:${conv.id}:${lastMessage.id}`;
+          const { data: existed } = await sb.from('dm_replies').select('id').eq('key', replyKey).maybeSingle();
+          if (existed) continue;
+
+          // Generate reply
+          const replyPrompt = `אתה הצוות של "${biz.name}" — ${biz.description || ''}. עונה ב-WhatsApp/Messenger ללקוחות פוטנציאליים בעברית.
+טון: ${biz.tone || 'ידידותי, מקצועי, ישיר'}.
+
+ידע על העסק (השתמש לתשובה מדויקת):
+${kbContent || '(אין מידע נוסף)'}
+
+הלקוח כתב:
+"${userMsg}"
+
+כתוב תשובה קצרה (1-3 משפטים), חמה, ענייני. אם ביקש מחיר/הזמנה — בקש פרטים (טלפון/מייל/תאריך). אל תמציא מידע שלא קיים בידע. אם השאלה דורשת ייעוץ אנושי — אמור "אשמח לחבר אותך לנציג שלנו תוך זמן קצר".
+
+החזר רק את הטקסט של התשובה, ללא הקדמות.`;
+
+          let replyText = '';
+          try {
+            replyText = (await callText(replyPrompt, claudeKey, geminiKey, 250)).trim();
+          } catch { continue; }
+
+          if (!replyText) continue;
+
+          // Send reply via Messenger Send API
+          const sendR = await fetch(`https://graph.facebook.com/v25.0/${pageId}/messages?access_token=${pageToken}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              recipient: { id: conv.participants?.data?.find((p: any) => p.id !== pageId)?.id },
+              message: { text: replyText },
+              messaging_type: 'RESPONSE',
+            }),
+          });
+          const sendD: any = await sendR.json();
+          if (sendD.error) { results.push({ biz: biz.name, conv_id: conv.id, error: sendD.error.message }); continue; }
+
+          // Log so we don't reply twice
+          await sb.from('dm_replies').insert({ key: replyKey, biz_id: biz.id, conversation_id: conv.id, user_message: userMsg, reply: replyText }).catch(() => {});
+          replied++;
+        }
+        results.push({ biz: biz.name, replied });
+      } catch (e: any) {
+        results.push({ biz: biz.name, error: e.message });
+      }
+    }
+    res.json({ message: `Processed ${results.length} businesses`, results });
+  } catch (err: any) {
+    trackError(req, err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// MULTI-PLATFORM ADAPT (#15) — Take 1 post brief, generate 4
+// platform-optimized versions: FB (long+hashtags), IG (short+hashtags
+// inside comment), TikTok (hook+trends), LinkedIn (professional).
+// ══════════════════════════════════════════════════════════════
+
+app.post('/api/posts/:id/adapt-platforms', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const claudeKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
+    const geminiKey = await getUserKey(sb, req.userId, 'GEMINI_API_KEY');
+    const { data: post } = await sb.from('content_posts').select('*').eq('id', req.params.id).single();
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
+    const prompt = `ה-post המקורי של "${post.business_name}":
+"""
+${post.content}
+"""
+
+צור גרסה מותאמת לכל פלטפורמה. כל גרסה בעברית, מותאמת לאופי וקצב של הפלטפורמה:
+
+החזר JSON בלבד:
+{
+  "facebook": {"content": "טקסט מלא ארוך - 4-8 שורות, אמוציונלי, כולל סיפור או שאלה. hashtag-ים בסוף (2-4)", "hashtags": ["#tag1", "#tag2"]},
+  "instagram": {"content": "טקסט קצר ומקצועי - 2-3 שורות, מתחיל בהוק חזק, מסתיים בקריאה לפעולה. ללא hashtag-ים בגוף", "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5", "#tag6", "#tag7", "#tag8"]},
+  "tiktok": {"content": "הוק של 1-2 שניות - שורה אחת בלבד, סקרני. עברית מדוברת. בלי hashtag-ים בגוף", "hashtags": ["#tag1", "#tag2", "#fyp"]},
+  "linkedin": {"content": "מקצועי - 5-10 שורות, נקודות, תובנה עסקית, ערך מקצועי", "hashtags": ["#tag1", "#tag2", "#tag3"]}
+}`;
+
+    const raw = await callText(prompt, claudeKey, geminiKey, 1500);
+    let clean = raw.replace(/```json\n?|```/g, '').trim();
+    const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
+    if (fb >= 0) clean = clean.slice(fb, lb + 1);
+    const variants = JSON.parse(clean);
+
+    await sb.from('content_posts').update({
+      performance: { ...(post.performance || {}), platform_variants: variants, adapted_at: new Date().toISOString() }
+    }).eq('id', post.id);
+    res.json({ ok: true, variants });
+  } catch (err: any) {
+    trackError(req, err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════
 // A/B TESTING (#5) — Generate copy variants + auto-evaluate winners
 // ══════════════════════════════════════════════════════════════

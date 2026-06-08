@@ -47,6 +47,10 @@
     {
       "path": "/api/cron/ab-evaluate",
       "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/dm-replies",
+      "schedule": "0 */4 * * *"
     }
   ],
   "framework": "vite",
