@@ -2798,13 +2798,15 @@ app.get('/api/cron/publish', async (req: any, res) => {
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   try {
     const now = new Date().toISOString();
-    // Get all posts scheduled for now or earlier that aren't published yet
+    // Get all posts scheduled for now or earlier that aren't published yet.
+    // Exclude status='skipped' so the preview-email "Skip" links work.
     const { data: due, error } = await sb
       .from('content_posts')
       .select('*')
       .not('scheduled_at', 'is', null)
       .lte('scheduled_at', now)
       .is('published_at', null)
+      .neq('status', 'skipped')
       .limit(20);
     if (error) return res.status(500).json({ error: error.message });
     if (!due?.length) return res.json({ message: 'No posts due', published: 0 });
@@ -2969,6 +2971,197 @@ app.get('/api/cron/publish', async (req: any, res) => {
 
     res.json({ message: `Published ${published}/${due.length}${igPublished ? ` (${igPublished} also on IG)` : ''}`, published, failed: failed.length, results });
   } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// PREVIEW SYSTEM (#4) — Daily email at 21:00 IL of TOMORROW's scheduled
+// posts with one-click "Skip this post" links. User skims the email,
+// kills anything they don't want, the rest publishes on schedule.
+// ══════════════════════════════════════════════════════════════
+
+// Mark a post as skipped via GET link (so it works from email).
+// Returns a tiny HTML confirmation page (no auth required — token is the post id).
+app.get('/api/posts/:id/skip', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).send('DB not configured');
+  try {
+    const { data: post } = await sb.from('content_posts').select('id, business_name, content, status, published_at').eq('id', req.params.id).maybeSingle();
+    if (!post) return res.status(404).send('Post not found');
+    if (post.published_at) {
+      return res.send(`<!doctype html><html dir="rtl"><body style="font-family:Arial;padding:40px;max-width:500px;margin:auto;text-align:center">
+        <div style="font-size:48px">⚠️</div>
+        <h2>פוסט זה כבר פורסם</h2>
+        <p style="color:#666">${post.business_name}: ${(post.content||'').slice(0,80)}…</p>
+      </body></html>`);
+    }
+    await sb.from('content_posts').update({ status: 'skipped' }).eq('id', post.id);
+    res.send(`<!doctype html><html dir="rtl"><body style="font-family:Arial;padding:40px;max-width:500px;margin:auto;text-align:center;background:#f9fafb">
+      <div style="font-size:48px">⏭️</div>
+      <h2 style="color:#10b981">הפוסט דולג בהצלחה</h2>
+      <p style="color:#666">${post.business_name}: ${(post.content||'').slice(0,100)}…</p>
+      <p style="color:#999;font-size:12px;margin-top:30px">הפוסט לא יפורסם. תוכל לשחזר אותו מהדשבורד.</p>
+    </body></html>`);
+  } catch (e: any) { res.status(500).send(`Error: ${e.message}`); }
+});
+
+// Cron: send daily preview email of tomorrow's scheduled posts.
+// Runs at 18:00 UTC = 21:00 IL (summer) / 20:00 IL (winter) — evening review time.
+app.get('/api/cron/preview', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const now = Date.now();
+    const tomorrowStart = new Date(now);
+    const tomorrowEnd = new Date(now + 24 * 3600 * 1000);
+
+    const { data: posts } = await sb
+      .from('content_posts')
+      .select('*')
+      .not('scheduled_at', 'is', null)
+      .is('published_at', null)
+      .neq('status', 'skipped')
+      .gte('scheduled_at', tomorrowStart.toISOString())
+      .lte('scheduled_at', tomorrowEnd.toISOString())
+      .order('scheduled_at', { ascending: true });
+
+    if (!posts?.length) return res.json({ message: 'No posts scheduled for next 24h' });
+
+    const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
+    const km: Record<string, string> = {};
+    for (const k of (keys || [])) km[k.key_name] = k.key_value;
+    const to = km.NOTIFICATION_EMAIL || process.env.NOTIFICATION_EMAIL;
+    const gmailUser = km.GMAIL_USER || process.env.GMAIL_USER;
+    const gmailPass = km.GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASSWORD;
+    if (!to || !gmailUser || !gmailPass) return res.json({ skipped: 'mail not configured' });
+
+    const PROD = 'https://dashboard-steel-delta-52.vercel.app';
+    const cards = posts.map((p: any) => {
+      const time = new Date(p.scheduled_at).toLocaleString('he-IL', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' });
+      const media = p.image_url || p.video_url;
+      const mediaTag = media
+        ? `<div style="margin:10px 0"><img src="${media}" style="max-width:100%;border-radius:8px;max-height:280px"/></div>`
+        : '<div style="background:#fee;padding:10px;border-radius:8px;color:#dc2626;font-size:13px">⚠️ אין מדיה</div>';
+      return `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:18px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-weight:700;color:#1f2937">${p.business_name}</div>
+          <div style="color:#6b7280;font-size:12px">${time}</div>
+        </div>
+        ${mediaTag}
+        <div style="color:#374151;font-size:14px;line-height:1.5;margin:10px 0;white-space:pre-wrap">${(p.content || '').slice(0, 400)}</div>
+        <div style="text-align:left;margin-top:14px">
+          <a href="${PROD}/api/posts/${p.id}/skip" style="display:inline-block;background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:8px;padding:8px 16px;text-decoration:none;font-size:13px;font-weight:600">⏭️ דלג על הפוסט הזה</a>
+          <a href="${PROD}/#posts" style="display:inline-block;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:8px;padding:8px 16px;text-decoration:none;font-size:13px;font-weight:600;margin-right:6px">✏️ ערוך בדשבורד</a>
+        </div>
+      </div>`;
+    }).join('');
+
+    const nodemailer = (await import('nodemailer')).default;
+    const t = nodemailer.createTransport({ service: 'gmail', auth: { user: gmailUser, pass: gmailPass } });
+    await t.sendMail({
+      from: gmailUser, to,
+      subject: `📋 ${posts.length} פוסטים יפורסמו ב-24 השעות הקרובות`,
+      html: `<div style="font-family:Arial;direction:rtl;background:#f9fafb;padding:24px">
+        <div style="max-width:600px;margin:auto">
+          <h1 style="color:#1f2937;font-size:24px;margin-bottom:6px">📋 תצוגה מקדימה לפרסום</h1>
+          <p style="color:#6b7280;margin-top:0">${posts.length} פוסטים בתור. עבור על כל אחד ותדלג על מה שלא רוצה.</p>
+          ${cards}
+          <p style="color:#9ca3af;font-size:11px;text-align:center;margin-top:20px">פוסטים שלא תדלג עליהם יפורסמו אוטומטית בזמן שתוזמן.</p>
+        </div>
+      </div>`,
+    });
+    res.json({ message: `Preview sent with ${posts.length} posts` });
+  } catch (err: any) {
+    trackError(req, err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// ANALYTICS (#6) — Real insights from collected metrics
+// ══════════════════════════════════════════════════════════════
+
+app.get('/api/analytics/summary', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json({ skipped: 'no db' });
+  try {
+    const businessId = req.query.business_id as string | undefined;
+    const days = Math.min(Math.max(Number(req.query.days) || 30, 7), 90);
+    const since = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+
+    let postsQ = sb.from('content_posts').select('*').gte('published_at', since).not('published_at', 'is', null);
+    if (businessId) postsQ = postsQ.eq('business_id', businessId);
+    const { data: posts } = await postsQ;
+
+    let metricsQ = sb.from('post_metrics').select('*').gte('date', since.slice(0, 10));
+    const { data: metrics } = await metricsQ;
+
+    // Latest metric per post
+    const byPostLatest: Record<string, any> = {};
+    for (const m of (metrics || [])) {
+      const cur = byPostLatest[m.post_id];
+      if (!cur || m.date > cur.date) byPostLatest[m.post_id] = m;
+    }
+
+    // Aggregate
+    const totals = { posts: posts?.length || 0, likes: 0, comments: 0, shares: 0, ig: 0, fb: 0 };
+    const byBiz: Record<string, any> = {};
+    const byHour: Record<number, { count: number; engagement: number }> = {};
+    const byDay: Record<number, { count: number; engagement: number }> = {};
+    const topPosts: any[] = [];
+
+    for (const p of (posts || [])) {
+      const m = byPostLatest[p.id] || {};
+      const eng = (m.likes || 0) + (m.comments || 0) + (m.shares || 0);
+      totals.likes += m.likes || 0;
+      totals.comments += m.comments || 0;
+      totals.shares += m.shares || 0;
+      if (p.performance?.ig_post_id) totals.ig++;
+      if (p.fb_post_id) totals.fb++;
+
+      const bn = p.business_name || '?';
+      byBiz[bn] = byBiz[bn] || { count: 0, engagement: 0 };
+      byBiz[bn].count++;
+      byBiz[bn].engagement += eng;
+
+      const pubAt = new Date(p.published_at);
+      const hour = pubAt.getUTCHours();
+      const day = pubAt.getUTCDay();
+      byHour[hour] = byHour[hour] || { count: 0, engagement: 0 };
+      byHour[hour].count++;
+      byHour[hour].engagement += eng;
+      byDay[day] = byDay[day] || { count: 0, engagement: 0 };
+      byDay[day].count++;
+      byDay[day].engagement += eng;
+
+      topPosts.push({
+        id: p.id,
+        business_name: p.business_name,
+        content: (p.content || '').slice(0, 120),
+        published_at: p.published_at,
+        image_url: p.image_url,
+        likes: m.likes || 0,
+        comments: m.comments || 0,
+        shares: m.shares || 0,
+        engagement: eng,
+      });
+    }
+
+    topPosts.sort((a, b) => b.engagement - a.engagement);
+    const bestHour = Object.entries(byHour).map(([h, v]) => ({ hour: Number(h), avgEng: v.count ? v.engagement / v.count : 0, count: v.count })).sort((a, b) => b.avgEng - a.avgEng);
+    const bestDay = Object.entries(byDay).map(([d, v]) => ({ day: Number(d), avgEng: v.count ? v.engagement / v.count : 0, count: v.count })).sort((a, b) => b.avgEng - a.avgEng);
+
+    res.json({
+      days,
+      totals,
+      byBiz,
+      bestHours: bestHour.slice(0, 5),
+      bestDays: bestDay,
+      topPosts: topPosts.slice(0, 10),
+    });
+  } catch (err: any) {
+    trackError(req, err);
     res.status(500).json({ error: err.message });
   }
 });

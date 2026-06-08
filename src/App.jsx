@@ -4641,6 +4641,17 @@ function Analytics({ posts, businesses, analyticsData, setAnalyticsData }) {
   const [insightLoading, setInsightLoading] = useState(false);
   const selBiz = businesses?.find(b=>b.id===selBizId);
 
+  // ── Real metrics summary from /api/analytics/summary (uses post_metrics table) ──
+  const [summary, setSummary] = useState(null);
+  const [summaryDays, setSummaryDays] = useState(30);
+  useEffect(()=>{
+    const q = new URLSearchParams();
+    if (selBizId) q.set("business_id", selBizId);
+    q.set("days", String(summaryDays));
+    authFetch(`/api/analytics/summary?${q}`).then(r=>r.json()).then(setSummary).catch(()=>{});
+  }, [selBizId, summaryDays]);
+  const HEB_DAYS = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"];
+
   const bizData = analyticsData?.[selBizId] || {};
   const done = posts.filter(p=>p.pipeline?.done).length;
 
@@ -4758,6 +4769,84 @@ ${topContent}
 
   return <div style={{animation:"fadeUp 0.3s ease"}}>
     <SectionTitle sub="ביצועים אמיתיים מ-Meta + תובנות AI">ניתוח ביצועים</SectionTitle>
+
+    {/* Summary KPIs + best times + top posts — from /api/analytics/summary */}
+    {summary && <Card style={{marginBottom:20,padding:18}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,flexWrap:"wrap",gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:18}}>📊</span>
+          <span style={{color:T.text,fontWeight:700,fontSize:14}}>תובנות מ-{summary.days} הימים האחרונים</span>
+        </div>
+        <div style={{display:"flex",gap:4}}>
+          {[7,30,90].map(d=><button key={d} onClick={()=>setSummaryDays(d)} style={{
+            padding:"4px 10px",borderRadius:8,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",
+            background:summaryDays===d?T.accent+"20":"transparent",
+            border:`1px solid ${summaryDays===d?T.accent:T.borderLight}`,
+            color:summaryDays===d?T.accent:T.textMuted
+          }}>{d}d</button>)}
+        </div>
+      </div>
+      {/* KPI strip */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:8,marginBottom:14}}>
+        <div style={{background:T.inputBg,borderRadius:10,padding:10,textAlign:"center"}}>
+          <div style={{fontSize:20,fontWeight:700,color:"#1f2937"}}>{summary.totals.posts}</div>
+          <div style={{fontSize:10,color:T.textMuted}}>פוסטים</div>
+        </div>
+        <div style={{background:T.inputBg,borderRadius:10,padding:10,textAlign:"center"}}>
+          <div style={{fontSize:20,fontWeight:700,color:"#dc2626"}}>{summary.totals.likes}</div>
+          <div style={{fontSize:10,color:T.textMuted}}>❤️ לייקים</div>
+        </div>
+        <div style={{background:T.inputBg,borderRadius:10,padding:10,textAlign:"center"}}>
+          <div style={{fontSize:20,fontWeight:700,color:"#2563eb"}}>{summary.totals.comments}</div>
+          <div style={{fontSize:10,color:T.textMuted}}>💬 תגובות</div>
+        </div>
+        <div style={{background:T.inputBg,borderRadius:10,padding:10,textAlign:"center"}}>
+          <div style={{fontSize:20,fontWeight:700,color:"#059669"}}>{summary.totals.shares}</div>
+          <div style={{fontSize:10,color:T.textMuted}}>🔁 שיתופים</div>
+        </div>
+        <div style={{background:T.inputBg,borderRadius:10,padding:10,textAlign:"center"}}>
+          <div style={{fontSize:20,fontWeight:700,color:"#1877F2"}}>{summary.totals.fb}</div>
+          <div style={{fontSize:10,color:T.textMuted}}>📘 פייסבוק</div>
+        </div>
+        <div style={{background:T.inputBg,borderRadius:10,padding:10,textAlign:"center"}}>
+          <div style={{fontSize:20,fontWeight:700,color:"#E1306C"}}>{summary.totals.ig}</div>
+          <div style={{fontSize:10,color:T.textMuted}}>📸 אינסטגרם</div>
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+        {/* Best hours */}
+        {summary.bestHours?.length > 0 && <div>
+          <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:8}}>🕐 שעות מנצחות (engagement ממוצע)</div>
+          {summary.bestHours.slice(0,3).map((h,i)=><div key={h.hour} style={{display:"flex",justifyContent:"space-between",padding:"6px 10px",background:i===0?"#fef3c7":T.inputBg,borderRadius:8,marginBottom:4,fontSize:12}}>
+            <span style={{fontWeight:600}}>{String(h.hour+3).padStart(2,"0")}:00 IL</span>
+            <span style={{color:T.textMuted}}>{h.avgEng.toFixed(1)} avg · {h.count} פוסטים</span>
+          </div>)}
+        </div>}
+        {/* Best days */}
+        {summary.bestDays?.length > 0 && <div>
+          <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:8}}>📅 ימים מנצחים</div>
+          {summary.bestDays.slice(0,3).map((d,i)=><div key={d.day} style={{display:"flex",justifyContent:"space-between",padding:"6px 10px",background:i===0?"#fef3c7":T.inputBg,borderRadius:8,marginBottom:4,fontSize:12}}>
+            <span style={{fontWeight:600}}>יום {HEB_DAYS[d.day]||d.day}</span>
+            <span style={{color:T.textMuted}}>{d.avgEng.toFixed(1)} avg · {d.count} פוסטים</span>
+          </div>)}
+        </div>}
+      </div>
+      {/* Top posts */}
+      {summary.topPosts?.length > 0 && <div style={{marginTop:14}}>
+        <div style={{color:T.textMuted,fontSize:11,fontWeight:700,marginBottom:8}}>🏆 פוסטים מובילים</div>
+        {summary.topPosts.slice(0,3).map((p,i)=><div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:10,background:T.inputBg,borderRadius:10,marginBottom:6}}>
+          <div style={{fontSize:20,fontWeight:700,color:i===0?"#f59e0b":T.textMuted,minWidth:28,textAlign:"center"}}>{i+1}</div>
+          {p.image_url && <img src={p.image_url} style={{width:40,height:40,borderRadius:8,objectFit:"cover"}}/>}
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:12,color:T.text,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.content}</div>
+            <div style={{fontSize:10,color:T.textMuted,marginTop:2}}>{p.business_name} · {new Date(p.published_at).toLocaleDateString("he-IL")}</div>
+          </div>
+          <div style={{fontSize:11,color:T.textMuted,textAlign:"left",whiteSpace:"nowrap"}}>
+            <span style={{color:"#dc2626"}}>❤️ {p.likes}</span> · <span style={{color:"#2563eb"}}>💬 {p.comments}</span> · <span style={{color:"#059669"}}>🔁 {p.shares}</span>
+          </div>
+        </div>)}
+      </div>}
+    </Card>}
 
     {/* Business selector */}
     <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap",alignItems:"center"}}>
