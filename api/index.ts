@@ -66,6 +66,23 @@ app.get('/api/debug/errors', (req: any, res) => {
   res.json({ count: _errorLog.length, errors: _errorLog.slice(-50).reverse() });
 });
 
+// One-shot helper to save the CLOUD_TTS_API_KEY for the primary user. Idempotent,
+// safe to call once and ignore after. Will be removed in next cleanup pass.
+app.post('/api/debug/save-cloud-tts-key', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json({ error: 'no db' });
+  const { user_id, key } = req.body;
+  if (!user_id || !key) return res.json({ error: 'user_id + key required' });
+  try {
+    const { error } = await sb.from('user_api_keys').upsert(
+      { user_id, key_name: 'CLOUD_TTS_API_KEY', key_value: key, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id,key_name' }
+    );
+    if (error) return res.json({ error: error.message });
+    res.json({ ok: true, saved: 'CLOUD_TTS_API_KEY' });
+  } catch (e: any) { res.json({ error: e.message }); }
+});
+
 // Debug: surface raw Cloud TTS error so we can see which project the GEMINI_API_KEY belongs to.
 app.get('/api/debug/cloud-tts', async (req: any, res) => {
   const sb = getSupabase();
@@ -371,14 +388,18 @@ function pcmToWav(pcm: Buffer, sampleRate = 24000): Buffer {
 async function generateHebrewTTS(
   text: string,
   apiKey: string,
-  voice = 'Sulafat'
+  voice = 'Sulafat',
+  cloudTtsKey?: string | null
 ): Promise<{ wav: Buffer; source: string } | { wav: null; source: 'failed'; error: string }> {
   if (!text || text.trim().length < 2) return { wav: null, source: 'failed', error: 'empty text' };
   const errors: string[] = [];
 
-  // 1. Google Cloud Text-to-Speech (best for Hebrew — explicit gendered native voices)
+  // 1. Google Cloud Text-to-Speech (best for Hebrew — explicit gendered native voices).
+  // Prefer dedicated CLOUD_TTS_API_KEY (which has TTS scope) over GEMINI_API_KEY
+  // (which is usually restricted to Generative Language API only).
+  const ttsKey = cloudTtsKey || apiKey;
   try {
-    const r = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`, {
+    const r = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${ttsKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2090,6 +2111,7 @@ app.post('/api/posts/:id/generate-video', async (req: any, res) => {
 
     const claudeKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
     const geminiKey = await getUserKey(sb, req.userId, 'GEMINI_API_KEY');
+    const cloudTtsKey = await getUserKey(sb, req.userId, 'CLOUD_TTS_API_KEY');
     if (!geminiKey) return res.status(503).json({ error: 'GEMINI_API_KEY not set' });
 
     const topic = post.motion_prompt || post.image_prompt || (post.content || '').slice(0, 200);
@@ -2220,7 +2242,7 @@ Output ONLY the video prompt:`;
               let finalBuffer = veoBuffer;
               ttsStatus = { source: 'skipped', muxed: false };
               if (hebrewVO) {
-                const ttsResult = await generateHebrewTTS(hebrewVO, geminiKey);
+                const ttsResult = await generateHebrewTTS(hebrewVO, geminiKey, 'Sulafat', cloudTtsKey);
                 ttsStatus.source = ttsResult.source;
                 if ('error' in ttsResult) ttsStatus.error = ttsResult.error;
                 if (ttsResult.wav) {
