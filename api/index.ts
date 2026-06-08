@@ -3385,11 +3385,29 @@ ${post.content}
   "linkedin": {"content": "מקצועי - 5-10 שורות, נקודות, תובנה עסקית, ערך מקצועי", "hashtags": ["#tag1", "#tag2", "#tag3"]}
 }`;
 
-    const raw = await callText(prompt, claudeKey, geminiKey, 1500);
-    let clean = raw.replace(/```json\n?|```/g, '').trim();
-    const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
-    if (fb >= 0) clean = clean.slice(fb, lb + 1);
-    const variants = JSON.parse(clean);
+    // Use schema-validated JSON for reliability
+    const schema = {
+      type: 'object',
+      properties: {
+        facebook: { type: 'object', properties: { content: { type: 'string' }, hashtags: { type: 'array', items: { type: 'string' } } }, required: ['content'] },
+        instagram: { type: 'object', properties: { content: { type: 'string' }, hashtags: { type: 'array', items: { type: 'string' } } }, required: ['content'] },
+        tiktok: { type: 'object', properties: { content: { type: 'string' }, hashtags: { type: 'array', items: { type: 'string' } } }, required: ['content'] },
+        linkedin: { type: 'object', properties: { content: { type: 'string' }, hashtags: { type: 'array', items: { type: 'string' } } }, required: ['content'] },
+      },
+      required: ['facebook', 'instagram', 'tiktok', 'linkedin'],
+    };
+    let variants: any;
+    try {
+      variants = await callTextForJson(prompt, schema, claudeKey, geminiKey, 1500);
+    } catch (jsonErr: any) {
+      // Fallback: free-form text + best-effort parse
+      const raw = await callText(prompt, claudeKey, geminiKey, 1500);
+      let clean = (raw || '').replace(/```json\n?|```/g, '').trim();
+      const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
+      if (fb < 0 || lb < fb) throw new Error(`No JSON in response (${raw.slice(0, 200)}…)`);
+      clean = clean.slice(fb, lb + 1);
+      variants = JSON.parse(clean);
+    }
 
     await sb.from('content_posts').update({
       performance: { ...(post.performance || {}), platform_variants: variants, adapted_at: new Date().toISOString() }
@@ -3431,11 +3449,26 @@ REQUIREMENTS:
 
 Return ONLY JSON: {"content": "alternate Hebrew text", "hashtags": ["#tag1", "#tag2", "#tag3"], "angle_note": "1-sentence English note about what's different"}`;
 
-    const raw = await callText(variantPrompt, claudeKey, geminiKey, 800);
-    let clean = raw.replace(/```json\n?|```/g, '').trim();
-    const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
-    if (fb >= 0) clean = clean.slice(fb, lb + 1);
-    const parsed = JSON.parse(clean);
+    const schema = {
+      type: 'object',
+      properties: {
+        content: { type: 'string', description: 'Alternate Hebrew post text' },
+        hashtags: { type: 'array', items: { type: 'string' } },
+        angle_note: { type: 'string', description: '1-sentence English note about what is different' },
+      },
+      required: ['content'],
+    };
+    let parsed: any;
+    try {
+      parsed = await callTextForJson(variantPrompt, schema, claudeKey, geminiKey, 800);
+    } catch {
+      const raw = await callText(variantPrompt, claudeKey, geminiKey, 800);
+      let clean = (raw || '').replace(/```json\n?|```/g, '').trim();
+      const fb2 = clean.indexOf('{'); const lb2 = clean.lastIndexOf('}');
+      if (fb2 < 0 || lb2 < fb2) throw new Error(`No JSON in response (${raw.slice(0, 200)}…)`);
+      clean = clean.slice(fb2, lb2 + 1);
+      parsed = JSON.parse(clean);
+    }
 
     const existing = post.content_variants || [];
     const variant = {
