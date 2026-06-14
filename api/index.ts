@@ -164,15 +164,19 @@ app.get('/api/debug/cloud-tts', async (req: any, res) => {
 app.get('/api/debug/stuck-posts', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.json({ error: 'no db' });
-  const user_id = (req.query.user_id as string) || '702b86ed-4ce5-4e70-98d0-50a55dbf4af6';
+  const all = req.query.all === '1';
   try {
-    const { data, error } = await sb
+    let q = sb
       .from('content_posts')
-      .select('id, business_name, content, status, scheduled_at, published_at, image_url, video_url, image_prompt, motion_prompt, performance, created_at')
-      .eq('user_id', user_id)
+      .select('id, user_id, business_name, content, status, scheduled_at, published_at, image_url, video_url, image_prompt, motion_prompt, performance, created_at')
       .is('published_at', null)
       .order('created_at', { ascending: false })
-      .limit(30);
+      .limit(50);
+    if (!all) {
+      const user_id = (req.query.user_id as string) || '702b86ed-4ce5-4e70-98d0-50a55dbf4af6';
+      q = q.eq('user_id', user_id);
+    }
+    const { data, error } = await q;
     if (error) return res.json({ error: error.message });
     const stuck = (data || []).map((p: any) => {
       const issues: string[] = [];
@@ -182,6 +186,7 @@ app.get('/api/debug/stuck-posts', async (req: any, res) => {
       if (!p.scheduled_at) issues.push('not scheduled');
       return {
         id: p.id,
+        user_id: p.user_id,
         business: p.business_name,
         content_preview: (p.content || '').slice(0, 80),
         status: p.status || 'draft',
