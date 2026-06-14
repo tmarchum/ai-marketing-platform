@@ -1938,16 +1938,20 @@ app.post('/api/calendars/approve', async (req: any, res) => {
         }
       }
 
-      // Expand calendar brief into FULL post — Claude with cache, Gemini fallback
+      // Expand calendar brief into FULL post — structured JSON via callTextForJson
+      // (Gemini-first, Claude fallback). Schema-validated, so no parse failures.
       let content = '';
       let hashtags: string[] = [];
       if (hasLLM) {
         try {
-          const expandPrompt = `Write a Facebook post in HEBREW based on this brief (stay ON-THEME):
+          const expandPrompt = `${cachedSystem}
 
-TOPIC (must stay faithful to this!): ${cp.theme}
+Write a Facebook post in HEBREW based on this brief (stay ON-THEME):
+
+TOPIC: ${cp.theme}
 POST TYPE: ${cp.type}
 HOOK (use as inspiration, feel free to rephrase): "${cp.hook}"
+VISUAL CONCEPT (the scene we are picturing): ${cp.visual_concept || ''}
 ANGLE/POINT: ${cp.angle || ''}
 GOAL: ${cp.rationale || ''}
 
@@ -1955,31 +1959,28 @@ GOAL: ${cp.rationale || ''}
 - Changing the topic. If topic is "Independence Day" — post MUST be about Independence Day.
 - Inventing facts/prices/services not in the knowledge base above.
 - First person singular ("אני").
+- Returning only the hook — write the FULL post.
 
 ✅ REQUIRED:
-- First person plural ("אנחנו") — see guidelines above.
-- 3-6 lines, structured: strong opening → content → CTA/question.
+- First person plural ("אנחנו").
+- 4-7 lines of Hebrew text, structured: strong opening → 2-3 lines content/value → CTA or question.
 - Use real info from the business knowledge base where relevant.
-- Max 2 emojis.
+- Max 2 emojis. NO hashtags inside content — they go in the hashtags array.
+- Minimum 80 Hebrew characters in content (anything shorter is too short).`;
 
-Return ONLY JSON: {"content": "full post text in Hebrew", "hashtags": ["#tag1", "#tag2", "#tag3"]}`;
-          let raw = '';
-          if (claudeKey) {
-            try { raw = await callClaudeWithCache(cachedSystem, expandPrompt, claudeKey, 800); } catch {}
-          }
-          if (!raw && geminiKey) {
-            // Gemini fallback — same prompt prefixed with business context
-            const fullPrompt = `${cachedSystem}\n\n${expandPrompt}`;
-            try { raw = await callGemini(fullPrompt, geminiKey, 800); } catch {}
-          }
-          if (raw) {
-            let clean = raw.replace(/```json\n?|```/g, '').trim();
-            const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
-            if (fb >= 0 && lb > fb) clean = clean.slice(fb, lb + 1);
-            const parsed = JSON.parse(clean);
-            content = (parsed.content || '').trim();
-            hashtags = Array.isArray(parsed.hashtags) ? parsed.hashtags.slice(0, 5) : [];
-          }
+          const expandSchema = {
+            type: 'object',
+            properties: {
+              content: { type: 'string', minLength: 80, maxLength: 1200, description: 'Full post text in Hebrew — 4-7 lines, with hook + body + CTA' },
+              hashtags: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 40 }, description: 'Hebrew hashtags, with or without # prefix' },
+            },
+            required: ['content'],
+          };
+          try {
+            const parsed = await callTextForJson(expandPrompt, expandSchema, claudeKey || null, geminiKey || null, 1500);
+            content = (parsed?.content || '').trim();
+            hashtags = Array.isArray(parsed?.hashtags) ? parsed.hashtags.slice(0, 5) : [];
+          } catch {}
         } catch {}
       }
 
@@ -2007,6 +2008,9 @@ Return ONLY JSON: {"content": "full post text in Hebrew", "hashtags": ["#tag1", 
             media_type: cp.media_type || 'image',
             // headline = short Hebrew text we overlay on the generated image (real font, perfect rendering)
             headline: cp.caption_short || cp.hook || cp.theme,
+            // visual_concept = rich Hebrew scene description (who/where/what/lighting). The
+            // image generator reads this so it draws a quiz scene, not generic professionals.
+            visual_concept: cp.visual_concept || null,
           }
         },
       };
@@ -2057,12 +2061,13 @@ app.post('/api/posts/:id/generate-media', async (req: any, res) => {
     const hebrewHeadline = (overlayCandidate || '').slice(0, 70);
     const brandColor = biz?.color || '#1a1a2e';
 
-    // CACHE NOTE: `topic` feeds the cache key, so it MUST be deterministic from the
-    // post itself — never from `post.image_prompt`, which we overwrite with the LLM-
-    // expanded English prompt at the end of this handler. If we read image_prompt
-    // here, the second generation for the same post would compute a different cache
-    // key (English finalPrompt vs original Hebrew content) and miss every time.
+    // CACHE NOTE: `topic` feeds the cache key — must be deterministic. Use post.content.
     const topic = (post.content || '').slice(0, 300) || (post.image_prompt || '').slice(0, 300);
+    // SCENE NOTE: the visual_concept (stored in calendar_meta during approve) is a rich,
+    // business-specific Hebrew scene description — feed THAT to the scene model, not the
+    // (often short) post.content. Without this the model invents generic scenes that have
+    // nothing to do with the business. Fallback to image_prompt then content.
+    const sceneSource = (calMeta.visual_concept as string) || post.image_prompt || topic;
     const vi = biz?.visual_identity || '';
     const bizDescription = biz?.description || '';
     const bizName = biz?.name || '';
@@ -2071,25 +2076,25 @@ app.post('/api/posts/:id/generate-media', async (req: any, res) => {
     //    The scene description is then combined with an explicit Hebrew text
     //    instruction in the next step — Nano Banana renders Hebrew correctly only
     //    when given the exact letters to draw, not when guessing.
-    const sceneDescription = claudeKey
+    const sceneDescription = (claudeKey || geminiKey)
       ? await (async () => {
-          const claudeMessage = `Describe a single photorealistic candid lifestyle scene (NOT an advertisement) for a social-media image.
+          const claudeMessage = `Translate this Hebrew scene description into a single photorealistic candid lifestyle scene description in English (NOT an advertisement) for a social-media image.
 
 BUSINESS: ${bizName} — ${bizDescription}
 BRAND MOOD: ${vi || 'warm, modern, Israeli lifestyle'}
-POST THEME: ${topic}
+HEBREW SCENE TO DEPICT (this is the actual scene — translate and enrich, do not invent something else): ${sceneSource}
+POST CONTENT CONTEXT: ${topic}
 
-OUTPUT: 2-3 sentences, English, describing ONE concrete scene with people. Israeli-looking subjects (Mediterranean features, modern Israeli casual attire), real-world location, natural lighting, candid documentary photography vibe (NOT staged ad).
+OUTPUT: 2-3 sentences, English. Stay FAITHFUL to the Hebrew scene — same people, same place, same activity. Add: Israeli-looking subjects (Mediterranean features, modern Israeli casual attire), natural lighting, candid documentary photography vibe.
 
 ⛔ Do NOT describe: airplanes, airline tails, billboards, signs, store fronts, T-shirts with prints, phone/laptop screens, brand logos, posters, road signs, tickets, passports — anything that naturally contains text. Pick a clean text-free scene.
-
-Examples for a flight-deals business: "A young Israeli couple stands on a quiet beach at sunset, holding hands, looking out at the horizon." / "A father lifts his laughing daughter onto his shoulders at a Mediterranean overlook, golden-hour light." / "A traveler's bare feet rest on a balcony railing with a blurred European skyline beyond, holding a coffee."
+⛔ Do NOT invent a generic office/meeting scene if the Hebrew scene is about something specific (a quiz event, a movie screening, a beach, a kitchen, etc.).
 
 Output ONLY the 2-3 sentence scene description, no labels:`;
-          try { return (await callText(claudeMessage, claudeKey, geminiKey, 200)).trim(); }
-          catch { return topic; }
+          try { return (await callText(claudeMessage, claudeKey, geminiKey, 300)).trim(); }
+          catch { return sceneSource; }
         })()
-      : topic;
+      : sceneSource;
 
     // ── Step 2: Ask Nano Banana for a CLEAN scene only (no banner, no text).
     //    The model proved it can produce clean Israeli lifestyle scenes well; what
