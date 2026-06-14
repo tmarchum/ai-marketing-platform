@@ -1960,35 +1960,45 @@ app.post('/api/calendars/approve', async (req: any, res) => {
         try {
           const expandPrompt = `${cachedSystem}
 
-Write a Facebook post in HEBREW based on this brief (stay ON-THEME):
+You are writing a FULL Facebook post in HEBREW. Not a hook. Not a one-liner. A complete post that someone would scroll past if it were just a hook.
 
+CONTEXT FOR THE POST:
 TOPIC: ${cp.theme}
 POST TYPE: ${cp.type}
-HOOK (use as inspiration, feel free to rephrase): "${cp.hook}"
+HOOK (this is just the FIRST line — you must continue past it): "${cp.hook}"
 VISUAL CONCEPT (the scene we are picturing): ${cp.visual_concept || ''}
 ANGLE/POINT: ${cp.angle || ''}
 GOAL: ${cp.rationale || ''}
 
+STRUCTURE the post in EXACTLY this format (use \\n for line breaks):
+
+Line 1: The hook — strong opening, question or surprising statement (1-2 short sentences)
+\\n\\n (blank line)
+Line 2-4: The MEAT of the post — give a concrete tip, share a real story from the business, explain the value, or walk through how something works. 2-4 sentences with real content. Use specific details from the business knowledge base.
+\\n\\n (blank line)
+Line 5: A CTA (call to action) — invite a comment, a DM, a click, sharing. 1 short sentence.
+
 🚫 FORBIDDEN:
-- Changing the topic. If topic is "Independence Day" — post MUST be about Independence Day.
-- Inventing facts/prices/services not in the knowledge base above.
+- Returning only the hook. The hook is line 1. You MUST write lines 2-5 as well.
+- A response under 250 Hebrew characters. This is a FULL post, not a tweet.
+- Inventing facts/prices/services not in the knowledge base.
 - First person singular ("אני").
-- Returning only the hook — write the FULL post.
+- Changing the topic (stay on TOPIC).
 
 ✅ REQUIRED:
 - First person plural ("אנחנו").
-- 4-7 lines of Hebrew text, structured: strong opening → 2-3 lines content/value → CTA or question.
-- Use real info from the business knowledge base where relevant.
-- Max 2 emojis. NO hashtags inside content — they go in the hashtags array.
-- Minimum 80 Hebrew characters in content (anything shorter is too short).`;
+- At least 250 Hebrew characters total. Aim for 300-500.
+- 3-5 paragraphs separated by \\n\\n.
+- 3-5 hashtags in the hashtags array (in Hebrew, without # prefix).
+- Max 2 emojis in content.`;
 
           const expandSchema = {
             type: 'object',
             properties: {
-              content: { type: 'string', minLength: 80, maxLength: 1200, description: 'Full post text in Hebrew — 4-7 lines, with hook + body + CTA' },
-              hashtags: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 40 }, description: 'Hebrew hashtags, with or without # prefix' },
+              content: { type: 'string', minLength: 250, maxLength: 1500, description: 'Full Hebrew post — hook line + body (2-4 sentences of real content) + CTA, separated by blank lines. Minimum 250 chars.' },
+              hashtags: { type: 'array', minItems: 3, maxItems: 5, items: { type: 'string', maxLength: 40 }, description: 'Hebrew hashtags without # prefix' },
             },
-            required: ['content'],
+            required: ['content', 'hashtags'],
           };
           try {
             const parsed = await callTextForJson(expandPrompt, expandSchema, claudeKey || null, geminiKey || null, 1500);
