@@ -210,7 +210,8 @@ app.get('/api/debug/post-detail', async (req: any, res) => {
   const id = req.query.id as string;
   if (!biz && !id) return res.json({ error: 'biz= or id= required' });
   try {
-    let q = sb.from('content_posts').select('id, business_name, content, hashtags, image_prompt, image_url, scheduled_at, performance').is('published_at', null).order('created_at', { ascending: false }).limit(5);
+    const limit = Math.min(Number(req.query.limit) || 5, 30);
+    let q = sb.from('content_posts').select('id, business_name, content, hashtags, image_prompt, image_url, scheduled_at, performance').is('published_at', null).order('created_at', { ascending: false }).limit(limit);
     if (id) q = q.eq('id', id);
     if (biz) q = q.eq('business_name', biz);
     const { data, error } = await q;
