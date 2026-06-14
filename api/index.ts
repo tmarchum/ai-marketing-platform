@@ -161,6 +161,20 @@ app.get('/api/debug/cloud-tts', async (req: any, res) => {
 });
 
 // Debug: list pending/stuck posts for triage. No auth — defaults to known user_id.
+// Debug: delete all unpublished posts (for redo). Optional ?biz= filter.
+app.post('/api/debug/delete-unpublished', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json({ error: 'no db' });
+  try {
+    let q = sb.from('content_posts').delete().is('published_at', null);
+    const biz = req.query.biz as string;
+    if (biz) q = q.eq('business_name', biz);
+    const { error, count } = await q.select('id', { count: 'exact', head: false });
+    if (error) return res.json({ error: error.message });
+    res.json({ deleted: count ?? 0 });
+  } catch (e: any) { res.json({ error: e.message }); }
+});
+
 // Debug: get full post details (content + prompts) for a specific business
 app.get('/api/debug/post-detail', async (req: any, res) => {
   const sb = getSupabase();
