@@ -2075,9 +2075,13 @@ HASHTAGS:
 
         try {
           let r = await tryExpand('');
-          if (r.content.length < 250) {
-            // Retry with explicit length nudge
-            r = await tryExpand(`Your previous reply was only ${r.content.length} characters. The minimum is 250 — write 2-3 more sentences in the body.`);
+          // Up to 2 retries with increasingly forceful nudges. Gemini sometimes ignores
+          // a single retry — repeat with a stronger directive.
+          if (r.content.length < 300) {
+            r = await tryExpand(`Your previous reply was only ${r.content.length} characters. The brand's actual published posts above are 300-500 characters. Write a post that LOOKS LIKE those examples — hook line, then 2-3 sentences of real body content, then a CTA. Do NOT return just the hook again.`);
+          }
+          if (r.content.length < 300) {
+            r = await tryExpand(`STOP returning short answers. Count the characters in EXAMPLE 1 above. Your answer MUST be at least that long. Body section needs 2-3 FULL sentences about ${cp.theme} that use concrete facts from the knowledge base. This is your last chance.`);
           }
           content = r.content;
           hashtags = r.hashtags;
@@ -2201,19 +2205,28 @@ Output ONLY the 2-3 sentence scene description, no labels:`;
     //    it can NOT do is reliably reproduce a specific Hebrew string letter-for-letter
     //    (it renders correctly-shaped Hebrew letters but the wrong words). So we
     //    handle the headline ourselves with a real font overlay after generation.
-    function buildImagePrompt(scene: string): string {
-      return `Generate a cinematic, photorealistic editorial photograph, square format (1:1):
+    function buildImagePrompt(scene: string, hebrewScene: string): string {
+      // Include the original Hebrew scene verbatim so Nano Banana doesn't lose the
+      // specifics that the English translation can flatten ("two employees high-fiving
+      // over a smartphone" → "two men in a hallway"). Nano Banana understands Hebrew.
+      const hebrewBlock = hebrewScene && hebrewScene !== scene
+        ? `\nORIGINAL HEBREW SCENE — match these specifics exactly, including any objects/props/activities mentioned:\n${hebrewScene}\n`
+        : '';
+      return `Generate a cinematic, photorealistic editorial photograph, square format (1:1).
 
+SCENE (depict EXACTLY this — same people, same activity, same props):
 ${scene}
-
+${hebrewBlock}
 Style: magazine-cover / professional ad photography — rich color grading, shallow depth of field, dramatic natural lighting (golden hour, soft window light, etc.), strong composition. Israeli-looking subjects (Mediterranean features, modern Israeli casual attire), modern Israeli aesthetic.
+
+CRITICAL — the scene must show the SPECIFIC activity described (a quiz event, a movie screening, a flight deal celebration, etc.), NOT a generic "two people in an empty space" interpretation. If the scene mentions a smartphone, a board, a crowd, a screen, a microphone — those MUST appear.
 
 The image must contain ABSOLUTELY NO text, NO writing, NO letters, NO numbers, NO logos, NO signs, NO captions, NO banners — only people, places, and natural objects. Any incidental signs/screens in the background must be blurred or out-of-focus.
 
 Composition: position the main subjects in the upper-2/3 of the frame and keep the lower area visually clean (calm sky, blurred bokeh, smooth surface, gentle out-of-focus background) — a designer headline will be placed there, so it should not compete with faces or important detail.`;
     }
 
-    const finalPrompt = buildImagePrompt(sceneDescription);
+    const finalPrompt = buildImagePrompt(sceneDescription, sceneSource);
 
     // 2. Generate N image variants via Gemini (default 3)
     const numVariants = Math.min(Math.max(Number(req.query.variants || req.body?.variants || 3), 1), 4);
