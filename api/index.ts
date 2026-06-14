@@ -202,6 +202,32 @@ app.post('/api/debug/delete-unpublished', async (req: any, res) => {
   } catch (e: any) { res.json({ error: e.message }); }
 });
 
+// Debug: show what's in the KB for a business — what the LLM actually sees
+app.get('/api/debug/biz-context', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json({ error: 'no db' });
+  try {
+    const bizName = req.query.biz as string;
+    if (!bizName) return res.json({ error: 'biz= required' });
+    const { data: biz } = await sb.from('businesses').select('*').eq('name', bizName).single();
+    if (!biz) return res.json({ error: 'biz not found' });
+    const { data: docs } = await sb.from('business_documents').select('title, category, content').eq('business_id', biz.id);
+    const kb = await getBizKnowledgeBase(sb, biz.id, 50_000);
+    res.json({
+      name: biz.name,
+      description: biz.description,
+      tone: biz.tone,
+      target_audience: biz.target_audience,
+      url: biz.url,
+      visual_identity_preview: (biz.visual_identity || '').slice(0, 500),
+      scan_result: biz.scan_result,
+      docs_count: docs?.length || 0,
+      docs: (docs || []).map((d: any) => ({ title: d.title, category: d.category, length: (d.content || '').length, preview: (d.content || '').slice(0, 200) })),
+      kb_total_chars: kb.length,
+    });
+  } catch (e: any) { res.json({ error: e.message }); }
+});
+
 // Debug: re-expand the content for a single existing post (when Gemini returned
 // a too-short body). Uses the post's stored calendar_meta as the brief.
 app.post('/api/debug/re-expand/:id', async (req: any, res) => {
