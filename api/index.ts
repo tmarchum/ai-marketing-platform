@@ -202,6 +202,23 @@ app.post('/api/debug/delete-unpublished', async (req: any, res) => {
   } catch (e: any) { res.json({ error: e.message }); }
 });
 
+// Debug: pause all unpublished posts so the cron skips them.
+// Sets scheduled_at=null on every unpublished post, keeping the drafts intact.
+app.post('/api/debug/pause-all-unpublished', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json({ error: 'no db' });
+  try {
+    const { data, error } = await sb
+      .from('content_posts')
+      .update({ scheduled_at: null })
+      .is('published_at', null)
+      .not('scheduled_at', 'is', null)
+      .select('id', { count: 'exact' });
+    if (error) return res.json({ error: error.message });
+    res.json({ paused: data?.length ?? 0 });
+  } catch (e: any) { res.json({ error: e.message }); }
+});
+
 // Debug: show what's in the KB for a business — what the LLM actually sees
 app.get('/api/debug/biz-context', async (req: any, res) => {
   const sb = getSupabase();
