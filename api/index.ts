@@ -161,6 +161,33 @@ app.get('/api/debug/cloud-tts', async (req: any, res) => {
 });
 
 // Debug: list pending/stuck posts for triage. No auth — defaults to known user_id.
+// Debug: fetch recent Facebook posts for a business directly via Graph API.
+// Returns the actual published posts so we can see the brand's existing voice.
+app.get('/api/debug/fb-posts', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json({ error: 'no db' });
+  try {
+    const bizName = req.query.biz as string;
+    if (!bizName) return res.json({ error: 'biz= required' });
+    const { data: biz } = await sb.from('businesses').select('name, social').eq('name', bizName).single();
+    if (!biz) return res.json({ error: 'biz not found' });
+    const t = biz.social?.facebook?.tokens || {};
+    const pageId = t.META_PAGE_ID;
+    const tok = t.META_PAGE_ACCESS_TOKEN || t.META_ACCESS_TOKEN;
+    if (!pageId || !tok) return res.json({ error: 'no FB tokens', has_page: !!pageId, has_tok: !!tok });
+    const r = await fetch(`https://graph.facebook.com/v25.0/${pageId}/posts?fields=id,message,created_time,permalink_url&limit=15&access_token=${tok}`);
+    const d = await r.json() as any;
+    if (d.error) return res.json({ error: d.error.message, code: d.error.code });
+    const posts = (d.data || []).filter((p: any) => p.message).map((p: any) => ({
+      created: p.created_time?.slice(0, 10),
+      url: p.permalink_url,
+      length: (p.message || '').length,
+      message: p.message,
+    }));
+    res.json({ biz: bizName, count: posts.length, posts });
+  } catch (e: any) { res.json({ error: e.message }); }
+});
+
 // Debug: delete all unpublished posts (for redo). Optional ?biz= filter.
 app.post('/api/debug/delete-unpublished', async (req: any, res) => {
   const sb = getSupabase();
