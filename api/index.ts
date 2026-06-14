@@ -1923,8 +1923,27 @@ app.post('/api/calendars/approve', async (req: any, res) => {
 
     // Get KB context once
     const kbContent = hasLLM ? await getBizKnowledgeBase(sb, business_id, 10_000) : '';
-    // Build cached business context (10 calls × same biz = 90% savings)
-    const cachedSystem = buildBusinessContext(biz, kbContent);
+
+    // Fetch ACTUAL historical FB posts as style examples — the cached scan_result.fbPosts
+    // is usually empty, so we pull live via Graph API. These get cached in the system prompt.
+    let fbSamples: string[] = [];
+    try {
+      const pageId = biz.social?.facebook?.tokens?.META_PAGE_ID;
+      const pageTok = biz.social?.facebook?.tokens?.META_PAGE_ACCESS_TOKEN || biz.social?.facebook?.tokens?.META_ACCESS_TOKEN;
+      if (pageId && pageTok) {
+        const r = await fetch(`https://graph.facebook.com/v25.0/${pageId}/posts?fields=message&limit=20&access_token=${pageTok}`);
+        const d = await r.json() as any;
+        if (!d.error) {
+          fbSamples = (d.data || [])
+            .map((p: any) => (p.message || '').trim())
+            .filter((m: string) => m.length >= 150 && m.length <= 800)
+            .slice(0, 5);
+        }
+      }
+    } catch {}
+
+    // Build cached business context with style examples (10 calls × same biz = 90% savings)
+    const cachedSystem = buildBusinessContext(biz, kbContent, fbSamples);
 
     // Determine scheduling: prefer business schedule slots if enabled
     const schedule = biz.schedule || {};
@@ -4230,7 +4249,13 @@ async function callClaudeWithCache(
 }
 
 // Build a cacheable "business context" string — shared across many Claude calls per business
-function buildBusinessContext(biz: any, kbContent: string = ''): string {
+function buildBusinessContext(biz: any, kbContent: string = '', fbSamples: string[] = []): string {
+  const samplesBlock = fbSamples.length > 0
+    ? `\n\n📌 ACTUAL POSTS THIS BRAND HAS PUBLISHED ON FACEBOOK — STUDY THESE AS THE STYLE TEMPLATE.
+Every new post you write MUST match this exact structure: emoji-led hook, 2-4 paragraph body with concrete brand facts (prices/services/results), CTA at end. Length 250-500 Hebrew characters. Paragraphs separated by blank lines.
+${fbSamples.map((s, i) => `\n--- EXAMPLE ${i + 1} ---\n${s}\n`).join('')}
+--- END EXAMPLES ---\n`
+    : '';
   return `BUSINESS PROFILE — cached context for ${biz.name}
 
 Business name: ${biz.name}
@@ -4244,11 +4269,12 @@ VISUAL IDENTITY (brand look):
 ${biz.visual_identity || 'Professional, clean, modern brand.'}
 """
 
-${biz.scan_result && Object.keys(biz.scan_result).length > 0 ? `BRAND INSIGHTS:\n${JSON.stringify(biz.scan_result)}\n\n` : ''}${kbContent ? `KNOWLEDGE BASE DOCUMENTS:\n${kbContent}\n\n` : ''}GUIDELINES:
+${biz.scan_result && Object.keys(biz.scan_result).length > 0 ? `BRAND INSIGHTS:\n${JSON.stringify(biz.scan_result)}\n\n` : ''}${kbContent ? `KNOWLEDGE BASE DOCUMENTS:\n${kbContent}\n\n` : ''}${samplesBlock}GUIDELINES:
 - Always speak in first person plural ("אנחנו"), never singular ("אני")
 - Reference real facts from the knowledge base — never invent prices/services
-- Match the brand tone and visual identity
-- Keep content specific and concrete, never generic`;
+- Match the brand tone and visual identity from the example posts above
+- Keep content specific and concrete, never generic
+- Write posts of 250-500 Hebrew characters, never one-liners`;
 }
 
 // Helper: fetch website content — try direct first, fallback to Apify for SPAs
