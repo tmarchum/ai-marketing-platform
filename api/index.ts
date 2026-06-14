@@ -2121,11 +2121,15 @@ HASHTAGS:
         async function tryExpand(extraNudge: string): Promise<{content: string, hashtags: string[]}> {
           const prompt = baseInstructions + (extraNudge ? `\n\n⚠️ ATTENTION: ${extraNudge}` : '');
           let raw = '';
-          if (geminiKey) {
-            try { raw = await callGemini(prompt, geminiKey, 1500); } catch {}
-          }
-          if (!raw && claudeKey) {
-            try { raw = await callClaude(prompt, claudeKey, 1500); } catch {}
+          // Respect PREFER_CLAUDE env. When set, Claude first (better Hebrew prose),
+          // Gemini fallback. Otherwise the original Gemini-first order.
+          const preferClaude = process.env.PREFER_CLAUDE === '1';
+          if (preferClaude) {
+            if (claudeKey) { try { raw = await callClaude(prompt, claudeKey, 1500); } catch {} }
+            if (!raw && geminiKey) { try { raw = await callGemini(prompt, geminiKey, 1500); } catch {} }
+          } else {
+            if (geminiKey) { try { raw = await callGemini(prompt, geminiKey, 1500); } catch {} }
+            if (!raw && claudeKey) { try { raw = await callClaude(prompt, claudeKey, 1500); } catch {} }
           }
           if (!raw) return { content: '', hashtags: [] };
           // Parse CONTENT: ... HASHTAGS: ...
