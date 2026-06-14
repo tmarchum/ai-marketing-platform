@@ -4376,13 +4376,7 @@ async function callClaudeWithCache(
 }
 
 // Build a cacheable "business context" string — shared across many Claude calls per business
-function buildBusinessContext(biz: any, kbContent: string = '', fbSamples: string[] = []): string {
-  const samplesBlock = fbSamples.length > 0
-    ? `\n\n📌 ACTUAL POSTS THIS BRAND HAS PUBLISHED ON FACEBOOK — STUDY THESE AS THE STYLE TEMPLATE.
-Every new post you write MUST match this exact structure: emoji-led hook, 2-4 paragraph body with concrete brand facts (prices/services/results), CTA at end. Length 250-500 Hebrew characters. Paragraphs separated by blank lines.
-${fbSamples.map((s, i) => `\n--- EXAMPLE ${i + 1} ---\n${s}\n`).join('')}
---- END EXAMPLES ---\n`
-    : '';
+function buildBusinessContext(biz: any, kbContent: string = '', _fbSamples: string[] = []): string {
   return `BUSINESS PROFILE — cached context for ${biz.name}
 
 Business name: ${biz.name}
@@ -4396,12 +4390,11 @@ VISUAL IDENTITY (brand look):
 ${biz.visual_identity || 'Professional, clean, modern brand.'}
 """
 
-${biz.scan_result && Object.keys(biz.scan_result).length > 0 ? `BRAND INSIGHTS:\n${JSON.stringify(biz.scan_result)}\n\n` : ''}${kbContent ? `KNOWLEDGE BASE DOCUMENTS:\n${kbContent}\n\n` : ''}${samplesBlock}GUIDELINES:
+${biz.scan_result && Object.keys(biz.scan_result).length > 0 ? `BRAND INSIGHTS:\n${JSON.stringify(biz.scan_result)}\n\n` : ''}${kbContent ? `KNOWLEDGE BASE DOCUMENTS:\n${kbContent}\n\n` : ''}GUIDELINES:
 - Always speak in first person plural ("אנחנו"), never singular ("אני")
 - Reference real facts from the knowledge base — never invent prices/services
-- Match the brand tone and visual identity from the example posts above
-- Keep content specific and concrete, never generic
-- Write posts of 250-500 Hebrew characters, never one-liners`;
+- Match the brand tone and visual identity
+- Keep content specific and concrete, never generic`;
 }
 
 // Helper: fetch website content — try direct first, fallback to Apify for SPAs
