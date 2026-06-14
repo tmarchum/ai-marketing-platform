@@ -1677,12 +1677,13 @@ app.post('/api/calendars/generate', async (req: any, res) => {
     const { data: biz, error: bizErr } = await sb.from('businesses').select('*').eq('id', business_id).single();
     if (bizErr || !biz) return res.status(404).json({ error: 'Business not found' });
 
-    // Get Claude key
+    // Get Claude + Gemini keys (Gemini is the fallback if Claude billing is out)
     const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
     const keyMap: Record<string, string> = {};
     for (const k of (keys || [])) keyMap[k.key_name] = k.key_value;
     const claudeKey = keyMap.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
-    if (!claudeKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
+    const geminiKey = keyMap.GEMINI_API_KEY || process.env.GEMINI_API_KEY || '';
+    if (!claudeKey && !geminiKey) return res.status(503).json({ error: 'No LLM key (ANTHROPIC_API_KEY or GEMINI_API_KEY)' });
 
     const targetYear = year || new Date().getFullYear();
     const targetMonth = month || (new Date().getMonth() + 1); // 1-12
@@ -1789,7 +1790,7 @@ ${eventsText}${trendsText}
     console.log(`[calendar] prompt length: ${prompt.length} chars`);
     let calendar: any;
     try {
-      calendar = await callClaudeForJson(prompt, calendarSchema, claudeKey, 16000);
+      calendar = await callTextForJson(prompt, calendarSchema, claudeKey || null, geminiKey || null, 16000);
       console.log(`[calendar] got ${calendar?.posts?.length || 0} posts via tool_use`);
     } catch (firstErr: any) {
       // Retry with stripped-down prompt (no KB, no trends, no events)
@@ -1804,7 +1805,7 @@ ${eventsText}${trendsText}
 - hook: שורת פתיחה מושכת
 - visual_concept: סצנה קונקרטית — אנשים אמיתיים, פעולה, מיקום`;
       try {
-        calendar = await callClaudeForJson(simplePrompt, calendarSchema, claudeKey, 8000);
+        calendar = await callTextForJson(simplePrompt, calendarSchema, claudeKey || null, geminiKey || null, 8000);
         console.log(`[calendar] retry got ${calendar?.posts?.length || 0} posts`);
       } catch (retryErr: any) {
         return res.status(500).json({
@@ -1854,14 +1855,16 @@ app.post('/api/calendars/approve', async (req: any, res) => {
     const { data: biz } = await sb.from('businesses').select('*').eq('id', business_id).single();
     if (!biz) return res.status(404).json({ error: 'Business not found' });
 
-    // Get Claude key for expanding posts
+    // Get Claude + Gemini keys for expanding posts (Gemini fallback when Claude billing is out)
     const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
     const keyMap: Record<string, string> = {};
     for (const k of (keys || [])) keyMap[k.key_name] = k.key_value;
     const claudeKey = keyMap.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
+    const geminiKey = keyMap.GEMINI_API_KEY || process.env.GEMINI_API_KEY || '';
+    const hasLLM = !!(claudeKey || geminiKey);
 
     // Get KB context once
-    const kbContent = claudeKey ? await getBizKnowledgeBase(sb, business_id, 10_000) : '';
+    const kbContent = hasLLM ? await getBizKnowledgeBase(sb, business_id, 10_000) : '';
     // Build cached business context (10 calls × same biz = 90% savings)
     const cachedSystem = buildBusinessContext(biz, kbContent);
 
@@ -1918,10 +1921,10 @@ app.post('/api/calendars/approve', async (req: any, res) => {
         }
       }
 
-      // Expand calendar brief into FULL post via Claude
+      // Expand calendar brief into FULL post — Claude with cache, Gemini fallback
       let content = '';
       let hashtags: string[] = [];
-      if (claudeKey) {
+      if (hasLLM) {
         try {
           const expandPrompt = `Write a Facebook post in HEBREW based on this brief (stay ON-THEME):
 
@@ -1943,13 +1946,23 @@ GOAL: ${cp.rationale || ''}
 - Max 2 emojis.
 
 Return ONLY JSON: {"content": "full post text in Hebrew", "hashtags": ["#tag1", "#tag2", "#tag3"]}`;
-          const raw = await callClaudeWithCache(cachedSystem, expandPrompt, claudeKey, 800);
-          let clean = raw.replace(/```json\n?|```/g, '').trim();
-          const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
-          if (fb >= 0 && lb > fb) clean = clean.slice(fb, lb + 1);
-          const parsed = JSON.parse(clean);
-          content = (parsed.content || '').trim();
-          hashtags = Array.isArray(parsed.hashtags) ? parsed.hashtags.slice(0, 5) : [];
+          let raw = '';
+          if (claudeKey) {
+            try { raw = await callClaudeWithCache(cachedSystem, expandPrompt, claudeKey, 800); } catch {}
+          }
+          if (!raw && geminiKey) {
+            // Gemini fallback — same prompt prefixed with business context
+            const fullPrompt = `${cachedSystem}\n\n${expandPrompt}`;
+            try { raw = await callGemini(fullPrompt, geminiKey, 800); } catch {}
+          }
+          if (raw) {
+            let clean = raw.replace(/```json\n?|```/g, '').trim();
+            const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
+            if (fb >= 0 && lb > fb) clean = clean.slice(fb, lb + 1);
+            const parsed = JSON.parse(clean);
+            content = (parsed.content || '').trim();
+            hashtags = Array.isArray(parsed.hashtags) ? parsed.hashtags.slice(0, 5) : [];
+          }
         } catch {}
       }
 
