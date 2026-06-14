@@ -161,6 +161,23 @@ app.get('/api/debug/cloud-tts', async (req: any, res) => {
 });
 
 // Debug: list pending/stuck posts for triage. No auth — defaults to known user_id.
+// Debug: get full post details (content + prompts) for a specific business
+app.get('/api/debug/post-detail', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json({ error: 'no db' });
+  const biz = req.query.biz as string;
+  const id = req.query.id as string;
+  if (!biz && !id) return res.json({ error: 'biz= or id= required' });
+  try {
+    let q = sb.from('content_posts').select('id, business_name, content, hashtags, image_prompt, image_url, scheduled_at, performance').is('published_at', null).order('created_at', { ascending: false }).limit(5);
+    if (id) q = q.eq('id', id);
+    if (biz) q = q.eq('business_name', biz);
+    const { data, error } = await q;
+    if (error) return res.json({ error: error.message });
+    res.json({ posts: data });
+  } catch (e: any) { res.json({ error: e.message }); }
+});
+
 app.get('/api/debug/stuck-posts', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.json({ error: 'no db' });
