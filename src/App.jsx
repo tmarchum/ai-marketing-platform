@@ -1405,8 +1405,9 @@ function Dashboard({ posts, sources, businesses, session }) {
       });
     }
   }
-  // Overdue scheduled posts
-  const overdue = (posts||[]).filter(p=>p.scheduled_at && !p.published_at && new Date(p.scheduled_at) < now);
+  // Overdue scheduled posts — use `.published` (boolean from status), not `.published_at`
+  // (the API maps published_at → publishedAt camelCase, so .published_at is always undefined).
+  const overdue = (posts||[]).filter(p=>p.scheduled_at && !p.published && new Date(p.scheduled_at) < now);
   if (overdue.length > 0) {
     sysIssues.push({
       sev:"warn", icon:"⏰",
@@ -1415,7 +1416,7 @@ function Dashboard({ posts, sources, businesses, session }) {
     });
   }
   // Posts without media that should have it
-  const missingMedia = (posts||[]).filter(p=>!p.published_at && p.scheduled_at && !p.image_url && !p.video_url && !p.media);
+  const missingMedia = (posts||[]).filter(p=>!p.published && p.scheduled_at && !p.image_url && !p.video_url && !p.media);
   if (missingMedia.length > 0) {
     sysIssues.push({
       sev:"warn", icon:"🖼️",
