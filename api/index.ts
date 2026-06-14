@@ -2126,96 +2126,49 @@ app.post('/api/calendars/approve', async (req: any, res) => {
         }
       }
 
-      // Expand calendar brief into FULL post — plain text generation with explicit
-      // formatting. Structured JSON mode silently ignored minLength, so we use plain
-      // text + manual parsing + length validation + one retry.
+      // Expand calendar brief into FULL post — ORIGINAL simple prompt (restored from 396ae8c).
+      // Keeps Gemini fallback for resilience but does NOT push for length or examples,
+      // which was causing Claude to invent facts (popcorn, fake customer counts, etc.).
       let content = '';
       let hashtags: string[] = [];
       if (hasLLM) {
-        const baseInstructions = `${cachedSystem}
+        try {
+          const expandPrompt = `Write a Facebook post in HEBREW based on this brief (stay ON-THEME):
 
-⚡ WRITE A FULL FACEBOOK POST IN HEBREW. The expected length is 300-500 Hebrew characters — same length as the EXAMPLE POSTS above. A single sentence is NOT acceptable — that is the hook, not the post.
-
-CONTEXT:
-TOPIC: ${cp.theme}
-TYPE: ${cp.type}
-HOOK (this is line 1 only — you must keep writing after this): "${cp.hook}"
-VISUAL CONCEPT: ${cp.visual_concept || ''}
-ANGLE: ${cp.angle || ''}
+TOPIC (must stay faithful to this!): ${cp.theme}
+POST TYPE: ${cp.type}
+HOOK (use as inspiration, feel free to rephrase): "${cp.hook}"
+ANGLE/POINT: ${cp.angle || ''}
 GOAL: ${cp.rationale || ''}
 
-OUTPUT FORMAT — exactly this, nothing else:
+🚫 FORBIDDEN:
+- Changing the topic. If topic is "Independence Day" — post MUST be about Independence Day.
+- Inventing facts/prices/services not in the knowledge base above.
+- First person singular ("אני").
 
-CONTENT:
-<hook line with optional emoji>
+✅ REQUIRED:
+- First person plural ("אנחנו") — see guidelines above.
+- 3-6 lines, structured: strong opening → content → CTA/question.
+- Use real info from the business knowledge base where relevant.
+- Max 2 emojis.
 
-<2-3 sentences that are the real body of the post — concrete brand facts, a real story, a tip, or a value proposition. Use details from the knowledge base / examples.>
-
-<short CTA line — question, "ספרו לנו בתגובות", "כתבו לנו ב-DM", etc.>
-
-HASHTAGS:
-#hashtag1 #hashtag2 #hashtag3 (3-5 Hebrew hashtags)
-
-🚫 NEVER return just the hook. NEVER return under 250 characters in CONTENT.
-🚫 No headers other than "CONTENT:" and "HASHTAGS:".
-🚫 Do not invent prices/services not in the knowledge base.
-✅ "אנחנו" not "אני". Max 2 emojis.`;
-
-        async function tryExpand(extraNudge: string): Promise<{content: string, hashtags: string[]}> {
-          const prompt = baseInstructions + (extraNudge ? `\n\n⚠️ ATTENTION: ${extraNudge}` : '');
+Return ONLY JSON: {"content": "full post text in Hebrew", "hashtags": ["#tag1", "#tag2", "#tag3"]}`;
           let raw = '';
-          // Respect PREFER_CLAUDE env. When set, Claude first (better Hebrew prose),
-          // Gemini fallback. Otherwise the original Gemini-first order.
-          const preferClaude = process.env.PREFER_CLAUDE === '1';
-          if (preferClaude) {
-            if (claudeKey) { try { raw = await callClaude(prompt, claudeKey, 1500); } catch {} }
-            if (!raw && geminiKey) { try { raw = await callGemini(prompt, geminiKey, 1500); } catch {} }
-          } else {
-            if (geminiKey) { try { raw = await callGemini(prompt, geminiKey, 1500); } catch {} }
-            if (!raw && claudeKey) { try { raw = await callClaude(prompt, claudeKey, 1500); } catch {} }
+          if (claudeKey) {
+            try { raw = await callClaudeWithCache(cachedSystem, expandPrompt, claudeKey, 800); } catch {}
           }
-          if (!raw) return { content: '', hashtags: [] };
-          // Parse CONTENT: ... HASHTAGS: ...
-          const ci = raw.toUpperCase().indexOf('CONTENT:');
-          const hi = raw.toUpperCase().indexOf('HASHTAGS:');
-          let body = '';
-          let tagLine = '';
-          if (ci >= 0 && hi > ci) {
-            body = raw.slice(ci + 8, hi).trim();
-            tagLine = raw.slice(hi + 9).trim();
-          } else if (ci >= 0) {
-            body = raw.slice(ci + 8).trim();
-          } else {
-            // No header — assume the whole thing is content, look for hashtags inline
-            const lastHashLine = raw.split(/\n+/).reverse().find((l: string) => l.includes('#'));
-            if (lastHashLine) {
-              tagLine = lastHashLine;
-              body = raw.replace(lastHashLine, '').trim();
-            } else {
-              body = raw.trim();
-            }
+          if (!raw && geminiKey) {
+            const fullPrompt = `${cachedSystem}\n\n${expandPrompt}`;
+            try { raw = await callGemini(fullPrompt, geminiKey, 800); } catch {}
           }
-          // Strip leading / trailing quotes the model sometimes adds
-          body = body.replace(/^["'`]+|["'`]+$/g, '').trim();
-          const tags = (tagLine.match(/#?[֐-׿a-zA-Z0-9_]{2,30}/g) || [])
-            .map((t: string) => t.replace(/^#/, ''))
-            .filter((t: string) => t.length > 1)
-            .slice(0, 5);
-          return { content: body, hashtags: tags };
-        }
-
-        try {
-          let r = await tryExpand('');
-          // Up to 2 retries with increasingly forceful nudges. Gemini sometimes ignores
-          // a single retry — repeat with a stronger directive.
-          if (r.content.length < 300) {
-            r = await tryExpand(`Your previous reply was only ${r.content.length} characters. The brand's actual published posts above are 300-500 characters. Write a post that LOOKS LIKE those examples — hook line, then 2-3 sentences of real body content, then a CTA. Do NOT return just the hook again.`);
+          if (raw) {
+            let clean = raw.replace(/```json\n?|```/g, '').trim();
+            const fb = clean.indexOf('{'); const lb = clean.lastIndexOf('}');
+            if (fb >= 0 && lb > fb) clean = clean.slice(fb, lb + 1);
+            const parsed = JSON.parse(clean);
+            content = (parsed.content || '').trim();
+            hashtags = Array.isArray(parsed.hashtags) ? parsed.hashtags.slice(0, 5) : [];
           }
-          if (r.content.length < 300) {
-            r = await tryExpand(`STOP returning short answers. Count the characters in EXAMPLE 1 above. Your answer MUST be at least that long. Body section needs 2-3 FULL sentences about ${cp.theme} that use concrete facts from the knowledge base. This is your last chance.`);
-          }
-          content = r.content;
-          hashtags = r.hashtags;
         } catch {}
       }
 
