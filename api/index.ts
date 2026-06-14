@@ -1998,59 +1998,88 @@ app.post('/api/calendars/approve', async (req: any, res) => {
         }
       }
 
-      // Expand calendar brief into FULL post — structured JSON via callTextForJson
-      // (Gemini-first, Claude fallback). Schema-validated, so no parse failures.
+      // Expand calendar brief into FULL post — plain text generation with explicit
+      // formatting. Structured JSON mode silently ignored minLength, so we use plain
+      // text + manual parsing + length validation + one retry.
       let content = '';
       let hashtags: string[] = [];
       if (hasLLM) {
-        try {
-          const expandPrompt = `${cachedSystem}
+        const baseInstructions = `${cachedSystem}
 
-You are writing a FULL Facebook post in HEBREW. Not a hook. Not a one-liner. A complete post that someone would scroll past if it were just a hook.
+⚡ WRITE A FULL FACEBOOK POST IN HEBREW. The expected length is 300-500 Hebrew characters — same length as the EXAMPLE POSTS above. A single sentence is NOT acceptable — that is the hook, not the post.
 
-CONTEXT FOR THE POST:
+CONTEXT:
 TOPIC: ${cp.theme}
-POST TYPE: ${cp.type}
-HOOK (this is just the FIRST line — you must continue past it): "${cp.hook}"
-VISUAL CONCEPT (the scene we are picturing): ${cp.visual_concept || ''}
-ANGLE/POINT: ${cp.angle || ''}
+TYPE: ${cp.type}
+HOOK (this is line 1 only — you must keep writing after this): "${cp.hook}"
+VISUAL CONCEPT: ${cp.visual_concept || ''}
+ANGLE: ${cp.angle || ''}
 GOAL: ${cp.rationale || ''}
 
-STRUCTURE the post in EXACTLY this format (use \\n for line breaks):
+OUTPUT FORMAT — exactly this, nothing else:
 
-Line 1: The hook — strong opening, question or surprising statement (1-2 short sentences)
-\\n\\n (blank line)
-Line 2-4: The MEAT of the post — give a concrete tip, share a real story from the business, explain the value, or walk through how something works. 2-4 sentences with real content. Use specific details from the business knowledge base.
-\\n\\n (blank line)
-Line 5: A CTA (call to action) — invite a comment, a DM, a click, sharing. 1 short sentence.
+CONTENT:
+<hook line with optional emoji>
 
-🚫 FORBIDDEN:
-- Returning only the hook. The hook is line 1. You MUST write lines 2-5 as well.
-- A response under 250 Hebrew characters. This is a FULL post, not a tweet.
-- Inventing facts/prices/services not in the knowledge base.
-- First person singular ("אני").
-- Changing the topic (stay on TOPIC).
+<2-3 sentences that are the real body of the post — concrete brand facts, a real story, a tip, or a value proposition. Use details from the knowledge base / examples.>
 
-✅ REQUIRED:
-- First person plural ("אנחנו").
-- At least 250 Hebrew characters total. Aim for 300-500.
-- 3-5 paragraphs separated by \\n\\n.
-- 3-5 hashtags in the hashtags array (in Hebrew, without # prefix).
-- Max 2 emojis in content.`;
+<short CTA line — question, "ספרו לנו בתגובות", "כתבו לנו ב-DM", etc.>
 
-          const expandSchema = {
-            type: 'object',
-            properties: {
-              content: { type: 'string', minLength: 250, maxLength: 1500, description: 'Full Hebrew post — hook line + body (2-4 sentences of real content) + CTA, separated by blank lines. Minimum 250 chars.' },
-              hashtags: { type: 'array', minItems: 3, maxItems: 5, items: { type: 'string', maxLength: 40 }, description: 'Hebrew hashtags without # prefix' },
-            },
-            required: ['content', 'hashtags'],
-          };
-          try {
-            const parsed = await callTextForJson(expandPrompt, expandSchema, claudeKey || null, geminiKey || null, 1500);
-            content = (parsed?.content || '').trim();
-            hashtags = Array.isArray(parsed?.hashtags) ? parsed.hashtags.slice(0, 5) : [];
-          } catch {}
+HASHTAGS:
+#hashtag1 #hashtag2 #hashtag3 (3-5 Hebrew hashtags)
+
+🚫 NEVER return just the hook. NEVER return under 250 characters in CONTENT.
+🚫 No headers other than "CONTENT:" and "HASHTAGS:".
+🚫 Do not invent prices/services not in the knowledge base.
+✅ "אנחנו" not "אני". Max 2 emojis.`;
+
+        async function tryExpand(extraNudge: string): Promise<{content: string, hashtags: string[]}> {
+          const prompt = baseInstructions + (extraNudge ? `\n\n⚠️ ATTENTION: ${extraNudge}` : '');
+          let raw = '';
+          if (geminiKey) {
+            try { raw = await callGemini(prompt, geminiKey, 1500); } catch {}
+          }
+          if (!raw && claudeKey) {
+            try { raw = await callClaude(prompt, claudeKey, 1500); } catch {}
+          }
+          if (!raw) return { content: '', hashtags: [] };
+          // Parse CONTENT: ... HASHTAGS: ...
+          const ci = raw.toUpperCase().indexOf('CONTENT:');
+          const hi = raw.toUpperCase().indexOf('HASHTAGS:');
+          let body = '';
+          let tagLine = '';
+          if (ci >= 0 && hi > ci) {
+            body = raw.slice(ci + 8, hi).trim();
+            tagLine = raw.slice(hi + 9).trim();
+          } else if (ci >= 0) {
+            body = raw.slice(ci + 8).trim();
+          } else {
+            // No header — assume the whole thing is content, look for hashtags inline
+            const lastHashLine = raw.split(/\n+/).reverse().find((l: string) => l.includes('#'));
+            if (lastHashLine) {
+              tagLine = lastHashLine;
+              body = raw.replace(lastHashLine, '').trim();
+            } else {
+              body = raw.trim();
+            }
+          }
+          // Strip leading / trailing quotes the model sometimes adds
+          body = body.replace(/^["'`]+|["'`]+$/g, '').trim();
+          const tags = (tagLine.match(/#?[֐-׿a-zA-Z0-9_]{2,30}/g) || [])
+            .map((t: string) => t.replace(/^#/, ''))
+            .filter((t: string) => t.length > 1)
+            .slice(0, 5);
+          return { content: body, hashtags: tags };
+        }
+
+        try {
+          let r = await tryExpand('');
+          if (r.content.length < 250) {
+            // Retry with explicit length nudge
+            r = await tryExpand(`Your previous reply was only ${r.content.length} characters. The minimum is 250 — write 2-3 more sentences in the body.`);
+          }
+          content = r.content;
+          hashtags = r.hashtags;
         } catch {}
       }
 
