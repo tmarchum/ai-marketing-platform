@@ -160,6 +160,43 @@ app.get('/api/debug/cloud-tts', async (req: any, res) => {
   } catch (e: any) { res.json({ exception: e.message }); }
 });
 
+// Debug: list pending/stuck posts for triage. No auth — defaults to known user_id.
+app.get('/api/debug/stuck-posts', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json({ error: 'no db' });
+  const user_id = (req.query.user_id as string) || '702b86ed-4ce5-4e70-98d0-50a55dbf4af6';
+  try {
+    const { data, error } = await sb
+      .from('content_posts')
+      .select('id, business_name, content, status, scheduled_at, published_at, image_url, video_url, image_prompt, motion_prompt, performance, created_at')
+      .eq('user_id', user_id)
+      .is('published_at', null)
+      .order('created_at', { ascending: false })
+      .limit(30);
+    if (error) return res.json({ error: error.message });
+    const stuck = (data || []).map((p: any) => {
+      const issues: string[] = [];
+      if (p.status === 'failed') issues.push('status=failed');
+      if (!p.image_url && !p.video_url) issues.push('no media');
+      if (p.scheduled_at && new Date(p.scheduled_at) < new Date()) issues.push('overdue');
+      if (!p.scheduled_at) issues.push('not scheduled');
+      return {
+        id: p.id,
+        business: p.business_name,
+        content_preview: (p.content || '').slice(0, 80),
+        status: p.status || 'draft',
+        scheduled_at: p.scheduled_at,
+        has_image: !!p.image_url,
+        has_video: !!p.video_url,
+        created_at: p.created_at,
+        last_error: p.performance?.publish_error || null,
+        issues,
+      };
+    });
+    res.json({ count: stuck.length, posts: stuck });
+  } catch (e: any) { res.json({ error: e.message }); }
+});
+
 // Daily error summary cron — emails if any errors in the last 24h
 app.get('/api/cron/error-summary', async (req: any, res) => {
   const sb = getSupabase();
