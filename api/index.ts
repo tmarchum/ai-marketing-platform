@@ -176,6 +176,13 @@ app.get('/api/debug/stuck-posts', async (req: any, res) => {
       const user_id = (req.query.user_id as string) || '702b86ed-4ce5-4e70-98d0-50a55dbf4af6';
       q = q.eq('user_id', user_id);
     }
+    if (req.query.include_published === '1') {
+      // override the is-null filter by re-selecting
+      q = sb.from('content_posts')
+        .select('id, user_id, business_name, content, status, scheduled_at, published_at, image_url, video_url, performance, created_at')
+        .order('created_at', { ascending: false })
+        .limit(50);
+    }
     const { data, error } = await q;
     if (error) return res.json({ error: error.message });
     const stuck = (data || []).map((p: any) => {
