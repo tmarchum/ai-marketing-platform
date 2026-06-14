@@ -202,6 +202,88 @@ app.post('/api/debug/delete-unpublished', async (req: any, res) => {
   } catch (e: any) { res.json({ error: e.message }); }
 });
 
+// Debug: re-expand the content for a single existing post (when Gemini returned
+// a too-short body). Uses the post's stored calendar_meta as the brief.
+app.post('/api/debug/re-expand/:id', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.json({ error: 'no db' });
+  try {
+    const { data: post } = await sb.from('content_posts').select('*').eq('id', req.params.id).single();
+    if (!post) return res.json({ error: 'post not found' });
+    const { data: biz } = await sb.from('businesses').select('*').eq('name', post.business_name).single();
+    if (!biz) return res.json({ error: 'biz not found' });
+    const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
+    const keyMap: Record<string, string> = {};
+    for (const k of (keys || [])) keyMap[k.key_name] = k.key_value;
+    const geminiKey = keyMap.GEMINI_API_KEY || process.env.GEMINI_API_KEY || '';
+    if (!geminiKey) return res.json({ error: 'no GEMINI_API_KEY' });
+
+    // Pull 5 real FB samples as the style template (same as /api/calendars/approve)
+    let fbSamples: string[] = [];
+    try {
+      const pageId = biz.social?.facebook?.tokens?.META_PAGE_ID;
+      const pageTok = biz.social?.facebook?.tokens?.META_PAGE_ACCESS_TOKEN || biz.social?.facebook?.tokens?.META_ACCESS_TOKEN;
+      if (pageId && pageTok) {
+        const r = await fetch(`https://graph.facebook.com/v25.0/${pageId}/posts?fields=message&limit=20&access_token=${pageTok}`);
+        const d = await r.json() as any;
+        if (!d.error) {
+          fbSamples = (d.data || []).map((p: any) => (p.message || '').trim()).filter((m: string) => m.length >= 150 && m.length <= 800).slice(0, 5);
+        }
+      }
+    } catch {}
+
+    const cm = (post.performance || {}).calendar_meta || {};
+    const cachedSystem = buildBusinessContext(biz, '', fbSamples);
+    const theme = cm.theme || (post.content || '').slice(0, 60);
+    const visualConcept = cm.visual_concept || post.image_prompt || '';
+
+    // Direct, no-headers prompt — ask for a full post inline. The original "CONTENT:/HASHTAGS:"
+    // structure confused Gemini; we just request the post body + a separate hashtag line.
+    const prompt = `${cachedSystem}
+
+Write ONE Facebook post in HEBREW for the brand ${biz.name}.
+
+THE EXAMPLES ABOVE are exactly how this brand writes — match their voice, length (300-500 Hebrew characters), structure (emoji hook + 2-3 body paragraphs + CTA), and tone.
+
+POST TOPIC: ${theme}
+VISUAL SCENE WE'RE PICTURING: ${visualConcept}
+
+WRITE THE POST DIRECTLY (no labels, no headers, no quotes). After the post, on a separate line, write 3-5 Hebrew hashtags prefixed with #.
+
+REMEMBER:
+- Same length as EXAMPLE 1 above. Count the characters.
+- "אנחנו" not "אני".
+- Three paragraphs, blank line between each.
+- End with a clear CTA before the hashtags.`;
+
+    // Try up to 3 times for a long-enough response
+    let bestContent = '';
+    let bestTags: string[] = [];
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const nudge = attempt === 0 ? '' : `\n\nATTEMPT ${attempt + 1}: previous reply was too short (${bestContent.length} chars). Required: 300+ characters. Match the length of EXAMPLE 1 above.`;
+      let raw = '';
+      try { raw = await callGemini(prompt + nudge, geminiKey, 1500); } catch {}
+      if (!raw) continue;
+      // Parse: split off hashtag line at the bottom
+      const lines = raw.split(/\n+/).map(l => l.trim()).filter(Boolean);
+      let hashLine = '';
+      // Walk from end — collect contiguous hashtag lines
+      while (lines.length && /^(#[֐-׿a-zA-Z0-9_\s]+\s*)+$/.test(lines[lines.length - 1])) {
+        hashLine = lines.pop() + (hashLine ? ' ' + hashLine : '');
+      }
+      const body = lines.join('\n\n').replace(/^["'`]+|["'`]+$/g, '').trim();
+      const tags = (hashLine.match(/#[֐-׿a-zA-Z0-9_]+/g) || []).map((t: string) => t.replace(/^#/, '')).slice(0, 5);
+      if (body.length > bestContent.length) { bestContent = body; bestTags = tags; }
+      if (bestContent.length >= 300) break;
+    }
+
+    if (bestContent.length < 200) return res.json({ error: 'all attempts too short', best: bestContent });
+
+    await sb.from('content_posts').update({ content: bestContent, hashtags: bestTags.length ? bestTags : null }).eq('id', post.id);
+    res.json({ ok: true, length: bestContent.length, tags: bestTags.length, content: bestContent });
+  } catch (e: any) { res.json({ error: e.message }); }
+});
+
 // Debug: get full post details (content + prompts) for a specific business
 app.get('/api/debug/post-detail', async (req: any, res) => {
   const sb = getSupabase();
