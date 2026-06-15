@@ -2063,8 +2063,9 @@ app.post('/api/posts/:id/generate-media', async (req: any, res) => {
 
     const { data: biz } = await sb.from('businesses').select('*').eq('name', post.business_name).single();
 
-    // Skip if already has media
-    if (post.image_url || post.video_url) {
+    // Skip if already has media — unless ?force=1
+    const forceFresh = req.query.force === '1' || req.body?.force === true;
+    if (!forceFresh && (post.image_url || post.video_url)) {
       return res.json({ ok: true, skipped: true, reason: 'already has media', url: post.image_url || post.video_url });
     }
 
