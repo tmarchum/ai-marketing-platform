@@ -2166,13 +2166,15 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
         ? `\nORIGINAL HEBREW SCENE — match these specifics exactly:\n${hebrewScene}\n`
         : '';
       let brandRules = '';
-      if (isQuiz) brandRules = `🏃 MANDATORY for ${bizName} (חידונאים / חידוניווט) — this is an OUTDOOR ACTIVE SMARTPHONE QUEST. The image MUST show:
-   ✅ Kids or teens IN MOTION — RUNNING between locations, leaning toward a smartphone screen, pointing excitedly, mid-discovery moment
-   ✅ SMARTPHONES in hands (not cards, not papers, not tablets — SMARTPHONES showing a quiz app)
-   ✅ Outdoor Israeli setting — dusty park, neighborhood sidewalk, schoolyard, plaza
-   ✅ Multiple kids/teens in a group, animated body language, mid-action
-   ✅ Sense of HUNT/QUEST — looking around, pointing at a landmark, comparing screens
-   🚫 FORBIDDEN: kids SITTING anywhere | holding CARDS/papers/books instead of smartphones | static portrait | single thoughtful child | adults dominating frame
+      if (isQuiz) brandRules = `🏃 MANDATORY for ${bizName} (חידונאים / חידוניווט) — this is a LARGE-SCALE OUTDOOR SMARTPHONE QUEST with MULTIPLE COMPETING TEAMS racing through a neighborhood. The image MUST show:
+   ✅ MULTIPLE GROUPS (at least 2-3 teams, each 3-5 kids/teens) visible in the same frame, all in motion at the same time — like a city-wide event
+   ✅ Each team RUNNING / leaning forward / mid-stride — feet leaving the ground, hair flying, arms pumping
+   ✅ Each team has at least one SMARTPHONE held high or being read by leaning members — quiz app visible
+   ✅ Scene of FRIENDLY COMPETITION — teams glancing at each other, racing to be first, animated discussion within teams
+   ✅ Outdoor Israeli neighborhood setting: dusty park path, plaza, schoolyard with playground equipment, neighborhood sidewalk with limestone walls
+   ✅ Wide environmental shot showing the SCALE — multiple groups dotted across the frame, not just one tight cluster
+   ✅ Mid-action energy: pointing at landmarks, sprinting, mid-laugh, the rush of "we're winning!"
+   🚫 ABSOLUTELY FORBIDDEN: kids SITTING anywhere | a single small group | holding CARDS/papers/books | static portrait | single thoughtful child | adults dominating frame | quiet contemplative scene
 `;
       if (isCinema) brandRules = `🎬 MANDATORY for ${bizName} (Moving Cinema / קולנוע נודד) — this is an OUTDOOR INFLATABLE CINEMA SCREENING.  The image MUST show:
    ✅ A LARGE INFLATABLE OUTDOOR CINEMA SCREEN (not a TV, not an indoor projector — a freestanding 4-5 meter inflatable screen glowing in the evening)
