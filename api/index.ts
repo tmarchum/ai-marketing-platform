@@ -2099,12 +2099,26 @@ app.post('/api/posts/:id/generate-media', async (req: any, res) => {
     //    The scene description is then combined with an explicit Hebrew text
     //    instruction in the next step — Nano Banana renders Hebrew correctly only
     //    when given the exact letters to draw, not when guessing.
+    // Pull the post body and theme — they are the AUTHORITATIVE source for what the image
+    // should show. The visual_concept is just a hint; the actual post content carries the
+    // real meaning the photo needs to illustrate.
+    const postContent = (post.content || '').slice(0, 800);
+    const postTheme = ((post.performance || {}).calendar_meta || {}).theme || '';
+
     const sceneDescription = (claudeKey || geminiKey)
       ? await (async () => {
           const claudeMessage = `You write photography briefs in the style of REAL Israeli documentary photographers (think: actual brand pages, lifestyle photographers shooting community events). NOT corporate stock. NOT LinkedIn-style.
 
 BUSINESS: ${bizName} — ${bizDescription}
-HEBREW SCENE (the activity hint — interpret it, do NOT translate literally if it suggests passive sitting): ${sceneSource}
+
+⭐ THIS IS THE FACEBOOK POST WE NEED TO ILLUSTRATE — your scene MUST visually express what the post is saying:
+"""
+${postContent}
+"""
+
+POST THEME (one-line summary): ${postTheme}
+
+VISUAL CONCEPT (optional hint from the calendar — ignore if it conflicts with the post content above): ${sceneSource}
 
 🚫 FORBIDDEN — corporate-stock failure modes:
 - Suits, blazers, button-down shirts, business-casual office wear, watches, ties
