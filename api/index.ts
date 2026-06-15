@@ -2101,34 +2101,37 @@ app.post('/api/posts/:id/generate-media', async (req: any, res) => {
     //    when given the exact letters to draw, not when guessing.
     const sceneDescription = (claudeKey || geminiKey)
       ? await (async () => {
-          const claudeMessage = `You are an art director writing a CINEMATIC EDITORIAL PHOTOGRAPHY brief for a top-tier Israeli brand.
+          const claudeMessage = `You write photography briefs in the style of REAL Israeli documentary photographers (think: brand pages of moving-cinema.co.il, chidonivut.co.il, actual stock from Israeli lifestyle photographers). NOT corporate stock photography. NOT LinkedIn-style.
 
 BUSINESS: ${bizName} — ${bizDescription}
-BRAND VISUAL IDENTITY (use the SPECIFIC mood, palette, lighting style, and motifs described here — they're the brand DNA):
-"""
-${vi || 'warm, modern, Israeli lifestyle'}
-"""
-HEBREW SCENE STARTING POINT (the core action — keep it, but enrich with photographic craft): ${sceneSource}
-POST TOPIC: ${topic}
+HEBREW SCENE (the activity we're showing): ${sceneSource}
 
-WRITE a single dense English paragraph in the style of a real photographer's brief. It MUST include:
-1. Photographic genre — pick ONE that fits: photojournalistic / editorial / cinematic ad / documentary / portrait / lifestyle hero shot / 2x2 collage / wide environmental portrait / golden-hour lifestyle / overhead flat-lay / candid behind-the-scenes
-2. Specific subjects — ages, expressions, clothing (use the brand palette from visual identity), what they're DOING with their hands/bodies
-3. Location specifics — concrete props, architecture, surfaces (a quiz event = stage + audience + smartphones; a movie screening = inflatable screen + blankets + projector glow; a flight deal = passports, sunset terminal, boarding pass close-up)
-4. Lighting & atmosphere — golden hour, cool-blue dawn, warm tungsten, dramatic overhead, soft window light, moody backlight
-5. Camera details — wide shot / close-up / overhead / shallow DOF / leading lines / rule of thirds
-6. Mood word — warm, triumphant, contemplative, energetic, intimate, electric, nostalgic
+🚫 FORBIDDEN — these are the corporate-stock failure modes you MUST avoid:
+- People in suits, blazers, button-downs, business-casual office wear
+- Skyscraper office, glass tower, conference room, sunset behind a window
+- Posed group portrait facing camera, "diverse team" composition
+- Models with hair styled, makeup, perfect teeth
+- Empty marble floors, polished surfaces, "editorial portrait" framing
+- Anyone holding a single document/tablet looking thoughtful
+- White people, generic Westerners — this is ISRAEL, real Israelis
 
-EXAMPLES of the level of craft you should match (these are real briefs that produced excellent imagery):
-- "A warm photojournalistic 2x2 collage of four outdoor nighttime scenes: top-left, a glowing inflatable cinema screen at golden hour with families on blankets; top-right, a wide shot of children laughing under projected stars; bottom row, a couple silhouetted against a giant outdoor movie, soft warm fairy-light backlighting throughout."
-- "A photojournalistic wide environmental portrait of a small energetic team of three Israeli professionals in navy and teal branded polo shirts, leaning over an interactive map glowing on a tablet in a converted industrial space; warm afternoon window light, shallow depth of field, candid mid-discussion expression."
+✅ REQUIRED — what real Israeli content actually looks like:
+- Clothing: cotton t-shirts (often plain colors), denim shorts or jeans, simple sandals or sneakers, sometimes a cap. Sweaty if outdoor. Casual.
+- People: Mediterranean features, age range 25-55, mixed expressions (laughing, focused, confused, animated discussion). Real bodies, not models.
+- Setting: ISRAELI outdoor — dusty park with eucalyptus, neighborhood sidewalk, beach promenade, schoolyard, kibbutz lawn, intercity sports field. Or for indoor: a synagogue community hall, school classroom, modest event venue. NEVER skyscrapers.
+- Action: MID-MOTION. Hands gesturing. Group huddled around smartphones. Someone explaining something dramatically. Kids running. People actually DOING the activity from the Hebrew scene, not posing.
+- Light: harsh Israeli midday sun creating strong shadows, OR low golden afternoon light, OR cool blue evening. Often slightly overexposed in Israeli daylight.
+- Camera: shot like a documentary photographer who happened on the moment — wide environmental shot or natural over-the-shoulder. Slight motion blur on hands is fine.
 
-⛔ Do NOT include: any text, signs, logos, billboards, T-shirt prints, road signs, tickets, screens-with-readable-content. If they would naturally have text, blur them out-of-focus.
-⛔ Do NOT default to a generic office scene if the Hebrew suggests a specific activity — stay TRUE to what's happening (quiz event, screening, deal celebration, etc.).
-⛔ Do NOT write multiple sentences — write ONE dense, photographer-style paragraph (3-5 sentences max, but ONE flowing brief).
+CRAFT REFERENCES (these produced excellent results in the past):
+- "A wide photojournalistic shot of 12 Israelis in t-shirts and shorts huddled in small groups under eucalyptus trees in a dusty city park, each group pointing at a smartphone screen, mid-laughter, late-afternoon golden light filtering through the leaves; the lead participant gestures animatedly with one hand"
+- "A 2x2 photojournalistic collage of four real outdoor nighttime cinema scenes: inflatable screen glowing in a kibbutz lawn with families on blankets, kids in pajamas mid-laugh, a couple silhouetted under stars, warm fairy lights"
 
-Output ONLY the brief paragraph, no labels, no quotes:`;
-          try { return (await callText(claudeMessage, claudeKey, geminiKey, 500)).trim(); }
+⛔ If the Hebrew scene mentions an OFFICE setting — IGNORE that and relocate to an OUTDOOR Israeli setting (park, schoolyard, neighborhood) UNLESS the brand specifically operates indoors. ${bizName} is an OUTDOOR brand.
+⛔ No text/signs/logos/billboards/screens-with-readable-content — blur if incidental.
+
+Output ONE dense paragraph in the style of the CRAFT REFERENCES above. No labels, no quotes:`;
+          try { return (await callText(claudeMessage, claudeKey, geminiKey, 600)).trim(); }
           catch { return sceneSource; }
         })()
       : sceneSource;
@@ -2168,31 +2171,8 @@ Composition: position the main subjects in the upper-2/3 of the frame and keep t
     async function generateOne(seed: number): Promise<{ base64: string | null; contentType: string; error: string }> {
       let lastError = '';
       const promptWithSeed = seed > 0 ? `${finalPrompt}\n\n(slightly different angle/composition)` : finalPrompt;
-      // Nano Banana (gemini-2.5-flash-image) handles Hebrew text rendering best — try it first.
-      const models = ['gemini-2.5-flash-image', 'gemini-3-pro-image-preview'];
-      for (const model of models) {
-        try {
-          const ac = new AbortController();
-          const timer = setTimeout(() => ac.abort(), TIMEOUT);
-          const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ac.signal,
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: promptWithSeed }] }],
-              generationConfig: { responseModalities: ['IMAGE'] },
-            }),
-          });
-          clearTimeout(timer);
-          const d = await r.json();
-          if (d.error) { lastError = `${model}: ${d.error.message}`; continue; }
-          const parts = d.candidates?.[0]?.content?.parts || [];
-          const imgPart = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
-          if (imgPart) return { base64: imgPart.inlineData.data, contentType: imgPart.inlineData.mimeType, error: '' };
-          lastError = `${model}: no image`;
-        } catch (err: any) {
-          lastError = `${model}: ${err.name === 'AbortError' ? 'timeout' : err.message}`;
-        }
-      }
-      // Fallback: Imagen
+      // Imagen 4 first — better photojournalistic / editorial style, less corporate-stock bias.
+      // Nano Banana (gemini-2.5-flash-image) fallback for Hebrew-text rendering or when Imagen rate-limited.
       try {
         const ac = new AbortController();
         const timer = setTimeout(() => ac.abort(), TIMEOUT);
@@ -2207,8 +2187,32 @@ Composition: position the main subjects in the upper-2/3 of the frame and keep t
         const d = await r.json();
         const bytes = d.predictions?.[0]?.bytesBase64Encoded;
         if (bytes) return { base64: bytes, contentType: 'image/png', error: '' };
-        lastError += ` | imagen: ${d.error?.message || 'no image'}`;
-      } catch (err: any) { lastError += ` | imagen: ${err.message}`; }
+        lastError = `imagen-4.0: ${d.error?.message || 'no image'}`;
+      } catch (err: any) { lastError = `imagen-4.0: ${err.message}`; }
+      // Fallback to Nano Banana / Gemini 3 Pro image
+      const fallbackModels = ['gemini-2.5-flash-image', 'gemini-3-pro-image-preview'];
+      for (const model of fallbackModels) {
+        try {
+          const ac = new AbortController();
+          const timer = setTimeout(() => ac.abort(), TIMEOUT);
+          const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ac.signal,
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: promptWithSeed }] }],
+              generationConfig: { responseModalities: ['IMAGE'] },
+            }),
+          });
+          clearTimeout(timer);
+          const d = await r.json();
+          if (d.error) { lastError += ` | ${model}: ${d.error.message}`; continue; }
+          const parts = d.candidates?.[0]?.content?.parts || [];
+          const imgPart = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
+          if (imgPart) return { base64: imgPart.inlineData.data, contentType: imgPart.inlineData.mimeType, error: '' };
+          lastError += ` | ${model}: no image`;
+        } catch (err: any) {
+          lastError += ` | ${model}: ${err.name === 'AbortError' ? 'timeout' : err.message}`;
+        }
+      }
       return { base64: null, contentType: 'image/png', error: lastError };
     }
 
