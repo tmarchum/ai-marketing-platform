@@ -2101,36 +2101,39 @@ app.post('/api/posts/:id/generate-media', async (req: any, res) => {
     //    when given the exact letters to draw, not when guessing.
     const sceneDescription = (claudeKey || geminiKey)
       ? await (async () => {
-          const claudeMessage = `You write photography briefs in the style of REAL Israeli documentary photographers (think: brand pages of moving-cinema.co.il, chidonivut.co.il, actual stock from Israeli lifestyle photographers). NOT corporate stock photography. NOT LinkedIn-style.
+          const claudeMessage = `You write photography briefs in the style of REAL Israeli documentary photographers (think: actual brand pages, lifestyle photographers shooting community events). NOT corporate stock. NOT LinkedIn-style.
 
 BUSINESS: ${bizName} — ${bizDescription}
-HEBREW SCENE (the activity we're showing): ${sceneSource}
+HEBREW SCENE (the activity hint — interpret it, do NOT translate literally if it suggests passive sitting): ${sceneSource}
 
-🚫 FORBIDDEN — these are the corporate-stock failure modes you MUST avoid:
-- People in suits, blazers, button-downs, business-casual office wear
-- Skyscraper office, glass tower, conference room, sunset behind a window
-- Posed group portrait facing camera, "diverse team" composition
-- Models with hair styled, makeup, perfect teeth
-- Empty marble floors, polished surfaces, "editorial portrait" framing
-- Anyone holding a single document/tablet looking thoughtful
-- White people, generic Westerners — this is ISRAEL, real Israelis
+🚫 FORBIDDEN — corporate-stock failure modes:
+- Suits, blazers, button-down shirts, business-casual office wear, watches, ties
+- Skyscraper, glass tower, conference room, "sunset behind window" trope
+- Posed group facing camera, "diverse team" model line-up
+- Models with styled hair/makeup, white teeth, perfect skin
+- Marble floors, polished surfaces, editorial portrait framing
+- Single thoughtful person with a single tablet/document
+- "Sitting in a circle on grass" stock-photo cliché
+- Westerners / generic models — this is ISRAEL
 
-✅ REQUIRED — what real Israeli content actually looks like:
-- Clothing: cotton t-shirts (often plain colors), denim shorts or jeans, simple sandals or sneakers, sometimes a cap. Sweaty if outdoor. Casual.
-- People: Mediterranean features, age range 25-55, mixed expressions (laughing, focused, confused, animated discussion). Real bodies, not models.
-- Setting: ISRAELI outdoor — dusty park with eucalyptus, neighborhood sidewalk, beach promenade, schoolyard, kibbutz lawn, intercity sports field. Or for indoor: a synagogue community hall, school classroom, modest event venue. NEVER skyscrapers.
-- Action: MID-MOTION. Hands gesturing. Group huddled around smartphones. Someone explaining something dramatically. Kids running. People actually DOING the activity from the Hebrew scene, not posing.
-- Light: harsh Israeli midday sun creating strong shadows, OR low golden afternoon light, OR cool blue evening. Often slightly overexposed in Israeli daylight.
-- Camera: shot like a documentary photographer who happened on the moment — wide environmental shot or natural over-the-shoulder. Slight motion blur on hands is fine.
+✅ REQUIRED — Israeli community lifestyle photography:
+- AUDIENCE FIRST: ${bizName === 'החידונאים' ? 'PRIMARY audience = families with kids (5-15), youth groups, school classes, community groups. Adults are SECONDARY. Most images should show kids/teens/families in motion.' : bizName === 'הקולנוע הנודד' ? 'PRIMARY audience = families with kids, couples, neighborhood communities, kibbutzim. Show kids on blankets, parents lounging, friends laughing under projection.' : 'PRIMARY audience = Israeli travellers (couples, families, friends). Show real travel moments, real luggage, real airports.'}
+- ACTION not seated posing: people MID-GAME, MID-LAUGH, MID-RUN, MID-DISCOVERY. Hands gesturing. Bodies leaning forward. Kids pointing. Someone shouting "מצאתי!" with arm raised.
+- Clothing: cotton t-shirts, casual dresses, denim shorts, sneakers, sandals, sun hats. Kids in colorful play clothes. Sweaty if active.
+- People: Mediterranean features, real bodies, varied ages. For ${bizName === 'החידונאים' ? 'Quizmasters: kids 8-15 running between locations, families huddled around phones, parents leading children to clues, ' : ''}families and youth FRONT AND CENTER.
+- Setting: dusty Israeli park with eucalyptus, sandy schoolyard, kibbutz lawn at golden hour, neighborhood sidewalk with low limestone walls, beach promenade. NEVER skyscrapers or polished interiors.
+- Lighting: harsh Israeli midday sun (strong shadows), or warm golden-hour, or cool blue dusk. Slightly overexposed feel.
+- Camera: documentary photographer who happened on the moment — wide environmental, natural over-the-shoulder, low angle when kids are subjects, slight motion blur OK.
 
-CRAFT REFERENCES (these produced excellent results in the past):
-- "A wide photojournalistic shot of 12 Israelis in t-shirts and shorts huddled in small groups under eucalyptus trees in a dusty city park, each group pointing at a smartphone screen, mid-laughter, late-afternoon golden light filtering through the leaves; the lead participant gestures animatedly with one hand"
-- "A 2x2 photojournalistic collage of four real outdoor nighttime cinema scenes: inflatable screen glowing in a kibbutz lawn with families on blankets, kids in pajamas mid-laugh, a couple silhouetted under stars, warm fairy lights"
+CRAFT REFERENCES:
+- "A wide photojournalistic shot of a family with three kids (ages 7-12) and their parents in t-shirts and shorts running between Israeli neighborhood landmarks, the youngest pointing excitedly at a smartphone screen, mid-laughter, late-afternoon golden light, eucalyptus dust in the air, motion blur on the running feet"
+- "A photojournalistic close-up over a 10-year-old's shoulder as she shows her phone screen to two friends crouched beside her on a dusty schoolyard; pure focus and discovery in their faces; harsh midday Israeli sun, strong shadows"
 
-⛔ If the Hebrew scene mentions an OFFICE setting — IGNORE that and relocate to an OUTDOOR Israeli setting (park, schoolyard, neighborhood) UNLESS the brand specifically operates indoors. ${bizName} is an OUTDOOR brand.
+⛔ If the Hebrew scene says "sitting" or "circle on grass" — REPLACE that with active MID-GAME movement (running between clues, gathered around a discovery, pointing at a landmark).
+⛔ If the Hebrew says "office workers" or "employees on lawn" — REPLACE with families/kids/youth as primary subjects.
 ⛔ No text/signs/logos/billboards/screens-with-readable-content — blur if incidental.
 
-Output ONE dense paragraph in the style of the CRAFT REFERENCES above. No labels, no quotes:`;
+Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES. No labels, no quotes:`;
           try { return (await callText(claudeMessage, claudeKey, geminiKey, 600)).trim(); }
           catch { return sceneSource; }
         })()
