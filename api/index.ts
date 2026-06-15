@@ -2380,10 +2380,30 @@ app.post('/api/posts/:id/generate-video', async (req: any, res) => {
     // Enhance prompt for video — VISUALS + AMBIENT ONLY, no spoken dialogue
     // (we'll mux a clean Hebrew voiceover from Gemini TTS afterward).
     let enhancedPrompt = topic;
-    if (claudeKey) {
+    if (claudeKey || geminiKey) {
       try {
         const bizNameV = biz?.name || '';
         const bizDescV = biz?.description || '';
+        const isQuizV = bizNameV === 'החידונאים';
+        const isCinemaV = bizNameV === 'הקולנוע הנודד';
+        const isFlightsV = bizNameV === 'צייד טיסות';
+        let brandRulesV = '';
+        if (isQuizV) brandRulesV = `🏃 MANDATORY ACTIVITY for חידונאים (חידוניווט) — this is a LARGE-SCALE OUTDOOR SMARTPHONE QUEST with MULTIPLE TEAMS of kids/teens racing through a neighborhood.
+   ✅ The video MUST show: 2-3 teams of kids/teens RUNNING / leaning over smartphones / pointing at neighborhood landmarks / mid-discovery moment, MULTIPLE smartphones gripped in hands at chest/eye level, dusty Israeli neighborhood (park path, plaza, schoolyard with limestone walls)
+   ✅ Camera: handheld follow-shot keeping pace with a running team, slight motion blur on legs and arms
+   ✅ Action over 8 seconds: a team runs around a corner → spots a landmark → one kid reads phone screen out loud (silent on video, no dialogue) → team points and erupts in cheer → cuts to another team in background also celebrating
+   🚫 FORBIDDEN: ANY soccer/ball sports | family walking calmly on a path | quiet contemplative shot | static portrait | kids sitting | cards/papers | adults dominating frame | single child alone
+`;
+        if (isCinemaV) brandRulesV = `🎬 MANDATORY ACTIVITY for הקולנוע הנודד — this is an OUTDOOR INFLATABLE CINEMA EVENT.
+   ✅ The video MUST show: large inflatable cinema screen (4-5m) glowing in the evening, audience on blankets/beanbags/low chairs FACING the screen, families with kids, fairy lights, projector glow lighting faces, warm dusk
+   ✅ Camera: slow dolly back from a child's awe-struck face revealing the audience and the giant screen behind, OR slow tracking shot along rows of relaxed viewers
+   🚫 FORBIDDEN: indoor cinema seats | TVs | suits | corporate venues | daytime without screen visible | empty venues
+`;
+        if (isFlightsV) brandRulesV = `✈️ MANDATORY ACTIVITY for צייד טיסות — this is about ISRAELIS GETTING CHEAP FLIGHT DEALS AND TRAVELING.
+   ✅ The video MUST show: an Israeli traveller (couple, family, or solo) at an airport gate window watching planes, OR walking through a stunning destination (European old town, Mediterranean beach, Asian market) with luggage, mid-arrival, joyful discovery
+   ✅ Camera: handheld follow-shot of the traveller stepping into a new location, OR slow push-in on a face lighting up as they see their destination
+   🚫 FORBIDDEN: agents in suits at desks | computer screens with prices | abstract calculators | white Westerners | corporate office stock
+`;
         const claudeMessage = `Direct a REALISTIC 8-second vertical 9:16 Veo video for a Facebook post.
 
 BUSINESS: ${bizNameV} — ${bizDescV}
@@ -2393,28 +2413,27 @@ BRAND LOOK (style guide):
 ${vi || 'Warm, professional cinematography.'}
 """
 
-VIDEO TOPIC / BRIEF:
+VIDEO TOPIC / BRIEF (the post content that this video must visually illustrate):
 """
 ${topic}
 """
 
+${brandRulesV}
 ⚠️ CRITICAL RULES:
-1. PHOTOREALISTIC scene with REAL PEOPLE performing REAL activities related to ${bizNameV}.
+1. PHOTOREALISTIC scene with REAL PEOPLE performing REAL activities — strictly the MANDATORY ACTIVITY above for this brand.
 2. ❌ FORBIDDEN: abstract visuals, floating symbols, icons, geometric animations, metaphorical shapes, 3D renders of concepts.
-3. ✅ REQUIRED: Specific people in specific location, one clear action that unfolds over 8 seconds, natural camera movement (slow push-in / handheld / static / slow pan), realistic lighting.
-4. If topic is abstract, invent a REAL SCENE — e.g. "camera slowly pushes in on a host with microphone standing before a cheering crowd, hands raising in the air" NOT "abstract question mark floating with glowing orbs".
-5. People must look ISRAELI (Middle Eastern/Mediterranean features, modern Israeli casual attire, Israeli locations).
-6. ⛔⛔⛔ ABSOLUTELY ZERO ON-SCREEN TEXT — THE MOST IMPORTANT RULE.
+3. ✅ REQUIRED: Specific people in specific location, ONE clear action that unfolds over 8 seconds, natural camera movement (slow push-in / handheld / static / slow pan), realistic lighting.
+4. People must look ISRAELI (Middle Eastern/Mediterranean features, modern Israeli casual attire, Israeli locations).
+5. ⛔⛔⛔ ABSOLUTELY ZERO ON-SCREEN TEXT.
    - No subtitles, no captions, no title cards, no end-cards, no chyrons, no lower-thirds.
    - No signage with readable text — any signs in the background MUST be blurred beyond recognition or out-of-focus.
-   - No T-shirt prints with words/logos. No phone or laptop screens showing text/UI. No whiteboards. No menus. No books with titles. No street signs. No store fronts. No billboards. No magazines. No tickets. No passports.
-   - DO NOT describe any object that naturally contains text. If unavoidable, describe it as "completely blurred", "out of frame", "covered by hand".
-   - Veo cannot render Hebrew letters correctly — any text it draws comes out as gibberish characters. Choose scenes that have NO text whatsoever.
-7. 🔇 NO SPOKEN DIALOGUE. The video must NOT contain any spoken voice / narration / dialogue / lip-sync. People in frame should NOT appear to be speaking to camera. Allowed audio: ambient sound only (room tone, footsteps, door open, light music, nature sounds, cafe murmur in the background — no understandable words). A clean Hebrew voiceover will be added separately in post-production, so the video itself MUST come back silent except for ambient sound and music.
-8. 80-140 words, English description. End with: "no spoken dialogue, no narration, no on-screen text, only ambient sound and subtle music".
+   - No T-shirt prints with words/logos. No phone screens showing readable text (smartphones can be visible but screens out-of-focus). No whiteboards. No street signs. No store fronts. No billboards. No tickets. No passports.
+   - Veo cannot render Hebrew letters — any text it draws comes out as gibberish.
+6. 🔇 NO SPOKEN DIALOGUE. The video must NOT contain any spoken voice / dialogue / lip-sync. People in frame should NOT appear to be speaking to camera. Allowed audio: ambient sound only (footsteps, dust, cheers, light music, nature). A clean Hebrew voiceover will be added separately in post-production, so the video itself MUST come back silent except for ambient sound and music.
+7. 80-140 words, English description. End with: "no spoken dialogue, no narration, no on-screen text, only ambient sound and subtle music".
 
 Output ONLY the video prompt:`;
-        enhancedPrompt = (await callText(claudeMessage, claudeKey, geminiKey, 600)).trim();
+        enhancedPrompt = (await callText(claudeMessage, claudeKey, geminiKey, 700)).trim();
       } catch {}
     }
 
