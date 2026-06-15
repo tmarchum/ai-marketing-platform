@@ -2100,20 +2100,34 @@ app.post('/api/posts/:id/generate-media', async (req: any, res) => {
     //    when given the exact letters to draw, not when guessing.
     const sceneDescription = (claudeKey || geminiKey)
       ? await (async () => {
-          const claudeMessage = `Translate this Hebrew scene description into a single photorealistic candid lifestyle scene description in English (NOT an advertisement) for a social-media image.
+          const claudeMessage = `You are an art director writing a CINEMATIC EDITORIAL PHOTOGRAPHY brief for a top-tier Israeli brand.
 
 BUSINESS: ${bizName} — ${bizDescription}
-BRAND MOOD: ${vi || 'warm, modern, Israeli lifestyle'}
-HEBREW SCENE TO DEPICT (this is the actual scene — translate and enrich, do not invent something else): ${sceneSource}
-POST CONTENT CONTEXT: ${topic}
+BRAND VISUAL IDENTITY (use the SPECIFIC mood, palette, lighting style, and motifs described here — they're the brand DNA):
+"""
+${vi || 'warm, modern, Israeli lifestyle'}
+"""
+HEBREW SCENE STARTING POINT (the core action — keep it, but enrich with photographic craft): ${sceneSource}
+POST TOPIC: ${topic}
 
-OUTPUT: 2-3 sentences, English. Stay FAITHFUL to the Hebrew scene — same people, same place, same activity. Add: Israeli-looking subjects (Mediterranean features, modern Israeli casual attire), natural lighting, candid documentary photography vibe.
+WRITE a single dense English paragraph in the style of a real photographer's brief. It MUST include:
+1. Photographic genre — pick ONE that fits: photojournalistic / editorial / cinematic ad / documentary / portrait / lifestyle hero shot / 2x2 collage / wide environmental portrait / golden-hour lifestyle / overhead flat-lay / candid behind-the-scenes
+2. Specific subjects — ages, expressions, clothing (use the brand palette from visual identity), what they're DOING with their hands/bodies
+3. Location specifics — concrete props, architecture, surfaces (a quiz event = stage + audience + smartphones; a movie screening = inflatable screen + blankets + projector glow; a flight deal = passports, sunset terminal, boarding pass close-up)
+4. Lighting & atmosphere — golden hour, cool-blue dawn, warm tungsten, dramatic overhead, soft window light, moody backlight
+5. Camera details — wide shot / close-up / overhead / shallow DOF / leading lines / rule of thirds
+6. Mood word — warm, triumphant, contemplative, energetic, intimate, electric, nostalgic
 
-⛔ Do NOT describe: airplanes, airline tails, billboards, signs, store fronts, T-shirts with prints, phone/laptop screens, brand logos, posters, road signs, tickets, passports — anything that naturally contains text. Pick a clean text-free scene.
-⛔ Do NOT invent a generic office/meeting scene if the Hebrew scene is about something specific (a quiz event, a movie screening, a beach, a kitchen, etc.).
+EXAMPLES of the level of craft you should match (these are real briefs that produced excellent imagery):
+- "A warm photojournalistic 2x2 collage of four outdoor nighttime scenes: top-left, a glowing inflatable cinema screen at golden hour with families on blankets; top-right, a wide shot of children laughing under projected stars; bottom row, a couple silhouetted against a giant outdoor movie, soft warm fairy-light backlighting throughout."
+- "A photojournalistic wide environmental portrait of a small energetic team of three Israeli professionals in navy and teal branded polo shirts, leaning over an interactive map glowing on a tablet in a converted industrial space; warm afternoon window light, shallow depth of field, candid mid-discussion expression."
 
-Output ONLY the 2-3 sentence scene description, no labels:`;
-          try { return (await callText(claudeMessage, claudeKey, geminiKey, 300)).trim(); }
+⛔ Do NOT include: any text, signs, logos, billboards, T-shirt prints, road signs, tickets, screens-with-readable-content. If they would naturally have text, blur them out-of-focus.
+⛔ Do NOT default to a generic office scene if the Hebrew suggests a specific activity — stay TRUE to what's happening (quiz event, screening, deal celebration, etc.).
+⛔ Do NOT write multiple sentences — write ONE dense, photographer-style paragraph (3-5 sentences max, but ONE flowing brief).
+
+Output ONLY the brief paragraph, no labels, no quotes:`;
+          try { return (await callText(claudeMessage, claudeKey, geminiKey, 500)).trim(); }
           catch { return sceneSource; }
         })()
       : sceneSource;
