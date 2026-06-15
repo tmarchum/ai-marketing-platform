@@ -2344,7 +2344,8 @@ app.post('/api/posts/:id/generate-video', async (req: any, res) => {
     if (postErr || !post) return res.status(404).json({ error: 'Post not found' });
     const { data: biz } = await sb.from('businesses').select('*').eq('name', post.business_name).single();
 
-    if (post.video_url) return res.json({ ok: true, skipped: true, url: post.video_url });
+    const forceFresh = req.query.force === '1' || req.body?.force === true;
+    if (!forceFresh && post.video_url) return res.json({ ok: true, skipped: true, url: post.video_url });
 
     const claudeKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
     const geminiKey = await getUserKey(sb, req.userId, 'GEMINI_API_KEY');
