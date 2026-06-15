@@ -2159,24 +2159,35 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
     //    (it renders correctly-shaped Hebrew letters but the wrong words). So we
     //    handle the headline ourselves with a real font overlay after generation.
     function buildImagePrompt(scene: string, hebrewScene: string): string {
-      // Include the original Hebrew scene verbatim so Nano Banana doesn't lose the
-      // specifics that the English translation can flatten ("two employees high-fiving
-      // over a smartphone" → "two men in a hallway"). Nano Banana understands Hebrew.
+      const isQuiz = bizName === 'החידונאים';
       const hebrewBlock = hebrewScene && hebrewScene !== scene
-        ? `\nORIGINAL HEBREW SCENE — match these specifics exactly, including any objects/props/activities mentioned:\n${hebrewScene}\n`
+        ? `\nORIGINAL HEBREW SCENE — match these specifics exactly:\n${hebrewScene}\n`
         : '';
-      return `Generate a cinematic, photorealistic editorial photograph, square format (1:1).
+      return `Generate a cinematic, photorealistic action photograph, square format (1:1). Documentary photojournalism style.
 
-SCENE (depict EXACTLY this — same people, same activity, same props):
+SCENE TO CAPTURE:
 ${scene}
 ${hebrewBlock}
-Style: magazine-cover / professional ad photography — rich color grading, shallow depth of field, dramatic natural lighting (golden hour, soft window light, etc.), strong composition. Israeli-looking subjects (Mediterranean features, modern Israeli casual attire), modern Israeli aesthetic.
+${isQuiz ? `🏃 MANDATORY for ${bizName} (חידונאים / חידוניווט) — this is an OUTDOOR ACTIVE SMARTPHONE QUEST. The image MUST show:
+   ✅ Kids or teens IN MOTION — RUNNING between locations, leaning toward a smartphone screen, pointing excitedly, mid-discovery moment
+   ✅ SMARTPHONES in hands (not cards, not papers, not tablets — SMARTPHONES showing a quiz app)
+   ✅ Outdoor Israeli setting — dusty park, neighborhood sidewalk, schoolyard, plaza
+   ✅ Multiple kids/teens in a group, animated body language, mid-action
+   ✅ Sense of HUNT/QUEST — looking around, pointing at a landmark, comparing screens
 
-CRITICAL — the scene must show the SPECIFIC activity described (a quiz event, a movie screening, a flight deal celebration, etc.), NOT a generic "two people in an empty space" interpretation. If the scene mentions a smartphone, a board, a crowd, a screen, a microphone — those MUST appear.
+   🚫 ABSOLUTELY FORBIDDEN — these will RUIN the image:
+   ❌ Kids SITTING on grass or anywhere
+   ❌ Kids HOLDING CARDS, papers, books, or anything other than smartphones
+   ❌ Portrait composition of one kid looking at camera
+   ❌ Static "family enjoying nature" scene
+   ❌ Adults dominating the frame
+   ❌ Single thoughtful child
+` : ''}
+Style: editorial documentary photography — slight motion blur on moving subjects, candid framing, Israeli sunlight (harsh midday OR warm golden hour), real-feeling skin/clothes/sweat.
 
-The image must contain ABSOLUTELY NO text, NO writing, NO letters, NO numbers, NO logos, NO signs, NO captions, NO banners — only people, places, and natural objects. Any incidental signs/screens in the background must be blurred or out-of-focus.
+⛔ ABSOLUTELY NO text, writing, letters, numbers, logos, signs, captions, banners visible in the image. Any incidental text in the background must be blurred out-of-focus.
 
-Composition: position the main subjects in the upper-2/3 of the frame and keep the lower area visually clean (calm sky, blurred bokeh, smooth surface, gentle out-of-focus background) — a designer headline will be placed there, so it should not compete with faces or important detail.`;
+Composition: action in the upper-2/3 of the frame, lower area visually clean for a headline overlay.`;
     }
 
     const finalPrompt = buildImagePrompt(sceneDescription, sceneSource);
