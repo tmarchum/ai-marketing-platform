@@ -2160,29 +2160,42 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
     //    handle the headline ourselves with a real font overlay after generation.
     function buildImagePrompt(scene: string, hebrewScene: string): string {
       const isQuiz = bizName === 'החידונאים';
+      const isCinema = bizName === 'הקולנוע הנודד';
+      const isFlights = bizName === 'צייד טיסות';
       const hebrewBlock = hebrewScene && hebrewScene !== scene
         ? `\nORIGINAL HEBREW SCENE — match these specifics exactly:\n${hebrewScene}\n`
         : '';
-      return `Generate a cinematic, photorealistic action photograph, square format (1:1). Documentary photojournalism style.
-
-SCENE TO CAPTURE:
-${scene}
-${hebrewBlock}
-${isQuiz ? `🏃 MANDATORY for ${bizName} (חידונאים / חידוניווט) — this is an OUTDOOR ACTIVE SMARTPHONE QUEST. The image MUST show:
+      let brandRules = '';
+      if (isQuiz) brandRules = `🏃 MANDATORY for ${bizName} (חידונאים / חידוניווט) — this is an OUTDOOR ACTIVE SMARTPHONE QUEST. The image MUST show:
    ✅ Kids or teens IN MOTION — RUNNING between locations, leaning toward a smartphone screen, pointing excitedly, mid-discovery moment
    ✅ SMARTPHONES in hands (not cards, not papers, not tablets — SMARTPHONES showing a quiz app)
    ✅ Outdoor Israeli setting — dusty park, neighborhood sidewalk, schoolyard, plaza
    ✅ Multiple kids/teens in a group, animated body language, mid-action
    ✅ Sense of HUNT/QUEST — looking around, pointing at a landmark, comparing screens
+   🚫 FORBIDDEN: kids SITTING anywhere | holding CARDS/papers/books instead of smartphones | static portrait | single thoughtful child | adults dominating frame
+`;
+      if (isCinema) brandRules = `🎬 MANDATORY for ${bizName} (Moving Cinema / קולנוע נודד) — this is an OUTDOOR INFLATABLE CINEMA SCREENING.  The image MUST show:
+   ✅ A LARGE INFLATABLE OUTDOOR CINEMA SCREEN (not a TV, not an indoor projector — a freestanding 4-5 meter inflatable screen glowing in the evening)
+   ✅ Audience on blankets, beanbags, or low chairs FACING the glowing screen
+   ✅ Families with kids, couples, or community groups — relaxed lounging, kids in pajamas, hot snacks
+   ✅ Evening / dusk / golden-hour outdoor setting — kibbutz lawn, backyard, neighborhood park, beach, school courtyard
+   ✅ Warm projector glow lighting faces, fairy lights / paper lanterns in background, stars above
+   ✅ Sense of MAGIC / COMMUNITY / nostalgia
+   🚫 FORBIDDEN: indoor cinema / movie theater seats | TV screens | empty corporate venues | daytime scenes without screen visible | suits | conference rooms
+`;
+      if (isFlights) brandRules = `✈️ MANDATORY for ${bizName} (Flight Hunter / צייד טיסות) — this is about ISRAELIS GETTING CHEAP FLIGHT DEALS TO INCREDIBLE PLACES. The image MUST show:
+   ✅ One of: (a) a real Israeli traveller (couple, family, or solo) at a moment of joy — at an airport gate window, on a plane, at a stunning destination, holding a boarding pass; OR (b) a flat-lay of travel items (passport, sunglasses, boarding pass, a map) shot from above
+   ✅ Real Israelis — Mediterranean features, casual modern attire, real luggage (not stock-photo branded)
+   ✅ Specific destination feel — Mediterranean beach, European old town, Asian street market, NYC skyline. The location should be RECOGNIZABLE
+   ✅ Mood: anticipation, arrival, discovery, "we made it" — not abstract corporate
+   🚫 FORBIDDEN: agents in suits in offices | computer screens with prices | abstract money/calculator imagery | white Westerners | corporate stock travel
+`;
+      return `Generate a cinematic, photorealistic action photograph, square format (1:1). Documentary photojournalism style.
 
-   🚫 ABSOLUTELY FORBIDDEN — these will RUIN the image:
-   ❌ Kids SITTING on grass or anywhere
-   ❌ Kids HOLDING CARDS, papers, books, or anything other than smartphones
-   ❌ Portrait composition of one kid looking at camera
-   ❌ Static "family enjoying nature" scene
-   ❌ Adults dominating the frame
-   ❌ Single thoughtful child
-` : ''}
+SCENE TO CAPTURE:
+${scene}
+${hebrewBlock}
+${brandRules}
 Style: editorial documentary photography — slight motion blur on moving subjects, candid framing, Israeli sunlight (harsh midday OR warm golden hour), real-feeling skin/clothes/sweat.
 
 ⛔ ABSOLUTELY NO text, writing, letters, numbers, logos, signs, captions, banners visible in the image. Any incidental text in the background must be blurred out-of-focus.
