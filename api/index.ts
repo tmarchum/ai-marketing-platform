@@ -2166,20 +2166,29 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
         ? `\nORIGINAL HEBREW SCENE — match these specifics exactly:\n${hebrewScene}\n`
         : '';
       let brandRules = '';
-      if (isQuiz) brandRules = `🏃 MANDATORY for ${bizName} (חידונאים / חידוניווט) — this is a LARGE-SCALE OUTDOOR SMARTPHONE QUEST with MULTIPLE COMPETING TEAMS racing through a neighborhood. The image MUST show:
-   ✅ MULTIPLE GROUPS (at least 2-3 teams, each 3-5 kids/teens) visible in the same frame, all in motion at the same time — like a city-wide event
-   ✅ Each team RUNNING / leaning forward / mid-stride — feet leaving the ground, hair flying, arms pumping
-   ✅ One or two kids per team GRIPPING a smartphone IN THEIR HAND naturally — fingers visibly wrapped around the device, screen facing the runner's eyes, phone at chest or eye height, held the way a real person holds a phone while looking at it (not raised above head, not floating, not levitating)
-   ✅ Scene of FRIENDLY COMPETITION — teams glancing at each other, racing to be first, animated discussion within teams
-   ✅ Outdoor Israeli neighborhood setting: dusty park path, plaza, schoolyard with playground equipment, neighborhood sidewalk with limestone walls
-   ✅ Wide environmental shot showing the SCALE — multiple groups dotted across the frame, not just one tight cluster
-   ✅ Mid-action energy: pointing at landmarks, sprinting, mid-laugh, the rush of "we're winning!"
-   🚫 ABSOLUTELY FORBIDDEN — these will RUIN the image:
-   ❌ Smartphones floating, levitating, or hovering above heads disconnected from hands — phones MUST be physically gripped in fingers
-   ❌ Phones held up above the head like a trophy — they are HELD AT CHEST/EYE LEVEL, naturally
-   ❌ Numbered race bibs / paper tags / printed badges on shirts — plain t-shirts only, no text or numbers anywhere
-   ❌ Kids SITTING anywhere
-   ❌ A single small group | holding CARDS/papers/books | static portrait | single thoughtful child | adults dominating frame
+      if (isQuiz) brandRules = `🏃 MANDATORY for ${bizName} (חידונאים / חידוניווט) — OUTDOOR SMARTPHONE QUEST in an Israeli neighborhood. The IMAGE MUST VARY across posts (DO NOT default to the same scene every time). Pick ONE of these archetypes based on the post topic — vary by post to keep the feed visually diverse:
+
+   ARCHETYPE A — multi-team kids' race (8-13yo): 2-3 small teams of children running between landmarks, one per team gripping a smartphone naturally at chest height, schoolyard or neighborhood plaza, mid-laugh
+   ARCHETYPE B — teen group huddle (13-17yo): 4-5 teenagers leaning over a single smartphone someone is holding, animated discussion, pointing at the screen and at a landmark, dusty park bench area
+   ARCHETYPE C — multi-generational family squad: parents and 2-3 kids of mixed ages walking together, kid in the middle holding the phone, parent pointing at a building or sign, neighborhood sidewalk with limestone walls
+   ARCHETYPE D — community-wide event: a wider scene showing many different groups (families, teen friends, grandparents with grandkids) all spread across a park/plaza, each group with their own phone, treasure-hunt energy across the frame
+   ARCHETYPE E — discovery moment close-up: a smaller group of 2-3 (could be kids, teens, or mixed family) gathered around an old neighborhood object/landmark, one holding a phone showing the quiz, faces lit with "aha!" recognition
+   ARCHETYPE F — school class on the move: 8-12 elementary or middle-school kids in a loose pack with a teacher visible at the edge, kids in motion holding several phones, schoolyard or nearby park
+
+   COMMON RULES for all archetypes:
+   ✅ Smartphones GRIPPED IN HANDS at chest/eye level — naturally held, fingers wrapped around the device
+   ✅ Outdoor Israeli setting — dusty park, neighborhood sidewalk, schoolyard with limestone walls, plaza with eucalyptus
+   ✅ Mid-action energy — gesturing, pointing, mid-stride, mid-laugh, lean-forward body language
+   ✅ Israeli features (Mediterranean), plain t-shirts/casual clothes — no logos, no text, no race bibs
+
+   🚫 FORBIDDEN — these RUIN the image:
+   ❌ Smartphones floating/levitating disconnected from hands
+   ❌ Phones held up like a trophy above the head
+   ❌ Numbered race bibs / paper tags / text on shirts
+   ❌ Subjects SITTING anywhere (even on a bench — must be in motion)
+   ❌ Single thoughtful child looking at camera (this is GROUP activity)
+   ❌ Adults dominating the frame to the exclusion of kids/teens (multi-gen scenes OK, but kids/teens should be present)
+   ❌ Same archetype repeated post after post — vary by post topic
 `;
       if (isCinema) brandRules = `🎬 MANDATORY for ${bizName} (Moving Cinema / קולנוע נודד) — this is an OUTDOOR INFLATABLE CINEMA SCREENING.  The image MUST show:
    ✅ A LARGE INFLATABLE OUTDOOR CINEMA SCREEN (not a TV, not an indoor projector — a freestanding 4-5 meter inflatable screen glowing in the evening)
