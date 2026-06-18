@@ -2199,21 +2199,39 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
    ❌ Generic "American suburb" aesthetic — must feel ISRAELI
    ❌ Adults-only crowds with no kids/teens visible
 `;
-      if (isCinema) brandRules = `🎬 MANDATORY for ${bizName} (Moving Cinema / קולנוע נודד) — this is an OUTDOOR INFLATABLE CINEMA SCREENING.  The image MUST show:
-   ✅ A LARGE INFLATABLE OUTDOOR CINEMA SCREEN (not a TV, not an indoor projector — a freestanding 4-5 meter inflatable screen glowing in the evening)
-   ✅ Audience on blankets, beanbags, or low chairs FACING the glowing screen
-   ✅ Families with kids, couples, or community groups — relaxed lounging, kids in pajamas, hot snacks
-   ✅ Evening / dusk / golden-hour outdoor setting — kibbutz lawn, backyard, neighborhood park, beach, school courtyard
-   ✅ Warm projector glow lighting faces, fairy lights / paper lanterns in background, stars above
-   ✅ Sense of MAGIC / COMMUNITY / nostalgia
-   🚫 FORBIDDEN: indoor cinema / movie theater seats | TV screens | empty corporate venues | daytime scenes without screen visible | suits | conference rooms
+      if (isCinema) brandRules = `🎬 MANDATORY for ${bizName} (Moving Cinema / קולנוע נודד) — OUTDOOR INFLATABLE CINEMA at a REALISTIC NEIGHBORHOOD/EVENT scale (NOT concert/festival scale). Pick ONE archetype:
+
+   ARCHETYPE A — backyard family screening (4-8 people): one family on blankets/beanbags in their own backyard, parents and 2-3 kids in pajamas, kids leaning back in awe, inflatable screen glowing in the corner of the yard
+   ARCHETYPE B — neighborhood community event (15-30 people MAX): several family groups on blankets across a kibbutz lawn or schoolyard, all facing the inflatable screen, fairy lights strung between trees
+   ARCHETYPE C — couples' romantic screening (2-4 people): a couple or two couples on a blanket close to the inflatable screen, glasses of wine, intimate dusk lighting, beach or hilltop setting
+   ARCHETYPE D — corporate event (10-20 people): co-workers on bean-bags in a company courtyard at evening, casual dress (no suits), inflatable screen at the front, snacks
+   ARCHETYPE E — wedding/celebration backdrop: inflatable screen in the background of an event venue tent, guests dressed up but casual-elegant, screen showing a couple's home movie (out of focus / not readable)
+   ARCHETYPE F — equipment setup close-up: 1-2 technicians erecting the inflatable screen at dusk, focus on the screen inflating against an Israeli sky
+
+   🇮🇱 REALISTIC ISRAELI DEMOGRAPHIC MIX:
+   - ~60% secular/hiloni; ~30% religious-Zionist (knitted kippa for boys/men, modest layered clothing for women — long skirts, t-shirts with sleeves, sometimes a light headscarf for married women); ~10% mixed/traditional
+   - NO haredi/ultra-Orthodox styling (no black hats, no payot, no long black coats)
+   - Mediterranean + Ashkenazi mix; multi-cultural (Russian-Israeli, Ethiopian-Israeli) is good
+
+   ✅ COMMON RULES: large INFLATABLE freestanding screen (4-5m) glowing in evening, audience FACING the screen, warm projector glow on faces, fairy lights/paper lanterns OK, REALISTIC group size
+   🚫 FORBIDDEN: indoor cinema seats | TV screens | empty corporate venues | daytime without screen visible | suits | concert-scale crowds (max 30 visible people) | haredi styling
 `;
-      if (isFlights) brandRules = `✈️ MANDATORY for ${bizName} (Flight Hunter / צייד טיסות) — this is about ISRAELIS GETTING CHEAP FLIGHT DEALS TO INCREDIBLE PLACES. The image MUST show:
-   ✅ One of: (a) a real Israeli traveller (couple, family, or solo) at a moment of joy — at an airport gate window, on a plane, at a stunning destination, holding a boarding pass; OR (b) a flat-lay of travel items (passport, sunglasses, boarding pass, a map) shot from above
-   ✅ Real Israelis — Mediterranean features, casual modern attire, real luggage (not stock-photo branded)
-   ✅ Specific destination feel — Mediterranean beach, European old town, Asian street market, NYC skyline. The location should be RECOGNIZABLE
-   ✅ Mood: anticipation, arrival, discovery, "we made it" — not abstract corporate
-   🚫 FORBIDDEN: agents in suits in offices | computer screens with prices | abstract money/calculator imagery | white Westerners | corporate stock travel
+      if (isFlights) brandRules = `✈️ MANDATORY for ${bizName} (Flight Hunter / צייד טיסות) — ISRAELI TRAVELERS getting deals and reaching incredible destinations. REALISTIC, intimate moments (1-6 people max). Pick ONE archetype:
+
+   ARCHETYPE A — couple at destination: a young Israeli couple (early-mid 30s) embracing on a Mediterranean beach at sunset / overlooking European old town / at a Asian street market, casual travel clothes, joyful arrival expression
+   ARCHETYPE B — family travel scene (4-5 people): parents and 2-3 kids walking through a stunning destination with carry-on luggage, kids pointing excitedly at something, golden hour
+   ARCHETYPE C — solo backpacker discovery: one Israeli traveler (20s-30s) standing at a viewpoint or busy market street, casual cargo shorts, camera or phone in hand, lit-up "I made it" expression
+   ARCHETYPE D — airport gate window: an Israeli traveler (could be couple or family) standing at an airport boarding gate looking out at the runway, anticipation on face, small carry-on bag
+   ARCHETYPE E — destination flat-lay: overhead shot of travel items on a hotel bed or wooden table — open passport, sunglasses, paper map, a hat, all blurred so no readable text
+   ARCHETYPE F — friends group trip (3-5 people, young adults 25-40): tight-knit group of friends laughing at a destination landmark — European cobbled square, beach bonfire, ramen stall
+
+   🇮🇱 REALISTIC ISRAELI DEMOGRAPHIC MIX:
+   - ~60% secular/hiloni; ~30% religious-Zionist (knitted kippa for men, modest layered clothing for women); ~10% mixed/traditional
+   - NO haredi styling (this brand's target market is mostly secular and dati-leumi travelers)
+   - Mediterranean features + Ashkenazi visible; multi-cultural Israelis OK
+
+   ✅ COMMON RULES: REAL destination feel (a specific recognizable place type — Mediterranean beach, European old town, Asian market, NYC skyline, Thai temple, Greek island), real carry-on luggage, joyful expressions
+   🚫 FORBIDDEN: agents in suits at desks | computer screens with prices | calculator/money imagery | white Westerners | corporate stock travel | festival-scale tourist crowds | haredi styling
 `;
       return `Generate a cinematic, photorealistic action photograph, square format (1:1). Documentary photojournalism style.
 
