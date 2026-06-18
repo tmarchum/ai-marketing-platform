@@ -2175,13 +2175,11 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
    ARCHETYPE E — discovery close-up (2-4 people): a small group gathered around an old neighborhood object/landmark, one holding a phone showing the quiz, faces lit with "aha!" recognition
    ARCHETYPE F — school class (8-12 kids + 1 teacher): elementary or middle-school class in a loose pack with a teacher visible at the edge, kids in motion holding several phones, schoolyard or nearby park
 
-   🇮🇱 REALISTIC ISRAELI DEMOGRAPHIC MIX (vary by post, not every image needs all of these — but feed should reflect Israel):
-   - Default ~60%: secular/hiloni Israelis — t-shirts, jeans, sandals, hair uncovered for women
-   - ~30%: religious-Zionist (dati-leumi) — knitted kippa (kippa sruga) on boys/men; women/girls in modest layered clothing (long skirt over leggings, t-shirt with sleeves, sometimes light headscarf for married women) — NOT haredi (NO black hats, NO long payot, NO long black coats, NO black-and-white only outfit)
-   - ~10%: traditional/masorti or mixed groups
-   - No haredi/ultra-Orthodox subjects (this brand serves municipalities/schools and these archetypes don't fit)
-   - Mix Mediterranean (Mizrahi) and Ashkenazi features — both visible in Israeli reality
-   - Multi-cultural groups within Israel are GOOD (Russian-Israeli, Ethiopian-Israeli, etc.)
+   🇮🇱 REALISTIC ISRAELI LOOK:
+   - Secular/hiloni Israelis — t-shirts, shorts, jeans, sandals, hair uncovered
+   - Mediterranean (Mizrahi) + Ashkenazi features mix
+   - Multi-cultural Israelis OK (Russian-Israeli, Ethiopian-Israeli, etc.)
+   - NO religious styling (no kippot, no head coverings, no modesty-coded clothing) — keep secular Israeli vibe
 
    COMMON RULES for all archetypes:
    ✅ Smartphones GRIPPED IN HANDS at chest/eye level — fingers wrapped around the device
@@ -2208,13 +2206,14 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
    ARCHETYPE E — wedding/celebration backdrop: inflatable screen in the background of an event venue tent, guests dressed up but casual-elegant, screen showing a couple's home movie (out of focus / not readable)
    ARCHETYPE F — equipment setup close-up: 1-2 technicians erecting the inflatable screen at dusk, focus on the screen inflating against an Israeli sky
 
-   🇮🇱 REALISTIC ISRAELI DEMOGRAPHIC MIX:
-   - ~60% secular/hiloni; ~30% religious-Zionist (knitted kippa for boys/men, modest layered clothing for women — long skirts, t-shirts with sleeves, sometimes a light headscarf for married women); ~10% mixed/traditional
-   - NO haredi/ultra-Orthodox styling (no black hats, no payot, no long black coats)
-   - Mediterranean + Ashkenazi mix; multi-cultural (Russian-Israeli, Ethiopian-Israeli) is good
+   🇮🇱 REALISTIC ISRAELI LOOK:
+   - Secular/hiloni Israelis — casual t-shirts, shorts, jeans, light dresses
+   - Mediterranean (Mizrahi) + Ashkenazi features mix
+   - Multi-cultural Israelis OK (Russian-Israeli, Ethiopian-Israeli, etc.)
+   - NO religious styling (no kippot, no head coverings, no modesty-coded clothing) — secular Israeli vibe only
 
    ✅ COMMON RULES: large INFLATABLE freestanding screen (4-5m) glowing in evening, audience FACING the screen, warm projector glow on faces, fairy lights/paper lanterns OK, REALISTIC group size
-   🚫 FORBIDDEN: indoor cinema seats | TV screens | empty corporate venues | daytime without screen visible | suits | concert-scale crowds (max 30 visible people) | haredi styling
+   🚫 FORBIDDEN: indoor cinema seats | TV screens | empty corporate venues | daytime without screen visible | suits | concert-scale crowds (max 30 visible people) | religious styling
 `;
       if (isFlights) brandRules = `✈️ MANDATORY for ${bizName} (Flight Hunter / צייד טיסות) — ISRAELI TRAVELERS getting deals and reaching incredible destinations. REALISTIC, intimate moments (1-6 people max). Pick ONE archetype:
 
@@ -2225,13 +2224,14 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
    ARCHETYPE E — destination flat-lay: overhead shot of travel items on a hotel bed or wooden table — open passport, sunglasses, paper map, a hat, all blurred so no readable text
    ARCHETYPE F — friends group trip (3-5 people, young adults 25-40): tight-knit group of friends laughing at a destination landmark — European cobbled square, beach bonfire, ramen stall
 
-   🇮🇱 REALISTIC ISRAELI DEMOGRAPHIC MIX:
-   - ~60% secular/hiloni; ~30% religious-Zionist (knitted kippa for men, modest layered clothing for women); ~10% mixed/traditional
-   - NO haredi styling (this brand's target market is mostly secular and dati-leumi travelers)
-   - Mediterranean features + Ashkenazi visible; multi-cultural Israelis OK
+   🇮🇱 REALISTIC ISRAELI LOOK:
+   - Secular/hiloni Israelis — casual travel clothes, t-shirts, light dresses, sunglasses
+   - Mediterranean (Mizrahi) + Ashkenazi features mix
+   - Multi-cultural Israelis OK (Russian-Israeli, Ethiopian-Israeli, etc.)
+   - NO religious styling (no kippot, no head coverings, no modesty-coded clothing) — secular Israeli vibe only
 
    ✅ COMMON RULES: REAL destination feel (a specific recognizable place type — Mediterranean beach, European old town, Asian market, NYC skyline, Thai temple, Greek island), real carry-on luggage, joyful expressions
-   🚫 FORBIDDEN: agents in suits at desks | computer screens with prices | calculator/money imagery | white Westerners | corporate stock travel | festival-scale tourist crowds | haredi styling
+   🚫 FORBIDDEN: agents in suits at desks | computer screens with prices | calculator/money imagery | white Westerners | corporate stock travel | festival-scale tourist crowds | religious styling
 `;
       return `Generate a cinematic, photorealistic action photograph, square format (1:1). Documentary photojournalism style.
 
