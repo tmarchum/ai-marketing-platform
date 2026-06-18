@@ -2241,9 +2241,9 @@ ${hebrewBlock}
 ${brandRules}
 Style: editorial documentary photography — slight motion blur on moving subjects, candid framing, Israeli sunlight (harsh midday OR warm golden hour), real-feeling skin/clothes/sweat.
 
-⛔ ABSOLUTELY NO text, writing, letters, numbers, logos, signs, captions, banners visible in the image. Any incidental text in the background must be blurred out-of-focus.
+⛔ ABSOLUTELY NO text, writing, letters, numbers, logos, signs, captions, banners, watermarks, or English/Latin words anywhere in the image — not even as a placeholder, not even small in a corner. The image is delivered as-is and any text Imagen draws appears as literal English/gibberish.
 
-Composition: action in the upper-2/3 of the frame, lower area visually clean for a headline overlay.`;
+Composition: action in the upper-2/3 of the frame; keep the bottom 1/3 as a calm, photogenic area — sky, blurred grass/sand, smooth water, soft bokeh — clean and visually quiet. Do NOT draw a banner, badge, sign, plaque, or any rectangular zone in the bottom area; just keep it scenically clean.`;
     }
 
     const finalPrompt = buildImagePrompt(sceneDescription, sceneSource);
