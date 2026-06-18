@@ -2166,29 +2166,38 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
         ? `\nORIGINAL HEBREW SCENE — match these specifics exactly:\n${hebrewScene}\n`
         : '';
       let brandRules = '';
-      if (isQuiz) brandRules = `🏃 MANDATORY for ${bizName} (חידונאים / חידוניווט) — OUTDOOR SMARTPHONE QUEST in an Israeli neighborhood. The IMAGE MUST VARY across posts (DO NOT default to the same scene every time). Pick ONE of these archetypes based on the post topic — vary by post to keep the feed visually diverse:
+      if (isQuiz) brandRules = `🏃 MANDATORY for ${bizName} (חידונאים / חידוניווט) — OUTDOOR SMARTPHONE QUEST in a REAL Israeli neighborhood at NEIGHBORHOOD SCALE (not festival-scale). The IMAGE MUST VARY across posts. Pick ONE archetype based on the post topic:
 
-   ARCHETYPE A — multi-team kids' race (8-13yo): 2-3 small teams of children running between landmarks, one per team gripping a smartphone naturally at chest height, schoolyard or neighborhood plaza, mid-laugh
-   ARCHETYPE B — teen group huddle (13-17yo): 4-5 teenagers leaning over a single smartphone someone is holding, animated discussion, pointing at the screen and at a landmark, dusty park bench area
-   ARCHETYPE C — multi-generational family squad: parents and 2-3 kids of mixed ages walking together, kid in the middle holding the phone, parent pointing at a building or sign, neighborhood sidewalk with limestone walls
-   ARCHETYPE D — community-wide event: a wider scene showing many different groups (families, teen friends, grandparents with grandkids) all spread across a park/plaza, each group with their own phone, treasure-hunt energy across the frame
-   ARCHETYPE E — discovery moment close-up: a smaller group of 2-3 (could be kids, teens, or mixed family) gathered around an old neighborhood object/landmark, one holding a phone showing the quiz, faces lit with "aha!" recognition
-   ARCHETYPE F — school class on the move: 8-12 elementary or middle-school kids in a loose pack with a teacher visible at the edge, kids in motion holding several phones, schoolyard or nearby park
+   ARCHETYPE A — kids race (5-15 children, 8-13yo): 2-3 small teams of 3-4 children each running between landmarks, one per team gripping a smartphone at chest height, schoolyard or neighborhood plaza
+   ARCHETYPE B — teen group huddle (4-6 teens, 13-17yo): teenagers leaning over a single smartphone someone is holding, animated discussion, pointing at the screen and at a landmark, dusty park bench area
+   ARCHETYPE C — multi-generational family squad (1 family, 4-6 people): parents and 2-3 kids of mixed ages walking together, kid in the middle holding the phone, parent pointing at a building or sign, neighborhood sidewalk
+   ARCHETYPE D — neighborhood-event (15-30 people MAX, NOT thousands): several distinct small groups spread across a single park or plaza, each group with their own phone, treasure-hunt energy — looks like an actual community event NOT a music festival
+   ARCHETYPE E — discovery close-up (2-4 people): a small group gathered around an old neighborhood object/landmark, one holding a phone showing the quiz, faces lit with "aha!" recognition
+   ARCHETYPE F — school class (8-12 kids + 1 teacher): elementary or middle-school class in a loose pack with a teacher visible at the edge, kids in motion holding several phones, schoolyard or nearby park
+
+   🇮🇱 REALISTIC ISRAELI DEMOGRAPHIC MIX (vary by post, not every image needs all of these — but feed should reflect Israel):
+   - Default ~60%: secular/hiloni Israelis — t-shirts, jeans, sandals, hair uncovered for women
+   - ~30%: religious-Zionist (dati-leumi) — knitted kippa (kippa sruga) on boys/men; women/girls in modest layered clothing (long skirt over leggings, t-shirt with sleeves, sometimes light headscarf for married women) — NOT haredi (NO black hats, NO long payot, NO long black coats, NO black-and-white only outfit)
+   - ~10%: traditional/masorti or mixed groups
+   - No haredi/ultra-Orthodox subjects (this brand serves municipalities/schools and these archetypes don't fit)
+   - Mix Mediterranean (Mizrahi) and Ashkenazi features — both visible in Israeli reality
+   - Multi-cultural groups within Israel are GOOD (Russian-Israeli, Ethiopian-Israeli, etc.)
 
    COMMON RULES for all archetypes:
-   ✅ Smartphones GRIPPED IN HANDS at chest/eye level — naturally held, fingers wrapped around the device
-   ✅ Outdoor Israeli setting — dusty park, neighborhood sidewalk, schoolyard with limestone walls, plaza with eucalyptus
+   ✅ Smartphones GRIPPED IN HANDS at chest/eye level — fingers wrapped around the device
+   ✅ Outdoor Israeli setting — REAL Israeli architecture: limestone walls, eucalyptus, neighborhood streets, dusty parks, schoolyards with chain-link fences
    ✅ Mid-action energy — gesturing, pointing, mid-stride, mid-laugh, lean-forward body language
-   ✅ Israeli features (Mediterranean), plain t-shirts/casual clothes — no logos, no text, no race bibs
+   ✅ Plain t-shirts/casual clothes — no logos, no text, no race bibs
+   ✅ REALISTIC group size — small or medium clusters, NEVER festival-scale (no "5000 people", no concert crowds)
 
-   🚫 FORBIDDEN — these RUIN the image:
-   ❌ Smartphones floating/levitating disconnected from hands
-   ❌ Phones held up like a trophy above the head
-   ❌ Numbered race bibs / paper tags / text on shirts
-   ❌ Subjects SITTING anywhere (even on a bench — must be in motion)
-   ❌ Single thoughtful child looking at camera (this is GROUP activity)
-   ❌ Adults dominating the frame to the exclusion of kids/teens (multi-gen scenes OK, but kids/teens should be present)
-   ❌ Same archetype repeated post after post — vary by post topic
+   🚫 FORBIDDEN:
+   ❌ THOUSANDS of people, festival crowds, concert audiences — this is a NEIGHBORHOOD event, max 30 visible people total
+   ❌ Smartphones floating/levitating, phones held up like trophies
+   ❌ Race bibs, numbered tags, text on shirts
+   ❌ Subjects SITTING (must be in motion)
+   ❌ Haredi/ultra-Orthodox styling (this brand's market is municipalities + schools, not Haredi communities)
+   ❌ Generic "American suburb" aesthetic — must feel ISRAELI
+   ❌ Adults-only crowds with no kids/teens visible
 `;
       if (isCinema) brandRules = `🎬 MANDATORY for ${bizName} (Moving Cinema / קולנוע נודד) — this is an OUTDOOR INFLATABLE CINEMA SCREENING.  The image MUST show:
    ✅ A LARGE INFLATABLE OUTDOOR CINEMA SCREEN (not a TV, not an indoor projector — a freestanding 4-5 meter inflatable screen glowing in the evening)
