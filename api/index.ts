@@ -2011,6 +2011,27 @@ Return ONLY JSON: {"content": "full post text in Hebrew", "hashtags": ["#tag1", 
         content = [cp.hook || cp.caption_short, '', cp.angle || ''].filter(Boolean).join('\n');
       }
 
+      // ── CONVERSION CTA — every post ends with a tracked short link to the
+      //    business site (per-post code → per-post click analytics via /s/:code).
+      //    Skipped when the post already contains a link.
+      if (biz.url && !/https?:\/\//i.test(content)) {
+        try {
+          let code = '';
+          for (let tries = 0; tries < 5; tries++) {
+            code = generateShortCode();
+            const { data: taken } = await sb.from('short_links').select('code').eq('code', code).maybeSingle();
+            if (!taken) break;
+          }
+          const targetUrl = /^https?:\/\//i.test(biz.url) ? biz.url : `https://${biz.url}`;
+          const { error: slErr } = await sb.from('short_links').insert({
+            code, url: targetUrl, clicks: 0,
+            business_id: biz.id,
+            ...(req.userId ? { user_id: req.userId } : {}),
+          });
+          if (!slErr) content += `\n\n👈 לכל הפרטים: ${PROD_URL}/s/${code}`;
+        } catch {}
+      }
+
       const row: any = {
         platform: 'פייסבוק',
         type: cp.type || 'פוסט קצר',
