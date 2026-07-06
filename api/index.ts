@@ -3384,6 +3384,129 @@ app.get('/api/posts/:id/skip', async (req: any, res) => {
   } catch (e: any) { res.status(500).send(`Error: ${e.message}`); }
 });
 
+// ══════════════════════════════════════════════════════════════
+// CRON — Monthly auto-calendar (runs daily on the 25th-31st).
+// Ensures every business has next-month content. Processes ONE business
+// per invocation to stay inside the serverless timeout; over a few days
+// all businesses get filled. Posts inherit the full pipeline: Claude copy,
+// KB facts, short-link CTA, business schedule slots. The existing daily
+// preview email (18:00) remains the review/cancel gate before publishing.
+// ══════════════════════════════════════════════════════════════
+app.get('/api/cron/monthly-calendar', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const now = new Date();
+    // Next month (UTC-based is fine — slot times come from business schedule)
+    const nextMonth = now.getUTCMonth() + 2; // getUTCMonth is 0-based → +2 = next month 1-based
+    const targetYear = nextMonth > 12 ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
+    const targetMonth = nextMonth > 12 ? 1 : nextMonth;
+    const monthStart = new Date(Date.UTC(targetYear, targetMonth - 1, 1)).toISOString();
+    const monthEnd = new Date(Date.UTC(targetYear, targetMonth, 1)).toISOString();
+
+    const { data: businesses } = await sb.from('businesses').select('id, name');
+    if (!businesses?.length) return res.json({ message: 'no businesses' });
+
+    // Find first business lacking next-month content
+    let target: any = null;
+    const counts: Record<string, number> = {};
+    for (const b of businesses) {
+      const { count } = await sb
+        .from('content_posts')
+        .select('id', { count: 'exact', head: true })
+        .eq('business_name', b.name)
+        .is('published_at', null)
+        .gte('scheduled_at', monthStart)
+        .lt('scheduled_at', monthEnd);
+      counts[b.name] = count ?? 0;
+      if (!target && (count ?? 0) < 6) target = b;
+    }
+    if (!target) return res.json({ message: `all businesses have ${targetMonth}/${targetYear} content`, counts });
+
+    // Generate + approve via self-fetch (reuses the full pipeline incl. short links)
+    const genR = await fetch(`${PROD_URL}/api/calendars/generate`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ business_id: target.id, year: targetYear, month: targetMonth, posts_count: 14 }),
+    });
+    const gen = await genR.json() as any;
+    if (gen.error) return res.json({ business: target.name, error: gen.error });
+    const briefs = (gen.posts || []).slice(0, 8);
+    const appR = await fetch(`${PROD_URL}/api/calendars/approve`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ business_id: target.id, posts: briefs }),
+    });
+    const app_ = await appR.json() as any;
+    const created = (app_.created || []).filter((c: any) => !c.error).length;
+
+    // Summary email — review reminder (actual per-post review continues via daily preview mail)
+    try {
+      const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
+      const km: Record<string, string> = {};
+      for (const k of (keys || [])) km[k.key_name] = k.key_value;
+      const to = km.NOTIFICATION_EMAIL || process.env.NOTIFICATION_EMAIL;
+      const gmailUser = km.GMAIL_USER || process.env.GMAIL_USER;
+      const gmailPass = km.GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASSWORD;
+      if (to && gmailUser && gmailPass) {
+        const nodemailer = (await import('nodemailer')).default;
+        const t = nodemailer.createTransport({ service: 'gmail', auth: { user: gmailUser, pass: gmailPass } });
+        await t.sendMail({
+          from: gmailUser, to,
+          subject: `📅 נוצרו ${created} פוסטים ל-${target.name} — חודש ${targetMonth}/${targetYear}`,
+          html: `<div style="direction:rtl;font-family:Arial;padding:20px;max-width:600px">
+            <h2>לוח תוכן חודשי חדש: ${target.name}</h2>
+            <p>${created} פוסטים נוצרו אוטומטית לחודש ${targetMonth}/${targetYear} וקיבלו שיבוץ בלוח.</p>
+            <p>תמונות ייווצרו אוטומטית בימים הקרובים. לפני כל פרסום תקבל מייל תצוגה מקדימה עם אפשרות דילוג — כרגיל.</p>
+            <a href="${PROD_URL}" style="display:inline-block;background:linear-gradient(135deg,#8B5CF6,#3B82F6);color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600;font-size:13px;">סקור בדשבורד ←</a>
+          </div>`,
+        });
+      }
+    } catch {}
+
+    res.json({ business: target.name, created, month: `${targetMonth}/${targetYear}`, counts });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// CRON — Media fill: generates images for up to 4 unpublished posts
+// that lack media. Runs daily; drains the backlog created by the
+// monthly-calendar cron within a few days, well before publish dates.
+// ══════════════════════════════════════════════════════════════
+app.get('/api/cron/media-fill', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { data: posts } = await sb
+      .from('content_posts')
+      .select('id, business_name, scheduled_at')
+      .is('published_at', null)
+      .is('image_url', null)
+      .is('video_url', null)
+      .neq('status', 'skipped')
+      .not('scheduled_at', 'is', null)
+      .order('scheduled_at', { ascending: true })
+      .limit(4);
+    if (!posts?.length) return res.json({ message: 'no posts need media' });
+
+    const results: any[] = [];
+    for (const p of posts) {
+      try {
+        const r = await fetch(`${PROD_URL}/api/posts/${p.id}/generate-media?variants=1`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        });
+        const d = await r.json() as any;
+        results.push({ id: p.id, business: p.business_name, ok: !!d.ok, error: d.error || null });
+      } catch (e: any) {
+        results.push({ id: p.id, business: p.business_name, ok: false, error: e.message });
+      }
+    }
+    res.json({ filled: results.filter(r => r.ok).length, results });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Cron: send daily preview email of tomorrow's scheduled posts.
 // Runs at 18:00 UTC = 21:00 IL (summer) / 20:00 IL (winter) — evening review time.
 app.get('/api/cron/preview', async (req: any, res) => {

@@ -67,6 +67,14 @@
     {
       "path": "/api/cron/dm-replies",
       "schedule": "0 20 * * *"
+    },
+    {
+      "path": "/api/cron/monthly-calendar",
+      "schedule": "30 4 25-31 * *"
+    },
+    {
+      "path": "/api/cron/media-fill",
+      "schedule": "0 3 * * *"
     }
   ],
   "framework": "vite",
