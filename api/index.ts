@@ -3408,18 +3408,21 @@ app.get('/api/cron/monthly-calendar', async (req: any, res) => {
         .gte('scheduled_at', monthStart)
         .lt('scheduled_at', monthEnd);
       counts[b.name] = count ?? 0;
-      if (!target && (count ?? 0) < 6) target = b;
+      // Aim for ~13 posts/month (covers every Sun/Tue/Thu slot so there's no
+      // end-of-month gap). Top up any business under 12 scheduled for next month.
+      if (!target && (count ?? 0) < 12) target = b;
     }
     if (!target) return res.json({ message: `all businesses have ${targetMonth}/${targetYear} content`, counts });
 
     // Generate + approve via self-fetch (reuses the full pipeline incl. short links)
     const genR = await fetch(`${PROD_URL}/api/calendars/generate`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ business_id: target.id, year: targetYear, month: targetMonth, posts_count: 14 }),
+      body: JSON.stringify({ business_id: target.id, year: targetYear, month: targetMonth, posts_count: 16 }),
     });
     const gen = await genR.json() as any;
     if (gen.error) return res.json({ business: target.name, error: gen.error });
-    const briefs = (gen.posts || []).slice(0, 8);
+    // Keep enough to fill the whole month's schedule slots (~13), not just half of it.
+    const briefs = (gen.posts || []).slice(0, 14);
     const appR = await fetch(`${PROD_URL}/api/calendars/approve`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ business_id: target.id, posts: briefs }),
