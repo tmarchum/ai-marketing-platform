@@ -1,0 +1,21 @@
+{
+  "name": "AI Marketing Platform",
+  "short_name": "MarketingAI",
+  "description": "פלטפורמת שיווק AI לניהול תוכן ברשתות חברתיות",
+  "start_url": "/?pwa=1",
+  "display": "standalone",
+  "background_color": "#f5f6fa",
+  "theme_color": "#6C5CE7",
+  "orientation": "portrait-primary",
+  "lang": "he",
+  "dir": "rtl",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "תוכן חדש",  "url": "/?page=content",   "description": "יצירת פוסט חדש" },
+    { "name": "לוח תזמון", "url": "/?page=schedule",  "description": "לוח פרסומים" },
+    { "name": "ניתוח",     "url": "/?page=analytics", "description": "ביצועים ואנליטיקס" }
+  ],
+  "categories": ["business", "productivity"]
+}
