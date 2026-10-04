@@ -1768,6 +1768,19 @@ ${eventsText}${trendsText}
 - 💡 תובנה/מחשבה
 - 🌟 הישג/מעמד חדש
 
+🔀 חובה — גיוון לפי שירות וקהל יעד (הכי חשוב!):
+לעסק הזה יש מנעד שירותים וקהלים שונים (ראה את בסיס הידע ואת קהל היעד למעלה).
+- כל פוסט חייב להתמקד ב-**שירות אחר או קהל יעד אחר**. אל תחזור על אותו שירות פעמיים ברצף.
+- עבור על כל השירותים/הקהלים שמופיעים בבסיס הידע ופרוס אותם על פני החודש — כולל שירותים נישתיים ופחות מוכרים, לא רק ה"דגל".
+- אם יש מסלולי שירות שונים עם מחירים שונים — הקדש פוסטים נפרדים לכל מסלול, ואל תערבב ביניהם באותו פוסט.
+- שדה "service" של כל פוסט חייב לציין במדויק באיזה שירות/קהל הוא עוסק.
+- ❌ אסור: 8 פוסטים שכולם על אותו שירות בניסוח אחר.
+- ✅ נדרש: כל פוסט פותח חלון לפינה אחרת של העסק.
+
+🎯 דיוק עובדתי — קריטי:
+- כל מחיר, מידה, שם מוצר ותנאי חייבים להילקח **מילה במילה** מבסיס הידע. אל תמציא ואל תערבב פרטים בין שירותים שונים.
+- אם בסיס הידע כולל רשימת "איסורים" — ציית לה בדייקנות.
+
 לכל פוסט בחר media_type בהתאם לנושא:
 - "video" — לכ-20-30% מהפוסטים, במיוחד ל: אחורי הקלעים, תהליך, דמו, אירועים חיים, תנועה/אקשן. סרטונים קצרים 8 שניות, אנכיים.
 - "image" — ברירת מחדל, לתוכן סטטי (ציטוטים, הצגה, עדויות, חגים, טיפים ויזואליים).
@@ -1778,9 +1791,9 @@ ${eventsText}${trendsText}
 - כל visual_concept חייב להזכיר: מי (אנשים אמיתיים), איפה (מקום מזוהה), מה עושים (פעולה קונקרטית), תאורה/mood.
 
 החזר JSON בלבד, ללא שום טקסט לפני או אחרי. כל שדה — קצר וענייני (מקסימום 120 תווים לשדה):
-{"posts":[{"day":1,"theme":"נושא קצר","type":"תוכן חינוכי","media_type":"image","caption_short":"משפט פתיחה","hook":"הוק","visual_concept":"סצנה קונקרטית: מי, איפה, מה עושים"}, ...]}
+{"posts":[{"day":1,"theme":"נושא קצר","service":"השירות/קהל היעד הספציפי של הפוסט","landing_path":"/ServicePage או ריק","type":"תוכן חינוכי","media_type":"image","caption_short":"משפט פתיחה","hook":"הוק","visual_concept":"סצנה קונקרטית: מי, איפה, מה עושים"}, ...]}
 
-חוקים: day — מספר יום בחודש (1-28), מרווחים הגיוניים, ימי ב׳-ה׳ עדיפים. אין שדות נוספים.`;
+חוקים: day — מספר יום בחודש (1-30), פרוס על פני כל החודש כולל סופו, מרווחים הגיוניים. אין שדות נוספים.`;
 
     // Force Claude to return structured JSON via tool_use — no string parsing needed
     const calendarSchema = {
@@ -1792,15 +1805,17 @@ ${eventsText}${trendsText}
           items: {
             type: 'object',
             properties: {
-              day: { type: 'integer', minimum: 1, maximum: 28, description: 'יום בחודש (1-28)' },
+              day: { type: 'integer', minimum: 1, maximum: 30, description: 'יום בחודש (1-30) — לפרוס על כל החודש כולל סופו' },
               theme: { type: 'string', maxLength: 120, description: 'נושא קצר של הפוסט' },
+              service: { type: 'string', maxLength: 120, description: 'השירות או קהל היעד הספציפי שהפוסט עוסק בו — חייב להיות שונה בין פוסטים' },
+              landing_path: { type: 'string', maxLength: 60, description: 'נתיב יחסי לעמוד הנחיתה המתאים באתר, אם קיים ברשימת עמודי הנחיתה בבסיס הידע (לדוגמה /EquipmentRental). אם אין התאמה — השאר ריק' },
               type: { type: 'string', maxLength: 120, description: 'סוג הפוסט (תוכן חינוכי, עדות, אירוע וכו)' },
               media_type: { type: 'string', enum: ['image', 'video'], description: 'image לרוב, video ל-20-30% מהפוסטים' },
               caption_short: { type: 'string', maxLength: 200, description: 'משפט פתיחה או כותרת' },
               hook: { type: 'string', maxLength: 150, description: 'הוק — שורה שמושכת תשומת לב' },
               visual_concept: { type: 'string', maxLength: 300, description: 'סצנה קונקרטית: מי, איפה, מה עושים, תאורה' },
             },
-            required: ['day', 'theme', 'type', 'media_type', 'caption_short', 'hook', 'visual_concept'],
+            required: ['day', 'theme', 'service', 'type', 'media_type', 'caption_short', 'hook', 'visual_concept'],
           },
         },
       },
@@ -1971,6 +1986,7 @@ app.post('/api/calendars/approve', async (req: any, res) => {
 
 TOPIC (must stay faithful to this!): ${cp.theme}
 POST TYPE: ${cp.type}
+השירות / קהל היעד שהפוסט הזה עוסק בו (התמקד רק בו, אל תגלוש לשירותים אחרים): ${cp.service || ''}
 HOOK (use as inspiration, feel free to rephrase): "${cp.hook}"
 ANGLE/POINT: ${cp.angle || ''}
 GOAL: ${cp.rationale || ''}
@@ -2016,7 +2032,11 @@ Return ONLY JSON: {"content": "full post text in Hebrew", "hashtags": ["#tag1", 
       if (biz.url && !/https?:\/\//i.test(content)) {
         try {
           const targetUrl = /^https?:\/\//i.test(biz.url) ? biz.url : `https://${biz.url}`;
-          const displayUrl = targetUrl.replace(/^https?:\/\//i, '').replace(/\/$/, '');
+          let displayUrl = targetUrl.replace(/^https?:\/\//i, '').replace(/\/$/, '');
+          // Deep-link to the specific service landing page when the calendar picked one.
+          // Only accept a simple relative path so a hallucinated full URL can't leak in.
+          const path = String(cp.landing_path || '').trim();
+          if (/^\/[A-Za-z0-9\-_/]{1,60}$/.test(path)) displayUrl += path;
           content += `\n\n👈 לכל הפרטים: ${displayUrl}`;
         } catch {}
       }
@@ -2043,6 +2063,9 @@ Return ONLY JSON: {"content": "full post text in Hebrew", "hashtags": ["#tag1", 
             // visual_concept = rich Hebrew scene description (who/where/what/lighting). The
             // image generator reads this so it draws a quiz scene, not generic professionals.
             visual_concept: cp.visual_concept || null,
+            // service = which service line / audience this post covers. Stored so we can
+            // audit variety across the month and keep images on-topic.
+            service: cp.service || null,
           }
         },
       };
