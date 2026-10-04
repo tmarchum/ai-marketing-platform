@@ -1995,6 +1995,14 @@ GOAL: ${cp.rationale || ''}
 - Changing the topic. If topic is "Independence Day" — post MUST be about Independence Day.
 - Inventing facts/prices/services not in the knowledge base above.
 - First person singular ("אני").
+- ⛔ INVENTED TESTIMONIALS — the most damaging failure. Never write a quoted customer
+  story, a named customer, a specific city, or a before/after number pair unless that
+  exact quote or number appears verbatim in the knowledge base. Writing
+  "מצאתי טיסה ב-₪1,890 ומצאו לי ב-₪1,410" when those numbers are not in the KB is
+  fabricating evidence about a real business. If you want a story angle and the KB has
+  no real story, write about the PROCESS or the GUARANTEE instead — never invent one.
+- Any price, measurement, count or statistic that does not appear verbatim in the
+  knowledge base. When the KB states a price with "+ מע\"מ", always carry the "+ מע\"מ".
 
 ✅ REQUIRED:
 - First person plural ("אנחנו") — see guidelines above.
