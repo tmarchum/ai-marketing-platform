@@ -3283,24 +3283,35 @@ app.get('/api/cron/publish', async (req: any, res) => {
             );
             const containerD = await containerR.json();
             if (!containerD.error && containerD.id) {
-              // For videos wait for container to be ready (polling)
-              if (isVideo) {
-                const deadline = Date.now() + 120_000;
-                while (Date.now() < deadline) {
-                  await new Promise(rs => setTimeout(rs, 3000));
-                  const statusR = await fetch(`https://graph.facebook.com/v25.0/${containerD.id}?fields=status_code&access_token=${igToken}`);
-                  const statusD = await statusR.json();
-                  if (statusD.status_code === 'FINISHED') break;
-                  if (statusD.status_code === 'ERROR') break;
+              // Wait for the container to be ready. Images used to be published
+              // immediately, which is why IG silently dropped roughly half of
+              // them: Meta still has to fetch the image off Supabase, and
+              // media_publish on a container that is still IN_PROGRESS fails.
+              const deadline = Date.now() + (isVideo ? 120_000 : 45_000);
+              let status = '';
+              while (Date.now() < deadline) {
+                const statusR = await fetch(`https://graph.facebook.com/v25.0/${containerD.id}?fields=status_code&access_token=${igToken}`);
+                const statusD = await statusR.json();
+                status = statusD.status_code || '';
+                if (status === 'FINISHED' || status === 'ERROR' || status === 'PUBLISHED') break;
+                await new Promise(rs => setTimeout(rs, 3000));
+              }
+              if (status === 'ERROR') {
+                r.ig_error = 'container status ERROR';
+              } else {
+                // Retry media_publish: it can still come back with a transient
+                // "Media ID is not available" right after FINISHED.
+                for (let attempt = 1; attempt <= 3 && !igPostId; attempt++) {
+                  const publishR = await fetch(
+                    `https://graph.facebook.com/v25.0/${igAcct}/media_publish`,
+                    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ creation_id: containerD.id, access_token: igToken }) }
+                  );
+                  const publishD = await publishR.json();
+                  if (!publishD.error && publishD.id) { igPostId = publishD.id; break; }
+                  r.ig_error = `${publishD.error?.message || 'publish failed'} (attempt ${attempt}/3)`;
+                  if (attempt < 3) await new Promise(rs => setTimeout(rs, 5000));
                 }
               }
-              const publishR = await fetch(
-                `https://graph.facebook.com/v25.0/${igAcct}/media_publish`,
-                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ creation_id: containerD.id, access_token: igToken }) }
-              );
-              const publishD = await publishR.json();
-              if (!publishD.error && publishD.id) igPostId = publishD.id;
-              else r.ig_error = publishD.error?.message || 'publish failed';
             } else {
               r.ig_error = containerD.error?.message || 'container failed';
             }
@@ -3311,7 +3322,12 @@ app.get('/api/cron/publish', async (req: any, res) => {
           status: 'published',
           fb_post_id: fbPostId,
           published_at: now,
-          performance: { ...(post.performance || {}), ig_post_id: igPostId },
+          performance: {
+            ...(post.performance || {}),
+            ig_post_id: igPostId,
+            ig_error: igPostId ? null : (r.ig_error || (igTokens?.META_IG_ACCOUNT_ID ? null : 'instagram not connected')),
+            ig_attempted_at: igTokens?.META_IG_ACCOUNT_ID && mediaUrl ? now : null,
+          },
         }).eq('id', post.id);
         r.ok = true;
         r.fb_post_id = fbPostId;
