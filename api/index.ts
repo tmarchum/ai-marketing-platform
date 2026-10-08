@@ -1665,11 +1665,13 @@ const APPROX_HOLIDAYS = new Set(['יום הזיכרון', 'יום העצמאות
 
 // How far ahead a holiday post is still useful. A bookable event needs weeks of
 // lead time; a greeting is worthless the day after.
+// Generous for the bookable holidays: schools and municipalities close dates
+// months out, so Chanukah copy in early October is early-bird, not premature.
 const HOLIDAY_LEAD_DAYS: Record<string, number> = {
-  'פסח': 35, 'סוכות': 28, 'ראש השנה': 28, 'חנוכה': 30, 'שבועות': 21,
-  'פורים': 21, 'יום העצמאות': 21, 'ל"ג בעומר': 14, 'ט"ו בשבט': 14,
-  'שמחת תורה': 14, 'יום כיפור': 10, 'יום ירושלים': 10, 'ט"ו באב': 10,
-  'יום הזיכרון': 10, 'יום הזיכרון לשואה ולגבורה': 10, 'תשעה באב': 7,
+  'פסח': 70, 'חנוכה': 60, 'סוכות': 50, 'ראש השנה': 50, 'פורים': 45,
+  'שבועות': 35, 'יום העצמאות': 35, 'ל"ג בעומר': 21, 'ט"ו בשבט': 21,
+  'שמחת תורה': 21, 'יום כיפור': 14, 'יום ירושלים': 14, 'ט"ו באב': 14,
+  'יום הזיכרון': 14, 'יום הזיכרון לשואה ולגבורה': 14, 'תשעה באב': 7,
 };
 
 type HolidaySpan = { name: string; from: string; to: string; approx: boolean };
