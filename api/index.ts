@@ -1608,6 +1608,217 @@ app.get('/api/cron/metrics', async (req: any, res) => {
 // ══════════════════════════════════════════════════════════════
 
 // Israeli holidays + cultural events by month (Gregorian dates — approx for 2025-2026)
+// ══════════════════════════════════════════════════════════════
+// HEBREW CALENDAR — exact, computed, never guessed.
+//
+// Every holiday post used to go out AFTER its holiday: Rosh Hashana (12.9)
+// published on 20.9, Yom Kippur (21.9) on 1.10, Sukkot (ended 2.10) on 8.10.
+// The cause was ISRAELI_EVENTS below — a fixed Gregorian table that literally
+// told the model "Purim (varies) — March 20". Intl's hebrew calendar gives the
+// real date for any year, so derive it instead of maintaining a table.
+// ══════════════════════════════════════════════════════════════
+
+const HEB_FMT = new Intl.DateTimeFormat('en-u-ca-hebrew', {
+  day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC',
+});
+
+function hebrewParts(d: Date): { day: number; month: string; year: string } {
+  const parts = HEB_FMT.formatToParts(d);
+  const get = (t: string) => parts.find(x => x.type === t)?.value || '';
+  return { day: parseInt(get('day'), 10), month: get('month'), year: get('year') };
+}
+
+// Hebrew month/day -> holiday name. Yom HaZikaron and Yom HaAtzmaut shift when
+// they would land on a weekend, so they are marked approximate downstream.
+function holidayOn(d: Date): string | null {
+  const { day, month } = hebrewParts(d);
+  if (month === 'Tishri') {
+    if (day === 1 || day === 2) return 'ראש השנה';
+    if (day === 10) return 'יום כיפור';
+    if (day >= 15 && day <= 21) return 'סוכות';
+    if (day === 22 || day === 23) return 'שמחת תורה';
+  }
+  if (month === 'Kislev' && day >= 25) return 'חנוכה';
+  if (month === 'Tevet' && day <= 3) return 'חנוכה';
+  if (month === 'Shevat' && day === 15) return 'ט"ו בשבט';
+  // In a leap year Intl reports "Adar I" / "Adar II" and Purim falls in Adar II.
+  if ((month === 'Adar' || month === 'Adar II') && day === 14) return 'פורים';
+  if (month === 'Nisan') {
+    if (day >= 15 && day <= 21) return 'פסח';
+    if (day === 27) return 'יום הזיכרון לשואה ולגבורה';
+  }
+  if (month === 'Iyar') {
+    if (day === 4) return 'יום הזיכרון';
+    if (day === 5) return 'יום העצמאות';
+    if (day === 18) return 'ל"ג בעומר';
+    if (day === 28) return 'יום ירושלים';
+  }
+  if (month === 'Sivan' && day === 6) return 'שבועות';
+  if (month === 'Av') {
+    if (day === 9) return 'תשעה באב';
+    if (day === 15) return 'ט"ו באב';
+  }
+  return null;
+}
+
+const APPROX_HOLIDAYS = new Set(['יום הזיכרון', 'יום העצמאות', 'יום הזיכרון לשואה ולגבורה']);
+
+// How far ahead a holiday post is still useful. A bookable event needs weeks of
+// lead time; a greeting is worthless the day after.
+const HOLIDAY_LEAD_DAYS: Record<string, number> = {
+  'פסח': 35, 'סוכות': 28, 'ראש השנה': 28, 'חנוכה': 30, 'שבועות': 21,
+  'פורים': 21, 'יום העצמאות': 21, 'ל"ג בעומר': 14, 'ט"ו בשבט': 14,
+  'שמחת תורה': 14, 'יום כיפור': 10, 'יום ירושלים': 10, 'ט"ו באב': 10,
+  'יום הזיכרון': 10, 'יום הזיכרון לשואה ולגבורה': 10, 'תשעה באב': 7,
+};
+
+type HolidaySpan = { name: string; from: string; to: string; approx: boolean };
+
+const DAY_MS = 86_400_000;
+const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+const atNoonUTC = (iso: string) => new Date(iso.slice(0, 10) + 'T12:00:00Z');
+
+// Every holiday span touching [fromISO - lookbackDays, fromISO + aheadDays].
+function holidaySpans(fromISO: string, lookbackDays: number, aheadDays: number): HolidaySpan[] {
+  const base = atNoonUTC(fromISO).getTime();
+  const spans: HolidaySpan[] = [];
+  for (let i = -lookbackDays; i <= aheadDays; i++) {
+    const d = new Date(base + i * DAY_MS);
+    const name = holidayOn(d);
+    if (!name) continue;
+    const iso = isoDay(d);
+    const last = spans[spans.length - 1];
+    if (last && last.name === name && atNoonUTC(last.to).getTime() + DAY_MS >= d.getTime()) {
+      last.to = iso;
+    } else {
+      spans.push({ name, from: iso, to: iso, approx: APPROX_HOLIDAYS.has(name) });
+    }
+  }
+  return spans;
+}
+
+const heDate = (iso: string) => {
+  const [y, m, d] = iso.split('-');
+  return `${Number(d)}.${Number(m)}.${y.slice(2)}`;
+};
+
+const daysBetween = (fromISO: string, toISO: string) =>
+  Math.round((atNoonUTC(toISO).getTime() - atNoonUTC(fromISO).getTime()) / DAY_MS);
+
+// The calendar block handed to the content planner. States what already passed
+// as emphatically as what is coming, because the failure mode was always
+// writing about a holiday that was already over.
+function hebrewCalendarBrief(todayISO: string, windowFromISO: string, windowToISO: string): string {
+  const { day, month, year } = hebrewParts(atNoonUTC(todayISO));
+  const spans = holidaySpans(todayISO, 120, 200);
+  const passed = spans.filter(s => s.to < todayISO).slice(-5);
+  const ahead = spans.filter(s => s.to >= todayISO);
+  const inWindow = ahead.filter(s => s.from <= windowToISO);
+  const L: string[] = [];
+
+  L.push('📅 לוח השנה העברי — נתון מחושב מדויק. אל תנחש תאריכי חגים ואל תסתמך על זיכרון.');
+  L.push(`היום: ${todayISO} (${day} ${month} ${year}).`);
+  L.push(`חלון הפרסום של הלוח הזה: ${windowFromISO} עד ${windowToISO}.`);
+
+  if (passed.length) {
+    L.push('');
+    L.push('⛔ חגים שכבר עברו — אסור בשום אופן לכתוב עליהם כאירוע עתידי או קרוב:');
+    for (const s of passed) {
+      const when = s.from === s.to ? heDate(s.from) : `${heDate(s.from)}-${heDate(s.to)}`;
+      L.push(`   • ${s.name} — ${when} (עבר)`);
+    }
+  }
+
+  if (ahead.length) {
+    L.push('');
+    L.push('✅ חגים שלפנינו:');
+    for (const s of ahead.slice(0, 6)) {
+      const away = daysBetween(todayISO, s.from);
+      const lead = HOLIDAY_LEAD_DAYS[s.name] ?? 14;
+      const verdict = s.from <= windowToISO && s.from >= windowFromISO
+        ? 'בתוך חלון הלוח — מותר לכתוב עליו ישירות'
+        : (away <= lead
+          ? `מחוץ לחלון אבל בתוך חלון ההזמנה (${lead} יום מראש) — כן לקדם סגירת תאריכים מוקדמת`
+          : 'רחוק מדי — לא לגעת');
+      const when = s.from === s.to ? heDate(s.from) : `${heDate(s.from)}-${heDate(s.to)}`;
+      L.push(`   • ${s.name} — ${when}${s.approx ? ' (תאריך מקורב)' : ''}, בעוד ${away} יום. ${verdict}`);
+    }
+  }
+
+  if (!inWindow.length) {
+    L.push('');
+    L.push('⚠️ אין אף חג בתוך חלון הפרסום עצמו. אל תמציא עוגן חגיגי. במקום זה:');
+    L.push('   - אפשר לקדם הזמנה מוקדמת לחג הבא שבתוך חלון ההזמנה למעלה ("סוגרים תאריכים ל...").');
+    L.push('   - או עוגנים אמיתיים אחרים: קצב שנת הלימודים, תחילת/סוף חודש, עונה, חופשה.');
+  }
+
+  L.push('');
+  L.push('🔒 חוקי ברזל:');
+  L.push('   1. פוסט שמקדם שירות לחג חייב להתפרסם לפני תחילת החג, בתוך חלון ההזמנה שלו.');
+  L.push('   2. אסור להזכיר חג שעבר בלשון הווה/עתיד. "מחפשים פעילות לסוכות?" ב-8.10 — פסול.');
+  L.push('   3. ברכת חג נשלחת לפני החג או ביומו הראשון, לא אחריו.');
+  L.push('   4. אם אין חג רלוונטי — עדיף פוסט בלי חג מאשר פוסט על חג לא נכון.');
+  return L.join('\n');
+}
+
+// Wording that pins copy to a specific holiday. A bare holiday name is not
+// enough: "בסוכה הקהילתית" never says "סוכות", and "הקפות" never says
+// "שמחת תורה", yet both date the post just as precisely.
+const HOLIDAY_ALIASES: Record<string, string[]> = {
+  'סוכות': ['סוכות', 'סוכה', 'חג האסיף'],
+  'שמחת תורה': ['שמחת תורה', 'שמיני עצרת', 'הקפות'],
+  'ראש השנה': ['ראש השנה', 'שנה טובה', 'ליל הסדר של ראש השנה'],
+  'יום כיפור': ['יום כיפור', 'יום הכיפורים', 'גמר חתימה טובה', 'צום כיפור'],
+  'חנוכה': ['חנוכה', 'חנוכיה', 'חנוכייה', 'סופגניות'],
+  'פסח': ['פסח', 'ליל הסדר', 'אפיקומן', 'חג החירות'],
+  'פורים': ['פורים', 'משלוח מנות', 'מגילת אסתר'],
+  'שבועות': ['חג השבועות'],  // "שבועות" alone is just the word for "weeks"
+  'תשעה באב': ['תשעה באב', "ט'באב"],
+};
+
+// Hebrew glues prepositions onto the next word (לסוכות, בסוכה, ומהסוכות), so
+// allow up to two prefix letters while still refusing a match that sits inside
+// a longer word — which is what kept "סיפורים" from reading as "פורים".
+const HEB_LETTER = '\\u05d0-\\u05ea';
+function mentionsTerm(content: string, term: string): boolean {
+  const esc = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<![${HEB_LETTER}])[בהוכלמשו]{0,2}${esc}(?![${HEB_LETTER}])`).test(content);
+}
+
+// Holidays referenced in copy that have just been missed.
+//
+// Naive "has this holiday ended?" is wrong for an annual event: last year's
+// Chanukah has always ended, so "סוגרים תאריכים לחנוכה" would be flagged while
+// it is in fact exactly the early-booking copy we want. A mention is only stale
+// when the holiday wrapped up recently AND the next one is too far off for the
+// copy to plausibly be about it.
+const STALE_WINDOW_DAYS = 45;
+
+function staleHolidayRefs(content: string, todayISO: string): string[] {
+  const spans = holidaySpans(todayISO, 400, 400);
+  const names = [...new Set(spans.map(s => s.name))];
+  const stale: string[] = [];
+
+  for (const name of names) {
+    const terms = HOLIDAY_ALIASES[name] || [name];
+    if (!terms.some(t => mentionsTerm(content, t))) continue;
+
+    const mine = spans.filter(s => s.name === name);
+    const lastEnded = mine.filter(s => s.to < todayISO).map(s => s.to).sort().pop();
+    const nextStarts = mine.filter(s => s.from >= todayISO).map(s => s.from).sort()[0];
+    if (!lastEnded) continue;
+
+    const sinceEnd = daysBetween(lastEnded, todayISO);
+    const untilNext = nextStarts ? daysBetween(todayISO, nextStarts) : Infinity;
+    const lead = HOLIDAY_LEAD_DAYS[name] ?? 14;
+
+    if (sinceEnd <= STALE_WINDOW_DAYS && untilNext > lead) {
+      stale.push(`${name} (הסתיים ${lastEnded}, לפני ${sinceEnd} יום)`);
+    }
+  }
+  return stale;
+}
+
 const ISRAELI_EVENTS: Record<number, { date: string; name: string; vibe: string }[]> = {
   1: [
     { date: '01-01', name: 'ראש השנה האזרחית', vibe: 'התחלה חדשה, סיכום, החלטות' },
@@ -1716,8 +1927,22 @@ app.post('/api/calendars/generate', async (req: any, res) => {
       .order('created_at', { ascending: false })
       .limit(20);
 
-    // Get events for the month
-    const events = ISRAELI_EVENTS[targetMonth] || [];
+    // Get events for the month. The hardcoded table keeps only the civil dates
+    // (New Year, Valentine's, Women's Day, Halloween); every Hebrew-calendar
+    // entry in it was an approximation marked "(משתנה)"/"(בערך)" and is dropped
+    // in favour of the exact computed dates below.
+    const events = (ISRAELI_EVENTS[targetMonth] || [])
+      .filter(e => !/משתנה|בערך/.test(e.name));
+
+    // Exact Hebrew-calendar brief for the slots this calendar will actually fill.
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const windowFrom = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
+    const windowTo = new Date(Date.UTC(targetYear, targetMonth, 0)).toISOString().slice(0, 10);
+    const calendarBrief = hebrewCalendarBrief(
+      todayISO,
+      windowFrom > todayISO ? windowFrom : todayISO,
+      windowTo,
+    );
 
     // Build prompt
     const viContext = biz.visual_identity ? `\nזהות ויזואלית: ${biz.visual_identity.slice(0, 500)}` : '';
@@ -1755,7 +1980,9 @@ app.post('/api/calendars/generate', async (req: any, res) => {
 פוסטים אחרונים (אל תחזור על אותו נושא!):
 ${recentTitles}
 
-אירועים בחודש ${targetMonth}:
+${calendarBrief}
+
+אירועים לועזיים בחודש ${targetMonth}:
 ${eventsText}${trendsText}
 
 צור לוח תוכן חודשי עם ${posts_count} פוסטים מגוונים. כלול סוגים שונים:
@@ -3272,6 +3499,19 @@ app.get('/api/cron/publish', async (req: any, res) => {
     for (const post of due) {
       const r: any = { id: post.id, business: post.business_name };
       try {
+        // Safety net for the failure that produced Sukkot copy on 8.10: refuse
+        // to publish anything that talks about a holiday which already ended.
+        const stale = staleHolidayRefs(post.content || '', now.slice(0, 10));
+        if (stale.length) {
+          await sb.from('content_posts').update({
+            status: 'skipped',
+            performance: { ...(post.performance || {}), skip_reason: `חג שעבר: ${stale.join(', ')}` },
+          }).eq('id', post.id);
+          r.skipped = stale.join(', ');
+          results.push(r);
+          continue;
+        }
+
         const biz = bizByName[post.business_name];
         const fbTokens = biz?.social?.facebook?.tokens;
         if (!fbTokens?.META_PAGE_ID || !fbTokens?.META_ACCESS_TOKEN) {
@@ -3408,7 +3648,7 @@ app.get('/api/cron/publish', async (req: any, res) => {
 // Posts whose copy is tied to a date or a holiday are marked and left alone.
 // ══════════════════════════════════════════════════════════════
 
-const IG_BACKFILL_DATE_BOUND = /(החודש|השבוע|מחר|היום|בשבוע הקרוב|בימים הקרובים|סוף השבוע|נסגרת|נסגר ב|מסתיים|מוגבל בזמן|עד יום|הקרוב|ינואר|פברואר|מרץ|אפריל|מאי|יוני|יולי|אוגוסט|ספטמבר|אוקטובר|נובמבר|דצמבר|סוכות|פסח|חנוכה|ראש השנה|יום העצמאות|שבועות|פורים|יום כיפור|חופש הגדול|\d{1,2}[./]\d{1,2})/;
+const IG_BACKFILL_DATE_BOUND = /(החודש|השבוע הקרוב|מחר|בשבוע הקרוב|בימים הקרובים|סוף השבוע|ההרשמה נסגרת|נסגרת ב|מסתיים ב|מוגבל בזמן|עד יום|\d{1,2}[./]\d{1,2})/;
 
 app.get('/api/cron/ig-backfill', async (req: any, res) => {
   const sb = getSupabase();
@@ -3448,7 +3688,9 @@ app.get('/api/cron/ig-backfill', async (req: any, res) => {
       if ((counts[name] || 0) >= perBusiness) continue;
 
       const perf = post.performance || {};
-      if (IG_BACKFILL_DATE_BOUND.test(post.content || '')) {
+      const todayISO = new Date().toISOString().slice(0, 10);
+      if (staleHolidayRefs(post.content || '', todayISO).length ||
+          IG_BACKFILL_DATE_BOUND.test(post.content || '')) {
         await sb.from('content_posts')
           .update({ performance: { ...perf, ig_backfill_skip: 'date-dependent' } })
           .eq('id', post.id);
