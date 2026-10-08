@@ -3180,6 +3180,72 @@ app.get('/api/posts/pending-media', async (req: any, res) => {
 // CRON — Auto-publish scheduled posts
 // ══════════════════════════════════════════════════════════════
 
+// Publish one post to Instagram. Shared by the scheduled-publish cron and the
+// backfill cron so both get the container-polling + retry behaviour.
+async function publishToInstagram(
+  biz: any, post: any, mediaUrl: string, isVideo: boolean
+): Promise<{ id: string | null; error: string | null }> {
+  const igTokens = biz?.social?.instagram?.tokens;
+  if (!igTokens?.META_IG_ACCOUNT_ID) return { id: null, error: 'instagram not connected' };
+  if (!mediaUrl) return { id: null, error: 'no media' };
+  const igAcct = igTokens.META_IG_ACCOUNT_ID;
+  const igToken = igTokens.META_ACCESS_TOKEN;
+  try {
+    // #15: IG uses its own adapted variant if available.
+    const igVariant = post.performance?.platform_variants?.instagram;
+    const igContent = igVariant?.content || post.content || '';
+    const igTags = (igVariant?.hashtags?.length ? igVariant.hashtags : (post.hashtags || []))
+      .map((h: string) => h.startsWith('#') ? h : `#${h}`).join(' ');
+    const igCaption = igContent + (igTags ? '\n\n' + igTags : '');
+
+    // Instagram requires 2-step: create container, then publish.
+    const containerBody: any = { caption: igCaption, access_token: igToken };
+    if (isVideo) { containerBody.media_type = 'REELS'; containerBody.video_url = mediaUrl; }
+    else { containerBody.image_url = mediaUrl; }
+
+    const containerR = await fetch(
+      `https://graph.facebook.com/v25.0/${igAcct}/media`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(containerBody) }
+    );
+    const containerD = await containerR.json();
+    if (containerD.error || !containerD.id) {
+      return { id: null, error: containerD.error?.message || 'container failed' };
+    }
+
+    // Wait for the container to be ready. Images used to be published
+    // immediately, which is why IG silently dropped roughly half of them:
+    // Meta still has to fetch the image off Supabase, and media_publish on a
+    // container that is still IN_PROGRESS fails.
+    const deadline = Date.now() + (isVideo ? 120_000 : 45_000);
+    let status = '';
+    while (Date.now() < deadline) {
+      const statusR = await fetch(`https://graph.facebook.com/v25.0/${containerD.id}?fields=status_code&access_token=${igToken}`);
+      const statusD = await statusR.json();
+      status = statusD.status_code || '';
+      if (status === 'FINISHED' || status === 'ERROR' || status === 'PUBLISHED') break;
+      await new Promise(rs => setTimeout(rs, 3000));
+    }
+    if (status === 'ERROR') return { id: null, error: 'container status ERROR' };
+
+    // Retry media_publish: it can still come back with a transient
+    // "Media ID is not available" right after FINISHED.
+    let lastErr = 'publish failed';
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const publishR = await fetch(
+        `https://graph.facebook.com/v25.0/${igAcct}/media_publish`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ creation_id: containerD.id, access_token: igToken }) }
+      );
+      const publishD = await publishR.json();
+      if (!publishD.error && publishD.id) return { id: publishD.id, error: null };
+      lastErr = `${publishD.error?.message || 'publish failed'} (attempt ${attempt}/3)`;
+      if (attempt < 3) await new Promise(rs => setTimeout(rs, 5000));
+    }
+    return { id: null, error: lastErr };
+  } catch (e: any) {
+    return { id: null, error: e.message };
+  }
+}
+
 app.get('/api/cron/publish', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
@@ -3257,65 +3323,9 @@ app.get('/api/cron/publish', async (req: any, res) => {
         let igPostId: string | null = null;
         const igTokens = biz?.social?.instagram?.tokens;
         if (igTokens?.META_IG_ACCOUNT_ID && mediaUrl) {
-          try {
-            const igAcct = igTokens.META_IG_ACCOUNT_ID;
-            const igToken = igTokens.META_ACCESS_TOKEN;
-
-            // #15: IG uses its own adapted variant if available.
-            const igVariant = post.performance?.platform_variants?.instagram;
-            const igContent = igVariant?.content || post.content || '';
-            const igTags = (igVariant?.hashtags?.length ? igVariant.hashtags : (post.hashtags || []))
-              .map((h: string) => h.startsWith('#') ? h : `#${h}`).join(' ');
-            const igCaption = igContent + (igTags ? '\n\n' + igTags : '');
-
-            // Instagram requires 2-step: create container, then publish
-            const containerBody: any = { caption: igCaption, access_token: igToken };
-            if (isVideo) {
-              containerBody.media_type = 'REELS';
-              containerBody.video_url = mediaUrl;
-            } else {
-              containerBody.image_url = mediaUrl;
-            }
-
-            const containerR = await fetch(
-              `https://graph.facebook.com/v25.0/${igAcct}/media`,
-              { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(containerBody) }
-            );
-            const containerD = await containerR.json();
-            if (!containerD.error && containerD.id) {
-              // Wait for the container to be ready. Images used to be published
-              // immediately, which is why IG silently dropped roughly half of
-              // them: Meta still has to fetch the image off Supabase, and
-              // media_publish on a container that is still IN_PROGRESS fails.
-              const deadline = Date.now() + (isVideo ? 120_000 : 45_000);
-              let status = '';
-              while (Date.now() < deadline) {
-                const statusR = await fetch(`https://graph.facebook.com/v25.0/${containerD.id}?fields=status_code&access_token=${igToken}`);
-                const statusD = await statusR.json();
-                status = statusD.status_code || '';
-                if (status === 'FINISHED' || status === 'ERROR' || status === 'PUBLISHED') break;
-                await new Promise(rs => setTimeout(rs, 3000));
-              }
-              if (status === 'ERROR') {
-                r.ig_error = 'container status ERROR';
-              } else {
-                // Retry media_publish: it can still come back with a transient
-                // "Media ID is not available" right after FINISHED.
-                for (let attempt = 1; attempt <= 3 && !igPostId; attempt++) {
-                  const publishR = await fetch(
-                    `https://graph.facebook.com/v25.0/${igAcct}/media_publish`,
-                    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ creation_id: containerD.id, access_token: igToken }) }
-                  );
-                  const publishD = await publishR.json();
-                  if (!publishD.error && publishD.id) { igPostId = publishD.id; break; }
-                  r.ig_error = `${publishD.error?.message || 'publish failed'} (attempt ${attempt}/3)`;
-                  if (attempt < 3) await new Promise(rs => setTimeout(rs, 5000));
-                }
-              }
-            } else {
-              r.ig_error = containerD.error?.message || 'container failed';
-            }
-          } catch (e: any) { r.ig_error = e.message; }
+          const ig = await publishToInstagram(biz, post, mediaUrl, isVideo);
+          igPostId = ig.id;
+          if (ig.error) r.ig_error = ig.error;
         }
 
         await sb.from('content_posts').update({
@@ -3385,6 +3395,94 @@ app.get('/api/cron/publish', async (req: any, res) => {
 
     res.json({ message: `Published ${published}/${due.length}${igPublished ? ` (${igPublished} also on IG)` : ''}`, published, failed: failed.length, results });
   } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// CRON — Instagram backfill
+// Roughly half of everything published before 2026-10-05 reached Facebook but
+// never Instagram, because media_publish used to fire before Meta had finished
+// fetching the image. Those posts are still good content, so this drains them
+// to Instagram a few per business per day instead of dumping ~76 posts at once.
+// Posts whose copy is tied to a date or a holiday are marked and left alone.
+// ══════════════════════════════════════════════════════════════
+
+const IG_BACKFILL_DATE_BOUND = /(החודש|השבוע|מחר|היום|בשבוע הקרוב|בימים הקרובים|סוף השבוע|נסגרת|נסגר ב|מסתיים|מוגבל בזמן|עד יום|הקרוב|ינואר|פברואר|מרץ|אפריל|מאי|יוני|יולי|אוגוסט|ספטמבר|אוקטובר|נובמבר|דצמבר|סוכות|פסח|חנוכה|ראש השנה|יום העצמאות|שבועות|פורים|יום כיפור|חופש הגדול|\d{1,2}[./]\d{1,2})/;
+
+app.get('/api/cron/ig-backfill', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const perBusiness = Math.min(5, Math.max(1, parseInt(String(req.query.per || '3'), 10) || 3));
+  const started = Date.now();
+  try {
+    const { data: posts, error } = await sb
+      .from('content_posts')
+      .select('*')
+      .not('published_at', 'is', null)
+      .not('image_url', 'is', null)
+      .order('published_at', { ascending: false })
+      .limit(400);
+    if (error) return res.status(500).json({ error: error.message });
+
+    const { data: businesses } = await sb.from('businesses').select('*');
+    const bizByName = Object.fromEntries((businesses || []).map((b: any) => [b.name, b]));
+
+    const pending = (posts || []).filter((x: any) => {
+      const pf = x.performance || {};
+      return !pf.ig_post_id && !pf.ig_backfill_skip;
+    });
+
+    const results: any[] = [];
+    const counts: Record<string, number> = {};
+    let skippedDated = 0;
+
+    for (const post of pending) {
+      // Leave headroom inside the 300s function budget — the rest waits for
+      // tomorrow's run rather than getting cut off mid-publish.
+      if (Date.now() - started > 210_000) break;
+
+      const name = post.business_name;
+      const biz = bizByName[name];
+      if (!biz?.social?.instagram?.tokens?.META_IG_ACCOUNT_ID) continue;
+      if ((counts[name] || 0) >= perBusiness) continue;
+
+      const perf = post.performance || {};
+      if (IG_BACKFILL_DATE_BOUND.test(post.content || '')) {
+        await sb.from('content_posts')
+          .update({ performance: { ...perf, ig_backfill_skip: 'date-dependent' } })
+          .eq('id', post.id);
+        skippedDated++;
+        continue;
+      }
+
+      const mediaUrl = post.video_url || post.image_url;
+      const ig = await publishToInstagram(biz, post, mediaUrl, !!post.video_url);
+      counts[name] = (counts[name] || 0) + 1;
+      await sb.from('content_posts').update({
+        performance: {
+          ...perf,
+          ig_post_id: ig.id,
+          ig_error: ig.id ? null : ig.error,
+          ig_backfilled_at: ig.id ? new Date().toISOString() : null,
+        },
+      }).eq('id', post.id);
+      results.push({ id: post.id, business: name, published_at: post.published_at, ig_post_id: ig.id, error: ig.error });
+    }
+
+    const handled = new Set(results.map(x => x.id));
+    const remaining = pending.filter((x: any) => !handled.has(x.id)).length - skippedDated;
+    res.json({
+      ok: true,
+      published: results.filter(x => x.ig_post_id).length,
+      failed: results.filter(x => !x.ig_post_id).length,
+      skipped_date_dependent: skippedDated,
+      remaining,
+      elapsed_s: Math.round((Date.now() - started) / 1000),
+      results,
+    });
+  } catch (err: any) {
+    trackError(req, err);
     res.status(500).json({ error: err.message });
   }
 });

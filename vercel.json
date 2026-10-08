@@ -75,6 +75,10 @@
     {
       "path": "/api/cron/media-fill",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/ig-backfill",
+      "schedule": "0 15 * * *"
     }
   ],
   "framework": "vite",
