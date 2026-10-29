@@ -3581,6 +3581,32 @@ app.post('/api/posts/:id/upload-image', async (req: any, res) => {
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+// Judge the image a post currently has, without regenerating it. Lets a sweep
+// replace only what is actually broken instead of regenerating everything.
+app.post('/api/posts/:id/judge-image', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { data: post } = await sb.from('content_posts').select('*').eq('id', req.params.id).single();
+    if (!post?.image_url) return res.status(404).json({ error: 'post has no image' });
+    const claudeKey = await getUserKey(sb, req.userId, 'ANTHROPIC_API_KEY');
+    if (!claudeKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
+    const img = Buffer.from(await (await fetch(post.image_url)).arrayBuffer());
+    const sharpMod = (await import('sharp')).default;
+    const jpeg = await sharpMod(img).jpeg({ quality: 88 }).toBuffer();
+    // Same derivation generate-media uses, so the judge expects the headline
+    // that was actually meant to be drawn.
+    const calMeta = (post.performance || {}).calendar_meta || {};
+    const headline = String(calMeta.headline || calMeta.theme
+      || ((post.content || '').split(/[\n.!?]/)[0] || '').trim()).slice(0, 70);
+    const v = await judgeImage(claudeKey, jpeg, post.content || '', headline, brandImageChecks(post.business_name || ''));
+    if (v) await sb.from('content_posts').update({
+      performance: { ...(post.performance || {}), image_qc: { ...v, at: new Date().toISOString() } },
+    }).eq('id', post.id);
+    res.json({ ok: true, verdict: v });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
 // Select a different variant as the primary image
 app.post('/api/posts/:id/select-variant', async (req: any, res) => {
   const sb = getSupabase();
