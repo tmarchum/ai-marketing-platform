@@ -33,3 +33,6 @@ api/node_modules
 .vercel
 
 .vercel
+
+# local UI preview snapshot (real data, never committed)
+public/owner-demo.json

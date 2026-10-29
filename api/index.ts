@@ -768,6 +768,200 @@ app.get('/api/debug/overlay-test', async (req, res) => {
 // BUSINESSES
 // ══════════════════════════════════════════════════════════════
 
+// ══════════════════════════════════════════════════════════════
+// OWNER API — what the five-screen owner interface reads and writes.
+// One call per screen, shaped for the screen: the old UI assembled the same
+// picture from a dozen endpoints plus browser-only state that vanished on reload.
+// Every route requires a signed-in user and only sees that user's businesses.
+// ══════════════════════════════════════════════════════════════
+
+const OWNER_DAY = 86_400_000;
+
+async function ownerBusinesses(sb: any, userId: string) {
+  const { data } = await sb.from('businesses').select('id, name, url, color, schedule, social').eq('user_id', userId);
+  return (data || []).map((b: any) => ({
+    id: b.id, name: b.name, url: b.url, color: b.color || '#6366f1',
+    schedule: b.schedule || null,
+    fbConnected: !!b.social?.facebook?.tokens?.META_ACCESS_TOKEN,
+    igConnected: !!b.social?.instagram?.tokens?.META_IG_ACCOUNT_ID,
+  }));
+}
+
+// Shape a content_posts row for the owner screens. Never ships tokens or
+// internal prompt text to the browser.
+function ownerPost(p: any) {
+  const pf = p.performance || {};
+  return {
+    id: p.id, business: p.business_name, businessId: p.business_id,
+    content: p.content || '', hashtags: p.hashtags || [],
+    scheduledAt: p.scheduled_at, publishedAt: p.published_at,
+    approved: p.status === 'approved',
+    image: p.image_url || null, video: p.video_url || null,
+    gallery: Array.isArray(p.image_variants) ? p.image_variants : [],
+    qc: pf.image_qc ? { pass: !!pf.image_qc.pass, score: pf.image_qc.score, problems: pf.image_qc.problems || [] } : null,
+    skipped: pf.skipped || null,
+    blocked: !!pf.publish_blocked, lastError: pf.last_publish_error || null,
+    service: pf.calendar_meta?.service || null,
+  };
+}
+
+// What needs the owner, in plain words, most urgent first.
+function attentionFor(p: any): { level: 'high' | 'mid'; text: string } | null {
+  const o = ownerPost(p);
+  if (o.publishedAt || o.skipped) return null;
+  if (o.blocked) return { level: 'high', text: 'הפרסום נכשל 3 פעמים ונעצר' };
+  if (!o.image && !o.video) return { level: 'high', text: 'אין תמונה' };
+  if (o.qc && !o.qc.pass && !o.approved) return { level: 'high', text: 'תמונה נכשלה בבדיקה — מחכה לך' };
+  return null;
+}
+
+// The next holiday worth acting on now, from the exact Hebrew calendar.
+function ownerSuggestion(todayISO: string) {
+  const spans = holidaySpans(todayISO, 0, 120).filter(s => s.from > todayISO);
+  for (const s of spans) {
+    const away = daysBetween(todayISO, s.from);
+    const lead = HOLIDAY_LEAD_DAYS[s.name] ?? 14;
+    if (away <= lead) return { holiday: s.name, from: s.from, to: s.to, daysAway: away, approx: s.approx };
+  }
+  return null;
+}
+
+app.use('/api/owner', (req: any, res: any, next: any) => {
+  if (!req.userId) return res.status(401).json({ error: 'sign in required' });
+  next();
+});
+
+app.get('/api/owner/overview', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const businesses = await ownerBusinesses(sb, req.userId);
+    const names = businesses.map((b: any) => b.name);
+    const ids = businesses.map((b: any) => b.id);
+    const now = Date.now();
+    const since14 = new Date(now - 14 * OWNER_DAY).toISOString();
+    const until7 = new Date(now + 7 * OWNER_DAY).toISOString();
+
+    const [{ data: leads }, { data: posts }] = await Promise.all([
+      ids.length ? sb.from('leads').select('business_id, created_at').in('business_id', ids).gte('created_at', since14) : { data: [] },
+      names.length ? sb.from('content_posts').select('*').in('business_name', names)
+        .or(`published_at.gte.${new Date(now - 7 * OWNER_DAY).toISOString()},and(published_at.is.null,scheduled_at.lte.${until7})`)
+        .limit(400) : { data: [] },
+    ]);
+
+    const weekAgo = new Date(now - 7 * OWNER_DAY).toISOString();
+    const rows = businesses.map((b: any) => {
+      const mine = (posts || []).filter((p: any) => p.business_name === b.name);
+      const lb = (leads || []).filter((l: any) => l.business_id === b.id);
+      const upcoming = mine.filter((p: any) => !p.published_at && p.scheduled_at && !(p.performance || {}).skipped)
+        .sort((a: any, c: any) => a.scheduled_at.localeCompare(c.scheduled_at));
+      const attention = upcoming.map((p: any) => {
+        const a = attentionFor(p);
+        return a ? { ...a, postId: p.id, scheduledAt: p.scheduled_at, image: p.image_url, first: (p.content || '').split('\n')[0].slice(0, 90) } : null;
+      }).filter(Boolean);
+      return {
+        ...b,
+        leadsThisWeek: lb.filter((l: any) => l.created_at >= weekAgo).length,
+        leadsLastWeek: lb.filter((l: any) => l.created_at < weekAgo).length,
+        publishedThisWeek: mine.filter((p: any) => p.published_at && p.published_at >= weekAgo).length,
+        scheduledNextWeek: upcoming.length,
+        next: upcoming[0] ? ownerPost(upcoming[0]) : null,
+        attention,
+      };
+    });
+
+    res.json({
+      today: new Date().toISOString().slice(0, 10),
+      businesses: rows,
+      suggestion: ownerSuggestion(new Date().toISOString().slice(0, 10)),
+    });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// Upcoming (and optionally recent) posts for the approval queue and calendar.
+app.get('/api/owner/posts', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const businesses = await ownerBusinesses(sb, req.userId);
+    const names = businesses.map((b: any) => b.name);
+    if (!names.length) return res.json({ posts: [] });
+    const days = Math.min(Math.max(Number(req.query.days) || 14, 1), 60);
+    const back = Math.min(Math.max(Number(req.query.back) || 0, 0), 60);
+    const from = new Date(Date.now() - back * OWNER_DAY).toISOString();
+    const to = new Date(Date.now() + days * OWNER_DAY).toISOString();
+    const { data, error } = await sb.from('content_posts').select('*')
+      .in('business_name', names).not('scheduled_at', 'is', null)
+      .gte('scheduled_at', from).lte('scheduled_at', to)
+      .order('scheduled_at', { ascending: true }).limit(300);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ posts: (data || []).map(ownerPost) });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// The owner's decisions on a post. Text edits go through here too, so the
+// reviewed text is what the publisher sends.
+app.post('/api/owner/posts/:id', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const names = (await ownerBusinesses(sb, req.userId)).map((b: any) => b.name);
+    const { data: post } = await sb.from('content_posts').select('*').eq('id', req.params.id).maybeSingle();
+    if (!post || !names.includes(post.business_name)) return res.status(404).json({ error: 'not found' });
+    if (post.published_at) return res.status(409).json({ error: 'already published' });
+
+    const { action, content, scheduledAt } = req.body || {};
+    const pf = post.performance || {};
+    const upd: any = {};
+    if (action === 'approve') { upd.status = 'approved'; upd.performance = { ...pf, skipped: null, publish_blocked: false, publish_failures: 0 }; }
+    else if (action === 'unapprove') upd.status = 'draft';
+    else if (action === 'skip') upd.performance = { ...pf, skipped: { reason: 'owner', at: new Date().toISOString() } };
+    else if (action === 'restore') upd.performance = { ...pf, skipped: null };
+    else if (action === 'edit') {
+      if (typeof content !== 'string' || content.trim().length < 20) return res.status(400).json({ error: 'content too short' });
+      upd.content = content.trim();
+    } else if (action === 'reschedule') {
+      const t = Date.parse(scheduledAt);
+      if (!t || t < Date.now()) return res.status(400).json({ error: 'scheduledAt must be in the future' });
+      upd.scheduled_at = new Date(t).toISOString();
+    } else return res.status(400).json({ error: 'unknown action' });
+
+    const { data, error } = await sb.from('content_posts').update(upd).eq('id', post.id).select('*').single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, post: ownerPost(data) });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// Every lead across the owner's businesses, newest first.
+app.get('/api/owner/leads', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const businesses = await ownerBusinesses(sb, req.userId);
+    const ids = businesses.map((b: any) => b.id);
+    if (!ids.length) return res.json({ leads: [] });
+    const { data, error } = await sb.from('leads')
+      .select('id, business_id, business_name, name, phone, email, message, source, utm_source, status, created_at')
+      .in('business_id', ids).order('created_at', { ascending: false }).limit(200);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ leads: data || [] });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/owner/leads/:id', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const ids = (await ownerBusinesses(sb, req.userId)).map((b: any) => b.id);
+    const status = String(req.body?.status || '');
+    if (!['new', 'contacted', 'converted', 'closed'].includes(status)) return res.status(400).json({ error: 'bad status' });
+    const { data, error } = await sb.from('leads').update({ status }).eq('id', req.params.id).in('business_id', ids).select('id, status').maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, lead: data });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/businesses', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.json([]);
@@ -2458,7 +2652,7 @@ Fail the image (pass=false) if ANY of these is true:
 - It reads as a generic posed stock photo (a group lined up smiling at the camera) rather than a real moment.${extraChecks.map(c => `
 - ${c}`).join('')}
 
-score: 1-10 for how well it would stop someone scrolling. problems: short phrases, empty when it passes.` },
+score: 1-10 for how well it would stop someone scrolling. problems: short phrases IN HEBREW, written for the business owner (they are shown to them as-is), empty when it passes.` },
         ],
       }],
     });
@@ -3605,7 +3799,7 @@ app.post('/api/posts/:id/upload-image', async (req: any, res) => {
     if (buf.length > 4_000_000) return res.status(413).json({ error: 'image too large (max 4MB)' });
 
     const { data: post, error } = await sb.from('content_posts')
-      .select('id, user_id, image_url, image_variants').eq('id', req.params.id).single();
+      .select('id, user_id, image_url, image_variants, performance').eq('id', req.params.id).single();
     if (error || !post) return res.status(404).json({ error: 'Post not found' });
 
     // Normalise to a 1080px-wide JPEG so every platform accepts it.
@@ -3619,7 +3813,10 @@ app.post('/api/posts/:id/upload-image', async (req: any, res) => {
     const url = sb.storage.from('media').getPublicUrl(fileName).data.publicUrl;
 
     const gallery = mergeGallery([url], post.image_url, post.image_variants);
-    await sb.from('content_posts').update({ image_url: url, image_variants: gallery }).eq('id', post.id);
+    await sb.from('content_posts').update({
+      image_url: url, image_variants: gallery,
+      performance: { ...(post.performance || {}), image_qc: null, image_chosen_by_owner: new Date().toISOString() },
+    }).eq('id', post.id);
     res.json({ ok: true, url, variants: gallery });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
@@ -3657,7 +3854,13 @@ app.post('/api/posts/:id/select-variant', async (req: any, res) => {
   try {
     const { variant_url } = req.body;
     if (!variant_url) return res.status(400).json({ error: 'variant_url required' });
-    const { error } = await sb.from('content_posts').update({ image_url: variant_url }).eq('id', req.params.id);
+    // The owner chose this image, so the gate's verdict on the previous one no
+    // longer applies and must not hold the post back.
+    const { data: cur } = await sb.from('content_posts').select('performance').eq('id', req.params.id).maybeSingle();
+    const { error } = await sb.from('content_posts').update({
+      image_url: variant_url,
+      performance: { ...((cur && cur.performance) || {}), image_qc: null, image_chosen_by_owner: new Date().toISOString() },
+    }).eq('id', req.params.id);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
@@ -3756,7 +3959,11 @@ const MAX_PUBLISH_FAILURES = 3;
 // failed attempts) posts stay in the table but never publish.
 function isPublishable(p: any): boolean {
   const pf = p.performance || {};
-  return !pf.skipped && !pf.publish_blocked;
+  if (pf.skipped || pf.publish_blocked) return false;
+  // An image the quality gate failed waits for the owner: pick another image
+  // (which re-judges) or approve it as is. It shows on the overview meanwhile.
+  if (pf.image_qc && pf.image_qc.pass === false && p.status !== 'approved') return false;
+  return true;
 }
 
 // A run killed after claiming a post leaves it 'scheduled'. After 20 minutes,

@@ -2,6 +2,7 @@ import { StrictMode, useState, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
+import OwnerApp from './owner/OwnerApp.jsx'
 import AuthPage from './components/AuthPage.jsx'
 import LandingPage from './components/LandingPage.jsx'
 import LeadFormPage from './components/LeadFormPage.jsx'
@@ -47,6 +48,8 @@ if (_leadMatch) {
 function Root() {
   const [session, setSession] = useState(undefined); // undefined = loading, null = no session
   const [showAuth, setShowAuth] = useState(false);
+  const [ui, setUiState] = useState(() => { try { return localStorage.getItem('ui') || 'owner'; } catch { return 'owner'; } });
+  const setUi = v => { setUiState(v); try { localStorage.setItem('ui', v); } catch {} };
 
   useEffect(() => {
     // Get initial session
@@ -61,6 +64,10 @@ function Root() {
     return () => subscription.unsubscribe();
   }, []);
 
+  if (import.meta.env.DEV && new URLSearchParams(location.search).has('demo')) {
+    return <OwnerApp session={null} onClassic={() => {}} />;
+  }
+
   // Loading state
   if (session === undefined) {
     return (
@@ -73,9 +80,19 @@ function Root() {
     );
   }
 
-  // Logged in — render dashboard
+  // Logged in — the owner interface by default; the classic dashboard stays one
+  // click away (and remembers the choice) until everything has moved over.
   if (session) {
-    return <App session={session} />;
+    if (ui === 'classic') {
+      return <>
+        <button onClick={() => setUi('owner')} style={{
+          position: 'fixed', bottom: 84, left: 16, zIndex: 9999, border: 0, borderRadius: 999,
+          padding: '10px 16px', background: '#2f5d50', color: '#fff', fontWeight: 600, cursor: 'pointer',
+          fontFamily: 'Heebo, sans-serif', boxShadow: '0 2px 8px rgba(0,0,0,.2)' }}>← לממשק החדש</button>
+        <App session={session} />
+      </>;
+    }
+    return <OwnerApp session={session} onClassic={() => setUi('classic')} />;
   }
 
   // Not logged in — show landing or auth
