@@ -3122,7 +3122,7 @@ function Businesses({ businesses, setBusinesses, posts }) {
                 <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
                   <input type="checkbox" checked={!!biz.schedule?.enabled}
                     onChange={async e=>{
-                      const sched = {...(biz.schedule||{}), enabled: e.target.checked, days: biz.schedule?.days||[0,2,4], times: biz.schedule?.times||["10:00"]};
+                      const sched = {...(biz.schedule||{}), enabled: e.target.checked, days: biz.schedule?.days||[0,3], times: biz.schedule?.times||["10:00"]};
                       updateBiz(biz.id, {schedule: sched});
                       try { await authFetch(`/api/businesses/${biz.id}`, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({schedule: sched})}); } catch {}
                     }}/>

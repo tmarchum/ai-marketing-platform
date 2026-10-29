@@ -45,6 +45,29 @@ async function authMiddleware(req: any, res: any, next: any) {
 }
 app.use(authMiddleware);
 
+// ── Locks for endpoints that publish, message customers or spend API credit ──
+// These were callable by anyone on the internet: /api/cron/publish posts to
+// the businesses' pages, /api/cron/dm-replies messages customers, and the
+// generation endpoints spend the owner's Gemini/Claude keys.
+// Vercel cron sends `Authorization: Bearer $CRON_SECRET`; the dashboard sends
+// a logged-in user's token. Anything else is refused.
+function isCronCaller(req: any): boolean {
+  const secret = process.env.CRON_SECRET;
+  return !!secret && req.headers.authorization === `Bearer ${secret}`;
+}
+// Enforced only once CRON_SECRET exists in the Vercel environment: before that,
+// Vercel's own scheduler sends no header and locking would stop all publishing.
+app.use('/api/cron', (req: any, res: any, next: any) => {
+  if (!process.env.CRON_SECRET) return next();
+  if (isCronCaller(req) || req.userId) return next();
+  res.status(401).json({ error: 'cron endpoints require CRON_SECRET or a signed-in user' });
+});
+const requireUserOrCron = (req: any, res: any, next: any) => {
+  if (isCronCaller(req) || req.userId) return next();
+  res.status(401).json({ error: 'sign in required' });
+};
+app.use(['/api/gemini', '/api/upload'], requireUserOrCron);
+
 // ── Lightweight error tracking — last-N-errors ring buffer + daily summary email.
 // No external service (no Sentry). When an endpoint catches an error, push it
 // here. A cron summarizes once a day and emails the user if there were errors.
@@ -458,10 +481,19 @@ async function addHebrewOverlay(imageBuffer: Buffer, hebrewText: string, brandCo
 
     // Designer overlay — gradient fade + white bold headline + brand accent line.
     // No white banner; text floats on the photo for a magazine/ad poster look.
-    const fontSize = Math.round(W / 14);                 // ~73px on 1024
+    // Never drop words: wrapHebrew stops at maxLines and silently discards the
+    // rest ("…בפח" vanished from a headline). Step the size down until the whole
+    // headline fits in three lines; below that, the headline is too long to use.
+    const wordCount = hebrewText.trim().split(/\s+/).length;
+    let fontSize = Math.round(W / 14);                   // ~73px on 1024
+    let lines = wrapHebrew(hebrewText, 26, 3);
+    for (const [div, chars] of [[16, 30], [18, 34]] as const) {
+      if (lines.join(' ').split(/\s+/).length >= wordCount) break;
+      fontSize = Math.round(W / div);
+      lines = wrapHebrew(hebrewText, chars, 3);
+    }
+    if (!lines.length || lines.join(' ').split(/\s+/).length < wordCount) return imageBuffer;
     const lineHeight = Math.round(fontSize * 1.18);
-    const lines = wrapHebrew(hebrewText, 26, 3);
-    if (!lines.length) return imageBuffer;
 
     const totalTextH = lines.length * lineHeight;
     // Gradient zone covers bottom 45% of the image — provides text legibility
@@ -480,13 +512,8 @@ async function addHebrewOverlay(imageBuffer: Buffer, hebrewText: string, brandCo
     ctx.fillStyle = grad;
     ctx.fillRect(0, gradY, W, gradH);
 
-    // 2. Brand-color accent bar above the headline (short, decorative)
-    const accentY = H - totalTextH - Math.round(H * 0.12);
-    const accentW = Math.round(W * 0.12);
-    const accentH = Math.max(3, Math.round(fontSize * 0.08));
-    const accentX = Math.round((W - accentW) / 2);
-    ctx.fillStyle = brandColor;
-    ctx.fillRect(accentX, accentY, accentW, accentH);
+    // (The brand accent bar that sat above the headline is gone: viewers and the
+    // quality gate both read it as a stray line floating over the photo.)
 
     // 3. Hebrew headline — bold white with soft drop shadow for legibility
     ctx.font = `bold ${fontSize}px Heebo, sans-serif`;
@@ -2002,7 +2029,7 @@ app.post('/api/calendars/generate', async (req: any, res) => {
       : '';
     // Knowledge Base — business documents (mentions prices, services, FAQs, etc.)
     // Cap at 5k chars — larger KB caused Claude to hit token limit before finishing JSON
-    const kbContent = await getBizKnowledgeBase(sb, business_id, 5_000);
+    const kbContent = await getBizKnowledgeBase(sb, business_id, 14_000);
     const kbContext = kbContent ? `\n\n📚 ידע על העסק (מסמכים שהועלו — השתמש בפרטים קונקרטיים מתוכם!):${kbContent}` : '';
     const recentTitles = recentPosts?.length
       ? recentPosts.slice(0, 10).map(p => `- ${(p.content || '').split('\n')[0].slice(0, 80)}`).join('\n')
@@ -2306,9 +2333,12 @@ Return ONLY JSON: {"content": "full post text in Hebrew", "hashtags": ["#tag1", 
         } catch {}
       }
 
-      // Fallback if Claude expansion fails
-      if (!content) {
-        content = [cp.hook || cp.caption_short, '', cp.angle || ''].filter(Boolean).join('\n');
+      // No fallback post. The old fallback stitched hook + angle into a one or
+      // two line "post" that then published like any other. A missing post is
+      // visible and refillable; a broken one goes out under the business's name.
+      if (!content || content.length < 200) {
+        created.push({ error: 'expansion failed — no post created', theme: cp.theme });
+        continue;
       }
 
       // ── CONVERSION CTA — every post ends with a link to the business's REAL
@@ -2391,6 +2421,9 @@ function brandImageChecks(bizName: string): string[] {
     'A projector is visible in front of the screen or among the audience (this company projects from BEHIND the screen; showing a front projector advertises the competition).',
     'The screen is not an inflatable outdoor screen, or it shows no film.',
   ];
+  if (/טיסות/.test(bizName)) return [
+    'Note for this business: an aspirational destination abroad, an airport gate or travellers with luggage IS on-topic for a flight-deal service. Do not fail an image for not depicting searching, screens or AI.',
+  ];
   if (/חידונ/.test(bizName)) return [
     'People sit still or pose; the activity is teams moving outdoors between stations, phones in hand.',
   ];
@@ -2466,7 +2499,13 @@ app.post('/api/posts/:id/generate-media', async (req: any, res) => {
       (calMeta.headline as string) ||
       (calMeta.theme as string) ||
       ((post.content || '').split(/[\n.!?]/)[0] || '').trim();
-    const hebrewHeadline = (overlayCandidate || '').slice(0, 70);
+    // Cut at a word boundary: slicing at 70 characters produced "וסוכנ" and "יעדי".
+    const hebrewHeadline = (() => {
+      const t = (overlayCandidate || '').trim();
+      if (t.length <= 70) return t;
+      const cut = t.slice(0, 71);
+      return cut.slice(0, cut.lastIndexOf(' ')).replace(/[\s,:;–-]+$/, '');
+    })();
     const brandColor = biz?.color || '#1a1a2e';
 
     // CACHE NOTE: `topic` feeds the cache key — must be deterministic. Use post.content.
@@ -3102,8 +3141,12 @@ async function getBizKnowledgeBase(sb: any, businessId: string, maxChars = 20000
   let combined = '';
   for (const d of docs) {
     const chunk = `\n---\n📄 ${d.title}${d.category ? ` [${d.category}]` : ''}:\n${d.content}\n`;
-    if ((combined + chunk).length > maxChars) break;
-    combined += chunk;
+    // Truncate rather than stop. `break` here meant one document longer than the
+    // cap — and they are sorted newest first — left the planner with no KB at
+    // all, which is how posts came out generic and service-blind.
+    const room = maxChars - combined.length;
+    if (room <= 200) break;
+    combined += chunk.length > room ? chunk.slice(0, room) + '\n…' : chunk;
   }
   return combined;
 }
@@ -3652,9 +3695,10 @@ async function publishToInstagram(
   const igToken = igTokens.META_ACCESS_TOKEN;
   try {
     // #15: IG uses its own adapted variant if available.
-    const igVariant = post.performance?.platform_variants?.instagram;
-    const igContent = igVariant?.content || post.content || '';
-    const igTags = (igVariant?.hashtags?.length ? igVariant.hashtags : (post.hashtags || []))
+    // The reviewed post is what goes out. platform_variants were written without
+    // the knowledge base or the anti-fabrication rules, and silently replaced it.
+    const igContent = post.content || '';
+    const igTags = (post.hashtags || [])
       .map((h: string) => h.startsWith('#') ? h : `#${h}`).join(' ');
     const igCaption = igContent + (igTags ? '\n\n' + igTags : '');
 
@@ -3706,39 +3750,75 @@ async function publishToInstagram(
   }
 }
 
+const MAX_PUBLISH_FAILURES = 3;
+
+// Skipped (owner, preview email, stale holiday, cadence) and blocked (three
+// failed attempts) posts stay in the table but never publish.
+function isPublishable(p: any): boolean {
+  const pf = p.performance || {};
+  return !pf.skipped && !pf.publish_blocked;
+}
+
+// A run killed after claiming a post leaves it 'scheduled'. After 20 minutes,
+// settle it: if Facebook has it, it's published; otherwise release it.
+async function recoverStalePublishClaims(sb: any) {
+  const cutoff = new Date(Date.now() - 20 * 60_000).toISOString();
+  const { data: stuck } = await sb.from('content_posts')
+    .select('id, fb_post_id, performance').eq('status', 'scheduled').is('published_at', null).limit(50);
+  for (const p of stuck || []) {
+    const claimedAt = p.performance?.claimed_at;
+    if (claimedAt && claimedAt > cutoff) continue;
+    await sb.from('content_posts').update(p.fb_post_id
+      ? { status: 'published', published_at: claimedAt || new Date().toISOString() }
+      : { status: 'draft', performance: { ...(p.performance || {}), claimed_at: null } }
+    ).eq('id', p.id);
+  }
+}
+
+function escapeHtml(v: any): string {
+  return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as any)[c]);
+}
+
 app.get('/api/cron/publish', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   try {
     const now = new Date().toISOString();
-    // Get all posts scheduled for now or earlier that aren't published yet.
-    // Exclude status='skipped' so the preview-email "Skip" links work.
-    const { data: due, error } = await sb
+    // The database only allows draft/approved/scheduled/published, so skip and
+    // failure live in `performance`; 'scheduled' is the in-flight claim below.
+    await recoverStalePublishClaims(sb);
+
+    const { data: dueRaw, error } = await sb
       .from('content_posts')
       .select('*')
       .not('scheduled_at', 'is', null)
       .lte('scheduled_at', now)
       .is('published_at', null)
-      .neq('status', 'skipped')
-      .limit(20);
+      .in('status', ['draft', 'approved'])
+      .order('scheduled_at', { ascending: true })
+      .limit(30);
     if (error) return res.status(500).json({ error: error.message });
-    if (!due?.length) return res.json({ message: 'No posts due', published: 0 });
+    const due = (dueRaw || []).filter((p: any) => isPublishable(p));
+    if (!due.length) return res.json({ message: 'No posts due', published: 0 });
 
     // Get businesses for FB tokens
     const { data: businesses } = await sb.from('businesses').select('*');
     const bizByName = Object.fromEntries((businesses || []).map((b: any) => [b.name, b]));
 
     const results: any[] = [];
+    const started = Date.now();
     for (const post of due) {
+      // Stop with room to spare: being killed mid-post is how duplicates happen.
+      if (Date.now() - started > 200_000) break;
       const r: any = { id: post.id, business: post.business_name };
+      const perf = post.performance || {};
       try {
         // Safety net for the failure that produced Sukkot copy on 8.10: refuse
         // to publish anything that talks about a holiday which already ended.
         const stale = staleHolidayRefs(post.content || '', now.slice(0, 10));
         if (stale.length) {
           await sb.from('content_posts').update({
-            status: 'skipped',
-            performance: { ...(post.performance || {}), skip_reason: `חג שעבר: ${stale.join(', ')}` },
+            performance: { ...perf, skipped: { reason: `חג שעבר: ${stale.join(', ')}`, at: now } },
           }).eq('id', post.id);
           r.skipped = stale.join(', ');
           results.push(r);
@@ -3752,14 +3832,19 @@ app.get('/api/cron/publish', async (req: any, res) => {
           results.push(r);
           continue;
         }
+
+        // Claim the post before touching Facebook. Two runs (or a run and the
+        // "publish now" button) can no longer both post it.
+        const { data: claimed } = await sb.from('content_posts')
+          .update({ status: 'scheduled', performance: { ...perf, claimed_at: now } })
+          .eq('id', post.id).in('status', ['draft', 'approved']).is('published_at', null)
+          .select('id');
+        if (!claimed?.length) { r.skipped = 'claimed elsewhere'; results.push(r); continue; }
+
         const pageId = fbTokens.META_PAGE_ID;
         const accessToken = fbTokens.META_ACCESS_TOKEN;
-        // #15: Use platform-adapted variant if available, else original.
-        const pv = post.performance?.platform_variants?.facebook;
-        const fbContent = pv?.content || post.content || '';
-        const fbTags = (pv?.hashtags?.length ? pv.hashtags : (post.hashtags || []))
-          .map((h: string) => h.startsWith('#') ? h : `#${h}`).join(' ');
-        const message = fbContent + (fbTags ? '\n\n' + fbTags : '');
+        const fbTags = (post.hashtags || []).map((h: string) => h.startsWith('#') ? h : `#${h}`).join(' ');
+        const message = (post.content || '') + (fbTags ? '\n\n' + fbTags : '');
         const mediaUrl = post.video_url || post.image_url;
         const isVideo = !!post.video_url;
 
@@ -3773,7 +3858,6 @@ app.get('/api/cron/publish', async (req: any, res) => {
             ? { file_url: mediaUrl, description: message, access_token: accessToken }
             : { url: mediaUrl, message, access_token: accessToken };
         } else {
-          // Text-only post
           endpoint = `https://graph.facebook.com/v25.0/${pageId}/feed`;
           body = { message, access_token: accessToken };
         }
@@ -3784,37 +3868,40 @@ app.get('/api/cron/publish', async (req: any, res) => {
         });
         const fbD = await fbR.json();
         if (fbD.error) {
+          // Release the claim and count the failure; three strikes stops the
+          // retry loop that used to fire a failure email four times a day.
+          const failures = (perf.publish_failures || 0) + 1;
+          await sb.from('content_posts').update({
+            status: 'draft',
+            performance: { ...perf, claimed_at: null, publish_failures: failures,
+              last_publish_error: fbD.error.message, last_failed_at: now,
+              publish_blocked: failures >= MAX_PUBLISH_FAILURES },
+          }).eq('id', post.id);
           r.error = fbD.error.message;
-          // Mark as failed to avoid retry loop
-          await sb.from('content_posts').update({ status: 'failed', performance: { publish_error: fbD.error.message, failed_at: now } }).eq('id', post.id);
+          r.blocked = failures >= MAX_PUBLISH_FAILURES;
           results.push(r);
           continue;
         }
         const fbPostId = fbD.post_id || fbD.id;
 
-        // Also publish to Instagram if connected
-        let igPostId: string | null = null;
-        const igTokens = biz?.social?.instagram?.tokens;
-        if (igTokens?.META_IG_ACCOUNT_ID && mediaUrl) {
-          const ig = await publishToInstagram(biz, post, mediaUrl, isVideo);
-          igPostId = ig.id;
-          if (ig.error) r.ig_error = ig.error;
-        }
-
+        // Record Facebook success immediately, before Instagram. If the function
+        // dies during the IG wait, the post is already marked and won't repeat.
         await sb.from('content_posts').update({
-          status: 'published',
-          fb_post_id: fbPostId,
-          published_at: now,
-          performance: {
-            ...(post.performance || {}),
-            ig_post_id: igPostId,
-            ig_error: igPostId ? null : (r.ig_error || (igTokens?.META_IG_ACCOUNT_ID ? null : 'instagram not connected')),
-            ig_attempted_at: igTokens?.META_IG_ACCOUNT_ID && mediaUrl ? now : null,
-          },
+          status: 'published', fb_post_id: fbPostId, published_at: now,
+          performance: { ...perf, claimed_at: null },
         }).eq('id', post.id);
         r.ok = true;
         r.fb_post_id = fbPostId;
-        if (igPostId) r.ig_post_id = igPostId;
+
+        const igTokens = biz?.social?.instagram?.tokens;
+        if (igTokens?.META_IG_ACCOUNT_ID && mediaUrl) {
+          const ig = await publishToInstagram(biz, post, mediaUrl, isVideo);
+          if (ig.error) r.ig_error = ig.error;
+          if (ig.id) r.ig_post_id = ig.id;
+          await sb.from('content_posts').update({
+            performance: { ...perf, claimed_at: null, ig_post_id: ig.id, ig_error: ig.id ? null : ig.error, ig_attempted_at: now },
+          }).eq('id', post.id);
+        }
       } catch (e: any) {
         r.error = e.message;
         trackError(req, e);
@@ -3970,27 +4057,45 @@ app.get('/api/cron/ig-backfill', async (req: any, res) => {
 
 // Mark a post as skipped via GET link (so it works from email).
 // Returns a tiny HTML confirmation page (no auth required — token is the post id).
+// Skip from the preview email. The GET only shows a confirm button: mail link
+// scanners open every GET link, which used to skip posts nobody chose to skip.
+// The skip itself is stored in `performance` because the status column's
+// check constraint does not allow 'skipped' — the old write failed silently and
+// the post published anyway.
+const skipPage = (icon: string, title: string, body: string) =>
+  `<!doctype html><html dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+  <body style="font-family:Arial;padding:40px 20px;max-width:500px;margin:auto;text-align:center;background:#f9fafb">
+  <div style="font-size:48px">${icon}</div><h2>${title}</h2>${body}</body></html>`;
+
 app.get('/api/posts/:id/skip', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).send('DB not configured');
   try {
-    const { data: post } = await sb.from('content_posts').select('id, business_name, content, status, published_at').eq('id', req.params.id).maybeSingle();
+    const { data: post } = await sb.from('content_posts').select('id, business_name, content, published_at, performance').eq('id', req.params.id).maybeSingle();
     if (!post) return res.status(404).send('Post not found');
-    if (post.published_at) {
-      return res.send(`<!doctype html><html dir="rtl"><body style="font-family:Arial;padding:40px;max-width:500px;margin:auto;text-align:center">
-        <div style="font-size:48px">⚠️</div>
-        <h2>פוסט זה כבר פורסם</h2>
-        <p style="color:#666">${post.business_name}: ${(post.content||'').slice(0,80)}…</p>
-      </body></html>`);
-    }
-    await sb.from('content_posts').update({ status: 'skipped' }).eq('id', post.id);
-    res.send(`<!doctype html><html dir="rtl"><body style="font-family:Arial;padding:40px;max-width:500px;margin:auto;text-align:center;background:#f9fafb">
-      <div style="font-size:48px">⏭️</div>
-      <h2 style="color:#10b981">הפוסט דולג בהצלחה</h2>
-      <p style="color:#666">${post.business_name}: ${(post.content||'').slice(0,100)}…</p>
-      <p style="color:#999;font-size:12px;margin-top:30px">הפוסט לא יפורסם. תוכל לשחזר אותו מהדשבורד.</p>
-    </body></html>`);
-  } catch (e: any) { res.status(500).send(`Error: ${e.message}`); }
+    const preview = `<p style="color:#666">${escapeHtml(post.business_name)}: ${escapeHtml((post.content || '').slice(0, 100))}…</p>`;
+    if (post.published_at) return res.send(skipPage('⚠️', 'פוסט זה כבר פורסם', preview));
+    if (post.performance?.skipped) return res.send(skipPage('⏭️', 'הפוסט כבר דולג', preview));
+    res.send(skipPage('⏭️', 'לדלג על הפוסט הזה?', preview + `
+      <form method="POST" action="/api/posts/${post.id}/skip">
+        <button style="background:#ef4444;color:#fff;border:0;border-radius:10px;padding:14px 28px;font-size:16px;cursor:pointer">כן, אל תפרסם</button>
+      </form>`));
+  } catch (e: any) { res.status(500).send(`Error: ${escapeHtml(e.message)}`); }
+});
+
+app.post('/api/posts/:id/skip', express.urlencoded({ extended: false }), async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).send('DB not configured');
+  try {
+    const { data: post } = await sb.from('content_posts').select('id, business_name, content, published_at, performance').eq('id', req.params.id).maybeSingle();
+    if (!post) return res.status(404).send('Post not found');
+    if (post.published_at) return res.send(skipPage('⚠️', 'פוסט זה כבר פורסם', ''));
+    const { error } = await sb.from('content_posts').update({
+      performance: { ...(post.performance || {}), skipped: { reason: 'owner', at: new Date().toISOString() } },
+    }).eq('id', post.id);
+    if (error) return res.status(500).send(skipPage('❌', 'הדילוג נכשל', `<p>${escapeHtml(error.message)}</p>`));
+    res.send(skipPage('✅', 'הפוסט דולג', '<p style="color:#666">הוא לא יפורסם. אפשר לשחזר אותו מהדשבורד.</p>'));
+  } catch (e: any) { res.status(500).send(`Error: ${escapeHtml(e.message)}`); }
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -4001,6 +4106,8 @@ app.get('/api/posts/:id/skip', async (req: any, res) => {
 // KB facts, short-link CTA, business schedule slots. The existing daily
 // preview email (18:00) remains the review/cancel gate before publishing.
 // ══════════════════════════════════════════════════════════════
+const POSTS_PER_MONTH = 9;   // two a week
+
 app.get('/api/cron/monthly-calendar', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
@@ -4028,21 +4135,22 @@ app.get('/api/cron/monthly-calendar', async (req: any, res) => {
         .gte('scheduled_at', monthStart)
         .lt('scheduled_at', monthEnd);
       counts[b.name] = count ?? 0;
-      // Aim for ~13 posts/month (covers every Sun/Tue/Thu slot so there's no
-      // end-of-month gap). Top up any business under 12 scheduled for next month.
-      if (!target && (count ?? 0) < 12) target = b;
+      // Two posts a week per business (~9 a month): fewer posts, each good
+      // enough to be worth paying to promote. Top up only the shortfall.
+      if (!target && (count ?? 0) < POSTS_PER_MONTH) target = b;
     }
     if (!target) return res.json({ message: `all businesses have ${targetMonth}/${targetYear} content`, counts });
 
     // Generate + approve via self-fetch (reuses the full pipeline incl. short links)
     const genR = await fetch(`${PROD_URL}/api/calendars/generate`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ business_id: target.id, year: targetYear, month: targetMonth, posts_count: 16 }),
+      body: JSON.stringify({ business_id: target.id, year: targetYear, month: targetMonth, posts_count: POSTS_PER_MONTH + 3 }),
     });
     const gen = await genR.json() as any;
     if (gen.error) return res.json({ business: target.name, error: gen.error });
-    // Keep enough to fill the whole month's schedule slots (~13), not just half of it.
-    const briefs = (gen.posts || []).slice(0, 14);
+    // Exactly the shortfall. Adding a full batch to a business that already had
+    // 11 posts used to leave it with ~25.
+    const briefs = (gen.posts || []).slice(0, Math.max(0, POSTS_PER_MONTH - (counts[target.name] || 0)));
     const appR = await fetch(`${PROD_URL}/api/calendars/approve`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ business_id: target.id, posts: briefs }),
@@ -4089,17 +4197,21 @@ app.get('/api/cron/media-fill', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   try {
-    const { data: posts } = await sb
+    const { data: postsRaw } = await sb
       .from('content_posts')
-      .select('id, business_name, scheduled_at')
+      .select('id, business_name, scheduled_at, performance')
       .is('published_at', null)
       .is('image_url', null)
       .is('video_url', null)
-      .neq('status', 'skipped')
+      .in('status', ['draft', 'approved'])
       .not('scheduled_at', 'is', null)
       .order('scheduled_at', { ascending: true })
-      .limit(4);
-    if (!posts?.length) return res.json({ message: 'no posts need media' });
+      .limit(12);
+    // Skipped and blocked posts never publish, so don't spend generation on them.
+    // Three per run: each generate-media can now judge and retry, and the cron
+    // has 300 seconds.
+    const posts = (postsRaw || []).filter(isPublishable).slice(0, 3);
+    if (!posts.length) return res.json({ message: 'no posts need media' });
 
     const results: any[] = [];
     for (const p of posts) {
@@ -4129,17 +4241,18 @@ app.get('/api/cron/preview', async (req: any, res) => {
     const tomorrowStart = new Date(now);
     const tomorrowEnd = new Date(now + 24 * 3600 * 1000);
 
-    const { data: posts } = await sb
+    const { data: postsAll } = await sb
       .from('content_posts')
       .select('*')
       .not('scheduled_at', 'is', null)
       .is('published_at', null)
-      .neq('status', 'skipped')
+      .in('status', ['draft', 'approved'])
       .gte('scheduled_at', tomorrowStart.toISOString())
       .lte('scheduled_at', tomorrowEnd.toISOString())
       .order('scheduled_at', { ascending: true });
 
-    if (!posts?.length) return res.json({ message: 'No posts scheduled for next 24h' });
+    const posts = (postsAll || []).filter(isPublishable);
+    if (!posts.length) return res.json({ message: 'No posts scheduled for next 24h' });
 
     const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
     const km: Record<string, string> = {};
@@ -4225,7 +4338,9 @@ app.get('/api/analytics/summary', async (req: any, res) => {
     const topPosts: any[] = [];
 
     for (const p of (posts || [])) {
-      const m = byPostLatest[p.id] || {};
+      // post_metrics is keyed by the Facebook post id, not our row id — looking
+      // it up by p.id is why every engagement total on the dashboard read 0.
+      const m = (p.fb_post_id && byPostLatest[p.fb_post_id]) || {};
       const eng = (m.likes || 0) + (m.comments || 0) + (m.shares || 0);
       totals.likes += m.likes || 0;
       totals.comments += m.comments || 0;
@@ -4444,7 +4559,9 @@ ${kbContent || '(אין מידע נוסף)'}
           if (sendD.error) { results.push({ biz: biz.name, conv_id: conv.id, error: sendD.error.message }); continue; }
 
           // Log so we don't reply twice
-          await sb.from('dm_replies').insert({ key: replyKey, biz_id: biz.id, conversation_id: conv.id, user_message: userMsg, reply: replyText }).catch(() => {});
+          // postgrest builders have no .catch(): the old call threw, so the log never
+          // saved and the outer catch stopped the run after one reply.
+          { const { error: logErr } = await sb.from('dm_replies').insert({ key: replyKey, biz_id: biz.id, conversation_id: conv.id, user_message: userMsg, reply: replyText }); if (logErr) console.error('[dm-replies] log insert', logErr.message); }
           replied++;
         }
         results.push({ biz: biz.name, replied });
@@ -4617,7 +4734,7 @@ app.get('/api/cron/ab-evaluate', async (req: any, res) => {
       if (!p.content_variants?.length) continue;
       if (p.performance?.ab_winner) continue;
       // Latest metrics
-      const { data: m } = await sb.from('post_metrics').select('*').eq('post_id', p.id).order('date', { ascending: false }).limit(1).maybeSingle();
+      const { data: m } = await sb.from('post_metrics').select('*').eq('post_id', p.fb_post_id || '').order('date', { ascending: false }).limit(1).maybeSingle();
       const eng = (m?.likes || 0) + (m?.comments || 0) + (m?.shares || 0);
       // We only have engagement for the version that was actually published (the `content` field).
       // Real A/B would need separate publish + measure rounds. For now we just log baseline.
@@ -5085,6 +5202,9 @@ async function callClaudeWithCache(
     }),
   });
   const d = await r.json();
+  // An API error (credit, rate limit, bad model) used to come back as '' and
+  // the caller quietly published a one-line fallback post.
+  if (d.error) throw new Error(`Claude: ${d.error.message || d.error.type}`);
   return d.content?.[0]?.text || '';
 }
 
