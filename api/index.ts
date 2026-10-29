@@ -2599,7 +2599,7 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
 
    ✅ COMMON RULES: large INFLATABLE freestanding screen (4-5m) glowing in evening, audience FACING the screen, warm light from the screen on faces, fairy lights/paper lanterns OK, REALISTIC group size
    ✅ THE SCREEN ALWAYS SHOWS A FILM: a colourful, blurred movie frame is projected on it. Never a blank white or empty screen.
-   ⛔ NO PROJECTOR IN FRONT OF THE SCREEN: this company projects from BEHIND the screen (rear projection) — that is its selling point: no glare, no cables in the aisles, no shadows. Do not show a projector on a table, tripod or the grass in front of or among the audience. If equipment is visible at all, it is behind the screen.
+   ✅ CLEAN SIGHTLINE: between the audience and the screen there is only open grass — no table, tripod, box, device or equipment of any kind. The screen glows on its own, lit from behind; nothing stands in front of it.
    🚫 FORBIDDEN: indoor cinema seats | TV screens | empty corporate venues | daytime without screen visible | suits | concert-scale crowds (max 30 visible people) | religious styling
 `;
       if (isFlights) brandRules = `✈️ MANDATORY for ${bizName} (Flight Hunter / צייד טיסות) — ISRAELI TRAVELERS getting deals and reaching incredible destinations. REALISTIC, intimate moments (1-6 people max). Pick ONE archetype:
@@ -2633,7 +2633,19 @@ Style: editorial documentary photography — slight motion blur on moving subjec
 Composition: action in the upper-2/3 of the frame; keep the bottom 1/3 as a calm, photogenic area — sky, blurred grass/sand, smooth water, soft bokeh — clean and visually quiet. Do NOT draw a banner, badge, sign, plaque, or any rectangular zone in the bottom area; just keep it scenically clean.`;
     }
 
-    const finalPrompt = buildImagePrompt(sceneDescription, sceneSource);
+    // The scene is written by an LLM from the post text, and cinema posts name the
+    // "7,000-lumen projector" — which the image model then draws in front of the
+    // audience, the opposite of this company's rear-projection pitch. Strip the
+    // equipment from the scene and restate the sightline last, where it weighs most.
+    const isCinema = /קולנוע/.test(post.business_name || '');
+    const scene = isCinema
+      ? String(sceneDescription).replace(/[^.,;]*(projector|projection equipment|beamer)s?[^.,;]*[.,;]?/gi, '')
+      : sceneDescription;
+    const finalPrompt = buildImagePrompt(scene, sceneSource) + (isCinema
+      ? `
+
+FINAL CHECK: the space between the audience and the glowing screen is empty open grass. No equipment, device, table or tripod anywhere in front of the screen.`
+      : '');
 
     // 2. Generate N image variants via Gemini (default 3)
     const numVariants = Math.min(Math.max(Number(req.query.variants || req.body?.variants || 3), 1), 4);
