@@ -401,6 +401,43 @@ function wrapHebrew(text: string, charsPerLine: number, maxLines: number): strin
   return lines.slice(0, maxLines);
 }
 
+// Skia uses ctx.direction for alignment only; it does not run the bidi
+// algorithm across runs. A mixed line like "Black Friday הגיע לקולנוע" came out
+// as "לקולנוע הגיע Black Friday" when read right to left. Lay the runs out
+// ourselves: consecutive Latin words stay together as one LTR run, and runs are
+// placed right to left in logical order. Pure Hebrew lines are a single run and
+// render exactly as before.
+function drawRtlLine(ctx: any, line: string, centerX: number, y: number) {
+  const words = line.split(' ');
+  const runs: { text: string; ltr: boolean }[] = [];
+  for (const w of words) {
+    const ltr = /[A-Za-z]/.test(w);
+    const last = runs[runs.length - 1];
+    if (last && last.ltr === ltr) last.text += ' ' + w;
+    else runs.push({ text: w, ltr });
+  }
+  if (runs.length === 1) {
+    ctx.textAlign = 'center';
+    ctx.direction = runs[0].ltr ? 'ltr' : 'rtl';
+    ctx.fillText(line, centerX, y);
+    return;
+  }
+  const space = ctx.measureText(' ').width;
+  const widths = runs.map(r => { ctx.direction = r.ltr ? 'ltr' : 'rtl'; return ctx.measureText(r.text).width; });
+  const total = widths.reduce((a, b) => a + b, 0) + space * (runs.length - 1);
+  let right = centerX + total / 2;
+  ctx.textAlign = 'left';
+  runs.forEach((r, i) => {
+    const x = right - widths[i];
+    ctx.direction = r.ltr ? 'ltr' : 'rtl';
+    // With direction rtl, textAlign 'left' still means the run's left edge.
+    ctx.fillText(r.text, x, y);
+    right = x - space;
+  });
+  ctx.direction = 'rtl';
+  ctx.textAlign = 'center';
+}
+
 async function addHebrewOverlay(imageBuffer: Buffer, hebrewText: string, brandColor = '#1a1a2e'): Promise<Buffer> {
   if (!hebrewText || hebrewText.trim().length < 3) return imageBuffer;
   try {
@@ -464,7 +501,7 @@ async function addHebrewOverlay(imageBuffer: Buffer, hebrewText: string, brandCo
 
     let textY = H - totalTextH - Math.round(H * 0.05) + lineHeight / 2;
     for (const line of lines) {
-      ctx.fillText(line, W / 2, textY);
+      drawRtlLine(ctx, line, W / 2, textY);
       textY += lineHeight;
     }
 
@@ -2346,7 +2383,21 @@ const ImageVerdict = z.object({
 });
 type ImageVerdictT = z.infer<typeof ImageVerdict>;
 
-async function judgeImage(apiKey: string, jpeg: Buffer, postText: string, headline: string): Promise<ImageVerdictT | null> {
+// Facts about a business that an image can visibly get wrong. A generic judge
+// passed a front-projector setup for a company whose whole pitch is rear
+// projection; these make the gate check the brand, not just the photo.
+function brandImageChecks(bizName: string): string[] {
+  if (/קולנוע/.test(bizName)) return [
+    'A projector is visible in front of the screen or among the audience (this company projects from BEHIND the screen; showing a front projector advertises the competition).',
+    'The screen is not an inflatable outdoor screen, or it shows no film.',
+  ];
+  if (/חידונ/.test(bizName)) return [
+    'People sit still or pose; the activity is teams moving outdoors between stations, phones in hand.',
+  ];
+  return [];
+}
+
+async function judgeImage(apiKey: string, jpeg: Buffer, postText: string, headline: string, extraChecks: string[] = []): Promise<ImageVerdictT | null> {
   try {
     const client = new Anthropic({ apiKey, timeout: 45_000, maxRetries: 1 });
     const response = await client.messages.parse({
@@ -2371,7 +2422,8 @@ Fail the image (pass=false) if ANY of these is true:
 - A large empty or blank region: a blank band, or a projection screen showing plain white with nothing projected.
 - The scene does not clearly show what the post is about.
 - Visible AI artifacts: malformed hands or faces, floating objects, duplicated people, gibberish lettering.
-- It reads as a generic posed stock photo (a group lined up smiling at the camera) rather than a real moment.
+- It reads as a generic posed stock photo (a group lined up smiling at the camera) rather than a real moment.${extraChecks.map(c => `
+- ${c}`).join('')}
 
 score: 1-10 for how well it would stop someone scrolling. problems: short phrases, empty when it passes.` },
         ],
@@ -2545,7 +2597,9 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
    - Multi-cultural Israelis OK (Russian-Israeli, Ethiopian-Israeli, etc.)
    - NO religious styling (no kippot, no head coverings, no modesty-coded clothing) — secular Israeli vibe only
 
-   ✅ COMMON RULES: large INFLATABLE freestanding screen (4-5m) glowing in evening, audience FACING the screen, warm projector glow on faces, fairy lights/paper lanterns OK, REALISTIC group size
+   ✅ COMMON RULES: large INFLATABLE freestanding screen (4-5m) glowing in evening, audience FACING the screen, warm light from the screen on faces, fairy lights/paper lanterns OK, REALISTIC group size
+   ✅ THE SCREEN ALWAYS SHOWS A FILM: a colourful, blurred movie frame is projected on it. Never a blank white or empty screen.
+   ⛔ NO PROJECTOR IN FRONT OF THE SCREEN: this company projects from BEHIND the screen (rear projection) — that is its selling point: no glare, no cables in the aisles, no shadows. Do not show a projector on a table, tripod or the grass in front of or among the audience. If equipment is visible at all, it is behind the screen.
    🚫 FORBIDDEN: indoor cinema seats | TV screens | empty corporate venues | daytime without screen visible | suits | concert-scale crowds (max 30 visible people) | religious styling
 `;
       if (isFlights) brandRules = `✈️ MANDATORY for ${bizName} (Flight Hunter / צייד טיסות) — ISRAELI TRAVELERS getting deals and reaching incredible destinations. REALISTIC, intimate moments (1-6 people max). Pick ONE archetype:
@@ -2670,7 +2724,7 @@ Composition: action in the upper-2/3 of the frame; keep the bottom 1/3 as a calm
       return sharpMod(out).jpeg({ quality: 90 }).toBuffer();
     }));
     const judgeAll = (bufs: Buffer[]) => claudeKey
-      ? Promise.all(bufs.map(b => judgeImage(claudeKey, b, post.content || topic, hebrewHeadline)))
+      ? Promise.all(bufs.map(b => judgeImage(claudeKey, b, post.content || topic, hebrewHeadline, brandImageChecks(post.business_name || ''))))
       : Promise.resolve(bufs.map(() => null));
 
     let finals = await compose(successful as any);
