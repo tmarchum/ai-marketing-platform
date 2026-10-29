@@ -962,6 +962,123 @@ app.post('/api/owner/leads/:id', async (req: any, res) => {
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Growth: is the marketing actually moving leads? ──────────────────────
+// Baseline = the 30 days before the growth plan started; goal = 5× that.
+// Most real enquiries arrive by phone/WhatsApp, so the owner logs them here
+// with their source — that is what makes the per-channel numbers honest.
+const GROWTH_START = '2026-10-29';
+const LEAD_SOURCES: Record<string, string> = {
+  google: 'חיפוש בגוגל', google_ads: 'גוגל ממומן', directory: 'מידרג / דפי זהב', outreach: 'פנייה יזומה',
+  referral: 'המלצה', social: 'פייסבוק / אינסטגרם', social_ads: 'מטא ממומן', ai: 'עוזר AI', site: 'האתר', other: 'אחר',
+};
+function leadSource(l: any): string {
+  const s = String(l.source || ''), u = String(l.utm_source || '').toLowerCase(), m = String(l.utm_medium || '').toLowerCase();
+  if (s.startsWith('manual:')) { const k = s.slice(7); return LEAD_SOURCES[k] ? k : 'other'; }
+  if (s === 'outreach') return 'outreach';
+  const paid = /cpc|paid|ads/.test(m);
+  if (/google/.test(u)) return paid ? 'google_ads' : 'google';
+  if (/facebook|instagram|meta|fb|ig/.test(u)) return paid ? 'social_ads' : 'social';
+  if (/chatgpt|perplexity|claude|gemini|copilot/.test(u)) return 'ai';
+  if (/midrag|d\.co\.il|zap|b144/.test(u)) return 'directory';
+  if (s === 'dm' || s === 'comment') return 'social';
+  return 'site';
+}
+type GrowthChannel = { key: string; label: string; owner: 'you' | 'me' | 'base44'; status: 'todo' | 'doing' | 'done' };
+function defaultChannels(bizName: string): GrowthChannel[] {
+  if (/טיסות/.test(bizName)) return [
+    { key: 'domain', label: 'דומיין flighthunter.co.il', owner: 'me', status: 'doing' },
+    { key: 'site_seo', label: 'תוכן גלוי לגוגל ו-AI באתר', owner: 'me', status: 'done' },
+    { key: 'search_console', label: 'Google Search Console + מפת אתר', owner: 'you', status: 'todo' },
+    { key: 'stats', label: 'אימות או הסרת הנתונים באתר', owner: 'you', status: 'todo' },
+    { key: 'social', label: 'פוסטים לפי לוח השנה', owner: 'me', status: 'doing' },
+  ];
+  const cinema = /קולנוע/.test(bizName);
+  return [
+    { key: 'gbp', label: 'פרופיל Google Business', owner: 'you', status: 'todo' },
+    { key: 'directories', label: 'מידרג ודפי זהב', owner: 'you', status: 'todo' },
+    { key: 'reviews', label: 'ביקורות מ-5–10 לקוחות עבר', owner: 'you', status: 'todo' },
+    { key: 'site_titles', label: 'כותרות ותגיות שיתוף בעברית (בייס 44)', owner: 'base44', status: 'doing' },
+    ...(cinema ? [
+      { key: 'landing', label: 'דפי נחיתה לפי קהל (בייס 44)', owner: 'base44' as const, status: 'todo' as const },
+      { key: 'google_ads', label: 'קמפיין חיפוש בגוגל — ניסוי 14 יום', owner: 'you' as const, status: 'todo' as const },
+      { key: 'outreach', label: 'פנייה יזומה לרשויות וקיבוצים', owner: 'me' as const, status: 'todo' as const },
+    ] : []),
+    { key: 'social', label: 'פוסטים לפי לוח השנה', owner: 'me', status: 'doing' },
+  ];
+}
+
+app.get('/api/owner/growth', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { data: rows } = await sb.from('businesses').select('id, name, color, social').eq('user_id', req.userId);
+    const ids = (rows || []).map((b: any) => b.id);
+    const since = new Date(Date.parse(GROWTH_START) - 30 * OWNER_DAY).toISOString();
+    const { data: leads } = ids.length
+      ? await sb.from('leads').select('business_id, source, utm_source, utm_medium, created_at').in('business_id', ids).gte('created_at', since)
+      : { data: [] as any[] };
+    const now = Date.now(), start = Date.parse(GROWTH_START);
+    const businesses = (rows || []).map((b: any) => {
+      const mine = (leads || []).filter((l: any) => l.business_id === b.id);
+      const t = (l: any) => Date.parse(l.created_at);
+      const baseline = mine.filter((l: any) => t(l) < start).length;
+      const last30 = mine.filter((l: any) => t(l) >= now - 30 * OWNER_DAY).length;
+      const bySource: Record<string, number> = {};
+      mine.filter((l: any) => t(l) >= start).forEach((l: any) => { const k = leadSource(l); bySource[k] = (bySource[k] || 0) + 1; });
+      // 12 weekly buckets, oldest first
+      const weeks = Array.from({ length: 12 }, (_, i) => {
+        const to = now - (11 - i) * 7 * OWNER_DAY, from = to - 7 * OWNER_DAY;
+        return { from: new Date(from).toISOString().slice(0, 10), n: mine.filter((l: any) => t(l) >= from && t(l) < to).length };
+      });
+      const g = b.social?.growth || {};
+      const saved: Record<string, string> = g.channels || {};
+      const channels = defaultChannels(b.name).map(c => ({ ...c, status: (saved[c.key] as any) || c.status }));
+      return {
+        id: b.id, name: b.name, color: b.color || '#6366f1',
+        baseline, last30, goal: Math.max(5, baseline * 5), bySource, weeks, channels,
+        aiChecks: g.aiChecks || [{ date: GROWTH_START, found: 0, total: 13 }],
+        daysIn: Math.max(0, Math.floor((now - start) / OWNER_DAY)),
+      };
+    });
+    res.json({ start: GROWTH_START, sources: LEAD_SOURCES, businesses });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/owner/growth/:bizId/channel', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const key = String(req.body?.key || ''), status = String(req.body?.status || '');
+    if (!['todo', 'doing', 'done'].includes(status) || !/^[a-z_]{2,30}$/.test(key)) return res.status(400).json({ error: 'bad input' });
+    const { data: b } = await sb.from('businesses').select('id, social').eq('id', req.params.bizId).eq('user_id', req.userId).maybeSingle();
+    if (!b) return res.status(404).json({ error: 'not found' });
+    const social = b.social || {};
+    social.growth = { ...(social.growth || {}), channels: { ...(social.growth?.channels || {}), [key]: status } };
+    const { error } = await sb.from('businesses').update({ social }).eq('id', b.id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// Owner logs an enquiry that came by phone/WhatsApp, with where it came from.
+app.post('/api/owner/leads', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { businessId, name, phone, message, source } = req.body || {};
+    if (!LEAD_SOURCES[source]) return res.status(400).json({ error: 'bad source' });
+    const biz = (await ownerBusinesses(sb, req.userId)).find((b: any) => b.id === businessId);
+    if (!biz) return res.status(404).json({ error: 'business not found' });
+    const { data, error } = await sb.from('leads').insert({
+      business_id: biz.id, business_name: biz.name, name: String(name || '').slice(0, 120) || 'פנייה טלפונית',
+      phone: phone ? String(phone).slice(0, 30) : null, message: message ? String(message).slice(0, 1000) : null,
+      source: `manual:${source}`, status: 'new',
+    }).select('id, business_id, business_name, name, phone, email, message, source, utm_source, status, created_at').single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, lead: data });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/businesses', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.json([]);

@@ -178,3 +178,33 @@
 .o-plan-body h3 { margin: 0 0 4px; font-size: 16px; }
 .o-plan-body p { margin: 0 0 10px; color: var(--soft); font-size: 14px; }
 @media (max-width: 760px) { .o-bottom { grid-template-columns: repeat(6, 1fr); } .o-bottom button small { font-size: 10px; } }
+
+/* ── צמיחה ── */
+.o-growth { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.o-gcard { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; box-shadow: var(--shadow); }
+.o-gcard h2 { margin: 0 0 12px; font-size: 18px; }
+.o-gcard h2::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--c); margin-inline-end: 8px; vertical-align: 1px; }
+.o-gnum { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.o-gnum b { display: block; font-size: 30px; font-weight: 700; line-height: 1.1; }
+.o-gnum span { font-size: 13px; color: var(--soft); }
+.o-bar { height: 8px; background: var(--bg); border-radius: 99px; margin: 12px 0 16px; overflow: hidden; }
+.o-bar i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+.o-weeks { display: flex; align-items: flex-end; gap: 4px; height: 56px; margin-bottom: 4px; direction: ltr; }
+.o-weeks i { flex: 1; background: var(--line); border-radius: 3px 3px 0 0; }
+.o-weeks i.after { background: var(--accent); }
+.o-gh { font-size: 14px; font-weight: 600; margin: 18px 0 8px; color: var(--soft); }
+.o-src { list-style: none; margin: 0; padding: 0; }
+.o-src li { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.o-chan { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.o-chan li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; font-size: 14px; }
+.o-st { border: 0; background: none; padding: 0; cursor: pointer; font-size: 20px; color: var(--faint); line-height: 1; }
+.o-st.doing { color: var(--warn); }
+.o-st.done { color: var(--good); }
+.o-done { color: var(--faint); text-decoration: line-through; }
+.o-who { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: var(--bg); color: var(--soft); white-space: nowrap; }
+.o-who.you { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.o-addlead { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; }
+.o-addlead label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--soft); }
+.o-addlead input, .o-addlead select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.o-addlead .wide { grid-column: 1 / -1; }
+@media (max-width: 760px) { .o-bottom { grid-template-columns: repeat(7, 1fr); } .o-bottom button small { font-size: 9px; } }

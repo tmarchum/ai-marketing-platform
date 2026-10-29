@@ -8,6 +8,7 @@ import "./owner.css";
 
 const TABS = [
   { id: "home", label: "סקירה", icon: "layout-dashboard" },
+  { id: "growth", label: "צמיחה", icon: "trending-up" },
   { id: "queue", label: "לאישור", icon: "circle-check" },
   { id: "leads", label: "פניות", icon: "address-book" },
   { id: "calendar", label: "לוח פרסום", icon: "calendar-event" },
@@ -91,6 +92,7 @@ export default function OwnerApp({ session, onClassic }) {
         {err && <div className="o-err">{err} <button onClick={load}>נסה שוב</button></div>}
         {!overview && !err && <div className="o-loading">טוען את השבוע שלך…</div>}
         {overview && tab === "home" && <Home overview={overview} onOpenPost={openPost} onGo={setTab} />}
+        {overview && tab === "growth" && <Growth />}
         {overview && tab === "queue" && <Queue posts={posts || []} businesses={overview.businesses} focus={focusPost} onChange={replacePost} reload={load} />}
         {overview && tab === "leads" && <Leads businesses={overview.businesses} />}
         {overview && tab === "calendar" && <Calendar posts={posts || []} businesses={overview.businesses} onOpenPost={openPost} />}
@@ -301,6 +303,110 @@ function PostCard({ p, color, focused, onChange, reload }) {
   );
 }
 
+// ── 2. צמיחה ────────────────────────────────────────────────────────────────
+const OWNER_LABEL = { you: "אתה", me: "אני", base44: "בייס 44" };
+const STATUS_NEXT = { todo: "doing", doing: "done", done: "todo" };
+const STATUS_LABEL = { todo: "לא התחיל", doing: "בתהליך", done: "בוצע" };
+
+function Growth() {
+  const [g, setG] = useState(null);
+  const [err, setErr] = useState("");
+  const [adding, setAdding] = useState(false);
+  const load = useCallback(() => api("/api/owner/growth").then(setG).catch(e => setErr(e.message)), []);
+  useEffect(() => { load(); }, [load]);
+  if (err) return <div className="o-err">{err}</div>;
+  if (!g) return <div className="o-loading">טוען מדדים…</div>;
+
+  const cycle = async (b, c) => {
+    const status = STATUS_NEXT[c.status];
+    setG(x => ({ ...x, businesses: x.businesses.map(y => y.id !== b.id ? y : { ...y, channels: y.channels.map(z => z.key === c.key ? { ...z, status } : z) }) }));
+    try { await post(`/api/owner/growth/${b.id}/channel`, { key: c.key, status }); } catch (e) { setErr(e.message); }
+  };
+  const daysIn = g.businesses[0]?.daysIn ?? 0;
+
+  return (
+    <>
+      <div className="o-hello">
+        <h1>צמיחה</h1>
+        <span>יום {Math.min(daysIn, 60)} מתוך 60 · המטרה: פי 5 בפניות</span>
+      </div>
+      <div className="o-actions" style={{ marginBottom: 16 }}>
+        <button className="o-btn" onClick={() => setAdding(a => !a)}><i className="ti ti-phone-plus" aria-hidden="true" /> רישום פנייה מטלפון / וואטסאפ</button>
+        <span className="o-muted">רוב הפניות מגיעות בטלפון. רישום עם המקור הוא מה שמראה איזה ערוץ עובד.</span>
+      </div>
+      {adding && <AddLead businesses={g.businesses} sources={g.sources} onDone={() => { setAdding(false); load(); }} />}
+
+      <div className="o-growth">
+        {g.businesses.map(b => {
+          const pct = Math.min(100, Math.round((b.last30 / b.goal) * 100));
+          const max = Math.max(1, ...b.weeks.map(w => w.n));
+          const sources = Object.entries(b.bySource).sort((x, y) => y[1] - x[1]);
+          const ai = b.aiChecks[b.aiChecks.length - 1];
+          const done = b.channels.filter(c => c.status === "done").length;
+          return (
+            <article key={b.id} className="o-gcard" style={{ "--c": b.color }}>
+              <h2>{b.name}</h2>
+              <div className="o-gnum">
+                <div><b>{b.last30}</b><span>פניות ב-30 הימים האחרונים</span></div>
+                <div><b>{b.goal}</b><span>המטרה (לפני: {b.baseline})</span></div>
+              </div>
+              <div className="o-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${pct}%` }} /></div>
+
+              <div className="o-weeks" aria-label="פניות לפי שבוע, 12 שבועות">
+                {b.weeks.map(w => <i key={w.from} title={`שבוע מ-${w.from}: ${w.n}`} style={{ height: `${Math.max(4, (w.n / max) * 100)}%` }} className={w.from >= g.start ? "after" : ""} />)}
+              </div>
+              <div className="o-muted">12 שבועות אחרונים · בצבע: מאז תחילת התוכנית</div>
+
+              <h3 className="o-gh">מאיפה הגיעו הפניות</h3>
+              {sources.length === 0
+                ? <p className="o-muted">עדיין אין פניות מאז {g.start.split("-").reverse().join(".")}.</p>
+                : <ul className="o-src">{sources.map(([k, n]) => <li key={k}><span>{g.sources[k] || k}</span><b>{n}</b></li>)}</ul>}
+
+              <h3 className="o-gh">נראות בעוזרי AI</h3>
+              <p className="o-muted">בדיקה אחרונה ({ai.date.split("-").reverse().join(".")}): הופיע ב-{ai.found} מתוך {ai.total} שאלות. הבדיקה הבאה ב-28.11.</p>
+
+              <h3 className="o-gh">ערוצים · {done}/{b.channels.length} בוצעו</h3>
+              <ul className="o-chan">
+                {b.channels.map(c => (
+                  <li key={c.key}>
+                    <button className={`o-st ${c.status}`} onClick={() => cycle(b, c)} title="לחץ לעדכון סטטוס">
+                      <i className={`ti ti-${c.status === "done" ? "circle-check" : c.status === "doing" ? "progress" : "circle"}`} aria-hidden="true" />
+                    </button>
+                    <span className={c.status === "done" ? "o-done" : ""}>{c.label}</span>
+                    <small className={`o-who ${c.owner}`}>{OWNER_LABEL[c.owner]}</small>
+                    <small className="o-muted">{STATUS_LABEL[c.status]}</small>
+                  </li>
+                ))}
+              </ul>
+            </article>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function AddLead({ businesses, sources, onDone }) {
+  const [f, setF] = useState({ businessId: businesses[0]?.id, source: "google", name: "", phone: "", message: "" });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const u = (k, v) => setF(x => ({ ...x, [k]: v }));
+  const save = async e => {
+    e.preventDefault(); setBusy(true); setErr("");
+    try { await post("/api/owner/leads", f); onDone(); } catch (x) { setErr(x.message); setBusy(false); }
+  };
+  return (
+    <form className="o-addlead" onSubmit={save}>
+      <label>עסק<select value={f.businessId} onChange={e => u("businessId", e.target.value)}>{businesses.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>
+      <label>איך הגיע אליך?<select value={f.source} onChange={e => u("source", e.target.value)}>{Object.entries(sources).filter(([k]) => k !== "site").map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
+      <label>שם<input value={f.name} onChange={e => u("name", e.target.value)} placeholder="לא חובה" /></label>
+      <label>טלפון<input value={f.phone} onChange={e => u("phone", e.target.value)} inputMode="tel" placeholder="לא חובה" /></label>
+      <label className="wide">מה ביקש<input value={f.message} onChange={e => u("message", e.target.value)} placeholder="למשל: הקרנה לקיבוץ בחנוכה, 200 איש" /></label>
+      <div className="o-actions wide"><button className="o-btn" disabled={busy}>{busy ? "שומר…" : "שמור פנייה"}</button>{err && <span className="o-err">{err}</span>}</div>
+    </form>
+  );
+}
+
 // ── 3. פניות ────────────────────────────────────────────────────────────────
 const LEAD_STATUS = { new: "חדשה", contacted: "דיברנו", converted: "נסגר ✓", closed: "לא רלוונטי" };
 
@@ -331,7 +437,7 @@ function Leads({ businesses }) {
                 <span className="o-tag">{l.business_name}</span>
               </div>
               {l.message && <p>{l.message}</p>}
-              <div className="o-lead-meta">{heShort.format(new Date(l.created_at))}{l.utm_source ? ` · מקור: ${l.utm_source}` : ""}</div>
+              <div className="o-lead-meta">{heShort.format(new Date(l.created_at))}{l.source?.startsWith("manual:") ? " · נרשם ידנית" : l.utm_source ? ` · מקור: ${l.utm_source}` : ""}</div>
               <div className="o-actions">
                 {wa && <a className="o-btn" href={wa} target="_blank" rel="noreferrer">וואטסאפ</a>}
                 {phone && <a className="o-ghost" href={`tel:${phone}`}>התקשר</a>}
