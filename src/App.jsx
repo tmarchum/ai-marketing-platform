@@ -1016,7 +1016,50 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
     await savePostField({ scheduled_at: null });
     setScheduling(false);
   }
+  // One image system. These buttons used to call the old /api/gemini/image
+  // endpoint (no brand rules) and keep the result in browser memory, so a new
+  // image could never replace the one that publishes. Now they use the same
+  // generator as the scheduler and the result lands in the post's gallery.
+  const [imgBusy, setImgBusy] = useState(null); // null | "gen" | "upload"
+  const [imgErr, setImgErr] = useState("");
+  const isDbPost = typeof post.id === "string" && post.id.length > 20;
+
+  async function regenImage() {
+    if (!isDbPost) return;
+    setImgBusy("gen"); setImgErr("");
+    try {
+      const r = await authFetch(`/api/posts/${post.id}/generate-media?force=1&variants=2`,
+        { method:"POST", headers:{"Content-Type":"application/json"}, body:"{}" });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`);
+      onUpdate(p=>({...p, image_url: d.url, image_variants: d.variants, pipeline: null}));
+    } catch (e) { setImgErr("יצירת התמונה נכשלה: " + e.message); }
+    setImgBusy(null);
+  }
+
+  // Downscale in the browser first: phone photos are 5-12MB and the function
+  // body limit is 4.5MB.
+  async function uploadImage(file) {
+    if (!file || !isDbPost) return;
+    setImgBusy("upload"); setImgErr("");
+    try {
+      const bmp = await createImageBitmap(file);
+      const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+      c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+      const data_url = c.toDataURL("image/jpeg", 0.88);
+      const r = await authFetch(`/api/posts/${post.id}/upload-image`,
+        { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ data_url }) });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`);
+      onUpdate(p=>({...p, image_url: d.url, image_variants: d.variants, pipeline: null}));
+    } catch (e) { setImgErr("העלאת התמונה נכשלה: " + e.message); }
+    setImgBusy(null);
+  }
+
   async function startMedia(type, opts) {
+    if (type !== "gemini-video" && isDbPost) return regenImage();
     setMediaChoice(null);
     setVideoOpts(null);
     const init = { stages:Object.fromEntries(MEDIA_STAGES.map(s=>[s.id,"pending"])), current:null, done:false, mediaType:type, aspect: opts?.aspect, duration: opts?.duration };
@@ -1104,27 +1147,49 @@ function PostCard({ post, onUpdate, onDelete, onRegenerate, compact, businesses,
               title="תמונת מקור"/>
           )}
         </div>
-        {/* Image variants picker */}
-        {Array.isArray(post.image_variants) && post.image_variants.length > 1 && (
-          <div style={{marginTop:8}}>
-            <div style={{color:T.textDim,fontSize:10,fontWeight:600,marginBottom:5}}>🎨 וריאציות — לחץ לבחירה:</div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {post.image_variants.map((vurl, vi) => {
-                const isSelected = vurl === post.image_url;
-                return <button key={vi}
-                  onClick={async()=>{
-                    onUpdate(p=>({...p, image_url: vurl}));
-                    try { await authFetch(`/api/posts/${post.id}/select-variant`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({variant_url: vurl})}); } catch{}
-                  }}
-                  style={{
-                    width:60,height:60,padding:0,border:`2px solid ${isSelected?"#10B981":T.border}`,
-                    borderRadius:8,overflow:"hidden",cursor:"pointer",background:"transparent",
-                    boxShadow:isSelected?"0 0 0 2px #10B98144":"none",transition:"all 0.2s"
-                  }}>
-                  <img src={vurl} alt={`v${vi+1}`} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
-                </button>;
-              })}
+        {/* Image gallery — every image this post ever had. The highlighted one
+            is what publishes; clicking another swaps it in immediately. */}
+        {isDbPost && !post.video_url && !post.published && (
+          <div style={{marginTop:10,padding:"10px 12px",background:T.inputBg,borderRadius:10,border:`1px solid ${T.border}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+              <span style={{color:T.textSec,fontSize:11,fontWeight:700}}>
+                🖼️ תמונות הפוסט{(post.image_variants||[]).length>1 ? ` (${post.image_variants.length}) — לחץ כדי לבחור את זו שתתפרסם` : ""}
+              </span>
+              <div style={{display:"flex",gap:6}}>
+                <Btn sm bg="#8B5CF615" color="#8B5CF6" disabled={!!imgBusy} onClick={regenImage}>
+                  {imgBusy==="gen" ? "⏳ יוצר…" : "✨ צור תמונה נוספת"}
+                </Btn>
+                <label style={{cursor:imgBusy?"default":"pointer"}}>
+                  <input type="file" accept="image/*" style={{display:"none"}} disabled={!!imgBusy}
+                    onChange={e=>{ uploadImage(e.target.files?.[0]); e.target.value=""; }}/>
+                  <span style={{display:"inline-block",fontSize:11,fontWeight:600,padding:"5px 10px",borderRadius:8,
+                    background:"#10B98115",color:"#10B981",opacity:imgBusy?0.5:1}}>
+                    {imgBusy==="upload" ? "⏳ מעלה…" : "📷 העלה תמונה משלך"}
+                  </span>
+                </label>
+              </div>
             </div>
+            {imgErr && <div style={{color:"#EF4444",fontSize:11,marginBottom:6}}>{imgErr}</div>}
+            {(post.image_variants||[]).length > 0 && (
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {post.image_variants.map((vurl, vi) => {
+                  const isSelected = vurl === post.image_url;
+                  return <button key={vurl} title={isSelected ? "התמונה שתתפרסם" : "החלף לתמונה הזו"}
+                    onClick={async()=>{
+                      if (isSelected) return;
+                      onUpdate(p=>({...p, image_url: vurl}));
+                      try { await authFetch(`/api/posts/${post.id}/select-variant`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({variant_url: vurl})}); } catch{}
+                    }}
+                    style={{position:"relative",width:72,height:72,padding:0,border:`2px solid ${isSelected?"#10B981":T.border}`,
+                      borderRadius:8,overflow:"hidden",cursor:isSelected?"default":"pointer",background:"transparent",
+                      boxShadow:isSelected?"0 0 0 2px #10B98144":"none",transition:"all 0.2s"}}>
+                    <img src={vurl} alt={`תמונה ${vi+1}`} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+                    {isSelected && <span style={{position:"absolute",bottom:0,insetInline:0,background:"#10B981",color:"#fff",
+                      fontSize:9,fontWeight:700,padding:"1px 0"}}>תתפרסם</span>}
+                  </button>;
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>

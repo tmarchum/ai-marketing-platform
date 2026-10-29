@@ -1,4 +1,7 @@
 // Vercel Serverless Function — wraps Express app as a single catch-all handler
+import Anthropic from '@anthropic-ai/sdk';
+import { z } from 'zod';
+import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import express from 'express';
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
@@ -349,8 +352,8 @@ async function ensureHebrewFont(): Promise<{ ok: boolean; via: string; err?: str
     // Attempt 2: CDN fetch as buffer
     if (!_hebrewFontBuffer) {
       const urls = [
-        'https://cdn.jsdelivr.net/gh/googlefonts/heebo@main/fonts/ttf/Heebo-Bold.ttf',
-        'https://github.com/googlefonts/heebo/raw/main/fonts/ttf/Heebo-Bold.ttf',
+        'https://raw.githubusercontent.com/google/fonts/main/ofl/heebo/Heebo%5Bwght%5D.ttf',
+        'https://cdn.jsdelivr.net/fontsource/fonts/heebo@latest/hebrew-700-normal.ttf',
       ];
       for (const url of urls) {
         try {
@@ -401,7 +404,14 @@ function wrapHebrew(text: string, charsPerLine: number, maxLines: number): strin
 async function addHebrewOverlay(imageBuffer: Buffer, hebrewText: string, brandColor = '#1a1a2e'): Promise<Buffer> {
   if (!hebrewText || hebrewText.trim().length < 3) return imageBuffer;
   try {
-    await ensureHebrewFont();
+    // Without Heebo the canvas has no Hebrew glyphs: fillText draws nothing and
+    // the image ships with an empty band and a stray accent bar. Ship the clean
+    // photo instead.
+    const font = await ensureHebrewFont();
+    if (!font.ok) {
+      console.error('[overlay] Hebrew font unavailable, skipping headline', font.err || '');
+      return imageBuffer;
+    }
     const sharpMod = (await import('sharp')).default;
     const { createCanvas } = await import('@napi-rs/canvas');
 
@@ -2322,6 +2332,59 @@ Return ONLY JSON: {"content": "full post text in Hebrew", "hashtags": ["#tag1", 
 // AUTO MEDIA GEN — Generate image for a specific post
 // ══════════════════════════════════════════════════════════════
 
+// ══════════════════════════════════════════════════════════════
+// IMAGE QUALITY GATE
+// Images were reaching the queue with a blank white projection screen, an empty
+// band where the headline should be, or a posed stock group unrelated to the
+// post. Nothing looked at them before they were scheduled. Claude now does.
+// ══════════════════════════════════════════════════════════════
+
+const ImageVerdict = z.object({
+  pass: z.boolean(),
+  score: z.number(),
+  problems: z.array(z.string()),
+});
+type ImageVerdictT = z.infer<typeof ImageVerdict>;
+
+async function judgeImage(apiKey: string, jpeg: Buffer, postText: string, headline: string): Promise<ImageVerdictT | null> {
+  try {
+    const client = new Anthropic({ apiKey, timeout: 45_000, maxRetries: 1 });
+    const response = await client.messages.parse({
+      model: 'claude-opus-5-5',
+      max_tokens: 2000,
+      output_config: { effort: 'low', format: zodOutputFormat(ImageVerdict) },
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: jpeg.toString('base64') } },
+          { type: 'text', text:
+`This image will be published as a social media post for a small Israeli business. Judge it as the business owner would before paying to promote it.
+
+The post says:
+"""${postText.slice(0, 900)}"""
+${headline ? `
+The image is supposed to show this Hebrew headline, rendered over the photo: "${headline}"` : `
+No text overlay is expected.`}
+
+Fail the image (pass=false) if ANY of these is true:
+- A headline was expected but is missing, cut off, misspelled, or unreadable.
+- A large empty or blank region: a blank band, or a projection screen showing plain white with nothing projected.
+- The scene does not clearly show what the post is about.
+- Visible AI artifacts: malformed hands or faces, floating objects, duplicated people, gibberish lettering.
+- It reads as a generic posed stock photo (a group lined up smiling at the camera) rather than a real moment.
+
+score: 1-10 for how well it would stop someone scrolling. problems: short phrases, empty when it passes.` },
+        ],
+      }],
+    });
+    if (response.stop_reason === 'refusal') return null;
+    return response.parsed_output ?? null;
+  } catch (e: any) {
+    console.error('[judgeImage]', e?.message || e);
+    return null;   // a judge failure must never block publishing
+  }
+}
+
 app.post('/api/posts/:id/generate-media', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
@@ -2573,7 +2636,7 @@ Composition: action in the upper-2/3 of the frame; keep the bottom 1/3 as a calm
     // ── CACHE LOOKUP — use deterministic input (topic + headline + brand color),
     //    not the LLM-enhanced finalPrompt (which is non-deterministic).
     const wantFresh = req.query.force === '1' || req.body?.force === true;
-    const imageCacheKey = mediaCacheKey('image', [post.business_id || post.business_name, topic.slice(0, 500), hebrewHeadline, brandColor]);
+    const imageCacheKey = mediaCacheKey('image', ['v2-font', post.business_id || post.business_name, topic.slice(0, 500), hebrewHeadline, brandColor]);
     let cacheHit = false;
     let uploaded: string[] = [];
     if (!wantFresh) {
@@ -2599,36 +2662,66 @@ Composition: action in the upper-2/3 of the frame; keep the bottom 1/3 as a calm
     // a real Heebo font. That guarantees 100% correct Hebrew spelling.
     const fontStatus = await ensureHebrewFont();
     await sb.storage.createBucket('media', { public: true }).catch(() => {});
-    for (let i = 0; i < successful.length; i++) {
-      const r = successful[i];
-      const rawBuffer = Buffer.from(r.base64!, 'base64');
-      const finalBuffer = hebrewHeadline
-        ? await addHebrewOverlay(rawBuffer, hebrewHeadline, brandColor)
-        : rawBuffer;
-      const fileName = `media/${post.user_id || 'anon'}/${Date.now()}-${postId}-v${i + 1}.jpg`;
+
+    const sharpMod = (await import('sharp')).default;
+    const compose = (list: { base64: string }[]) => Promise.all(list.map(async r => {
+      const raw = Buffer.from(r.base64, 'base64');
+      const out = hebrewHeadline ? await addHebrewOverlay(raw, hebrewHeadline, brandColor) : raw;
+      return sharpMod(out).jpeg({ quality: 90 }).toBuffer();
+    }));
+    const judgeAll = (bufs: Buffer[]) => claudeKey
+      ? Promise.all(bufs.map(b => judgeImage(claudeKey, b, post.content || topic, hebrewHeadline)))
+      : Promise.resolve(bufs.map(() => null));
+
+    let finals = await compose(successful as any);
+    let verdicts = await judgeAll(finals);
+
+    // Every candidate failed: one more round before settling for the best of a bad lot.
+    if (finals.length && verdicts.every(v => v && !v.pass)) {
+      const retry = (await Promise.all(Array.from({ length: numVariants }, (_, i) => generateOne(i + 10))))
+        .filter(r => !!r.base64) as any;
+      const rf = await compose(retry);
+      finals = finals.concat(rf);
+      verdicts = verdicts.concat(await judgeAll(rf));
+    }
+
+    // Passing images first, best score first. An unjudged image (no key, judge
+    // error) ranks as a neutral pass so the gate can only help, never block.
+    const rank = (v: ImageVerdictT | null) => v ? (v.pass ? 100 : 0) + v.score : 105;
+    const order = finals.map((_, i) => i).sort((a, b) => rank(verdicts[b]) - rank(verdicts[a]));
+    const qc = order.map(i => verdicts[i]);
+
+    for (let k = 0; k < order.length; k++) {
+      const finalBuffer = finals[order[k]];
+      const fileName = `media/${post.user_id || 'anon'}/${Date.now()}-${postId}-v${k + 1}.jpg`;
       const { error: upErr } = await sb.storage.from('media').upload(fileName, finalBuffer, { contentType: 'image/jpeg', upsert: true });
       if (upErr) continue;
       const { data: urlData } = sb.storage.from('media').getPublicUrl(fileName);
       uploaded.push(urlData.publicUrl);
-      // Save first successful variant to cache for future identical generations
-      if (i === 0) saveCachedMedia(sb, 'image', imageCacheKey, 'jpg', finalBuffer, 'image/jpeg').catch(() => {});
+      if (k === 0 && (!qc[0] || qc[0].pass)) saveCachedMedia(sb, 'image', imageCacheKey, 'jpg', finalBuffer, 'image/jpeg').catch(() => {});
     }
 
     if (uploaded.length === 0) {
       return res.status(500).json({ error: 'All uploads failed' });
     }
 
-    // Save: first as primary, rest in image_variants
+    // The new image becomes the one that publishes, but nothing is thrown
+    // away: earlier images stay in the gallery so the owner can switch back.
+    // (This used to overwrite image_variants, so "generate another" destroyed
+    // the previous choice.)
+    const gallery = mergeGallery(uploaded, post.image_url, post.image_variants);
+    const topVerdict = qc[0] || null;
     await sb.from('content_posts').update({
       image_url: uploaded[0],
       image_prompt: finalPrompt,
-      image_variants: uploaded,
+      image_variants: gallery,
+      performance: { ...(post.performance || {}), image_qc: topVerdict ? { ...topVerdict, at: new Date().toISOString() } : null },
     }).eq('id', postId);
 
     res.json({
       ok: true,
       url: uploaded[0],
-      variants: uploaded,
+      variants: gallery,
       count: uploaded.length,
       prompt: finalPrompt,
       headline: hebrewHeadline,
@@ -3373,6 +3466,52 @@ app.post('/api/posts/:id/use-variant', async (req: any, res) => {
     }).eq('id', req.params.id);
 
     res.json({ ok: true });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// Newest first, de-duplicated, capped. Shared by every path that adds an image
+// to a post so the gallery behaves the same whether the image was generated or
+// uploaded.
+const GALLERY_MAX = 12;
+function mergeGallery(fresh: string[], current?: string | null, existing?: any): string[] {
+  const prior = Array.isArray(existing) ? existing : [];
+  const out: string[] = [];
+  for (const u of [...fresh, current, ...prior]) {
+    if (typeof u === 'string' && u && !out.includes(u)) out.push(u);
+  }
+  return out.slice(0, GALLERY_MAX);
+}
+
+// Owner-supplied photo. Real photos of real events beat any generated image,
+// so this is a first-class path, not a workaround: the upload becomes the
+// image that publishes and joins the gallery like a generated one.
+app.post('/api/posts/:id/upload-image', async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { data_url } = req.body || {};
+    const m = /^data:(image\/(?:jpeg|png|webp));base64,(.+)$/.exec(String(data_url || ''));
+    if (!m) return res.status(400).json({ error: 'data_url (jpeg/png/webp) required' });
+    const buf = Buffer.from(m[2], 'base64');
+    if (buf.length > 4_000_000) return res.status(413).json({ error: 'image too large (max 4MB)' });
+
+    const { data: post, error } = await sb.from('content_posts')
+      .select('id, user_id, image_url, image_variants').eq('id', req.params.id).single();
+    if (error || !post) return res.status(404).json({ error: 'Post not found' });
+
+    // Normalise to a 1080px-wide JPEG so every platform accepts it.
+    const sharpMod = (await import('sharp')).default;
+    const jpg = await sharpMod(buf).rotate().resize({ width: 1080, withoutEnlargement: true })
+      .jpeg({ quality: 88 }).toBuffer();
+    const fileName = `media/${post.user_id || 'anon'}/${Date.now()}-${post.id}-upload.jpg`;
+    const { error: upErr } = await sb.storage.from('media')
+      .upload(fileName, jpg, { contentType: 'image/jpeg', upsert: true });
+    if (upErr) return res.status(500).json({ error: upErr.message });
+    const url = sb.storage.from('media').getPublicUrl(fileName).data.publicUrl;
+
+    const gallery = mergeGallery([url], post.image_url, post.image_variants);
+    await sb.from('content_posts').update({ image_url: url, image_variants: gallery }).eq('id', post.id);
+    res.json({ ok: true, url, variants: gallery });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
