@@ -96,7 +96,7 @@ export default function OwnerApp({ session, onClassic }) {
         {overview && tab === "queue" && <Queue posts={posts || []} businesses={overview.businesses} focus={focusPost} onChange={replacePost} reload={load} />}
         {overview && tab === "leads" && <Leads businesses={overview.businesses} />}
         {overview && tab === "calendar" && <Calendar posts={posts || []} businesses={overview.businesses} onOpenPost={openPost} />}
-        {overview && tab === "ads" && <Ads businesses={overview.businesses} />}
+        {overview && tab === "ads" && <Ads />}
         {overview && tab === "settings" && <Settings businesses={overview.businesses} onClassic={onClassic} />}
       </main>
 
@@ -489,33 +489,29 @@ function Calendar({ posts, businesses, onOpenPost }) {
 
 
 // ── פרסום ממומן ─────────────────────────────────────────────────────────────
-// Channels and the weekly plan. Nothing here spends: a proposal becomes a
-// campaign only on the owner's click, and only once a channel is connected.
+// Who runs which paid channel. One owner per channel, so two agents never bid
+// against each other or spend from the same cap. Organic posting stays here.
 const CHANNELS = [
-  { id: "meta", name: "מטא", sub: "פייסבוק ואינסטגרם", icon: "brand-meta", status: "pending",
-    note: "חסר טוקן פרסום (ads_management). הפיקסל כבר מותקן ומודד פניות בשלושת האתרים." },
-  { id: "tiktok", name: "טיקטוק", sub: "TikTok Ads", icon: "brand-tiktok", status: "off",
+  { id: "google", name: "Google Ads", sub: "חיפוש בגוגל · הקולנוע הנודד", icon: "brand-google", status: "on", owner: "Claude (המערכת הזו)",
+    note: "2 קמפיינים: השכרת ציוד הקרנה ₪15 ליום, הקרנה לאירועים ₪20 ליום. חיפה עד באר שבע. ניסוי 1.11–15.11, נעצר אוטומטית." },
+  { id: "meta", name: "מטא ממומן", sub: "קמפיינים בפייסבוק ואינסטגרם", icon: "brand-meta", status: "external", owner: "בוט Grok",
+    note: "הקמפיינים הממומנים במטא מנוהלים ע\"י בוטי Grok (הקולנוע הנודד, שיווק החידונאים). הפוסטים האורגניים ממשיכים לצאת מכאן." },
+  { id: "tiktok", name: "טיקטוק", sub: "TikTok Ads", icon: "brand-tiktok", status: "off", owner: "—",
     note: "לא מחובר. דורש חשבון TikTok for Business, פיקסל טיקטוק באתרים, וסרטונים אנכיים קצרים." },
 ];
-const BOOST_PLAN = [
-  { biz: "הקולנוע הנודד", daily: 25, days: 5 },
-  { biz: "החידונאים", daily: 25, days: 5 },
-];
-const MONTHLY_CAP = 750;
+const GOOGLE_DAILY = 35;
+const META_MONTHLY_CAP = 750;
 
-function Ads({ businesses }) {
-  const weekly = BOOST_PLAN.reduce((n, b) => n + b.daily * b.days, 0);
-  const over = weekly * 4 > MONTHLY_CAP;
+function Ads() {
   return (
     <>
-      <div className="o-hello"><h1>פרסום ממומן</h1><span>שום שקל לא יוצא בלי אישור שלך</span></div>
+      <div className="o-hello"><h1>פרסום ממומן</h1><span>ערוץ אחד — מנהל אחד. שום שקל לא יוצא בלי אישור שלך</span></div>
 
       <div className="o-kpis">
-        <div><span>תקציב שבועי מתוכנן</span><b>₪{weekly}</b></div>
-        <div><span>חודשי בקירוב</span><b>₪{weekly * 4}</b></div>
-        <div className={over ? "warn" : ""}><span>תקרת החשבון במטא</span><b>₪{MONTHLY_CAP}</b></div>
+        <div><span>Google Ads ליום</span><b>₪{GOOGLE_DAILY}</b></div>
+        <div><span>Google Ads לניסוי (עד 15.11)</span><b>₪{GOOGLE_DAILY * 15}</b></div>
+        <div><span>תקרת החשבון במטא (בוט Grok)</span><b>₪{META_MONTHLY_CAP}</b></div>
       </div>
-      {over && <p className="o-note"><i className="ti ti-info-circle" aria-hidden="true" /> התוכנית החודשית גבוהה מתקרת החשבון. קידום שחוצה את התקרה לא יאושר עד שהתקרה תעלה.</p>}
 
       <h2 className="o-h2">ערוצים</h2>
       <div className="o-channels">
@@ -524,30 +520,14 @@ function Ads({ businesses }) {
             <div className="o-channel-head">
               <span className="o-channel-icon"><i className={`ti ti-${c.icon}`} aria-hidden="true" /></span>
               <div><h3>{c.name}</h3><small>{c.sub}</small></div>
-              <span className={`o-status ${c.status === "on" ? "good" : c.status === "pending" ? "warn" : "neutral"}`}>
-                {c.status === "on" ? "פעיל" : c.status === "pending" ? "ממתין לחיבור" : "לא מחובר"}
+              <span className={`o-status ${c.status === "on" ? "good" : c.status === "external" ? "warn" : "neutral"}`}>
+                {c.status === "on" ? "פעיל" : c.status === "external" ? "מנוהל חיצונית" : "לא מחובר"}
               </span>
             </div>
             <p>{c.note}</p>
+            <p className="o-muted">מנהל: {c.owner}</p>
           </article>
         ))}
-      </div>
-
-      <h2 className="o-h2">תוכנית הקידום השבועית</h2>
-      <div className="o-plan">
-        {BOOST_PLAN.map(p => {
-          const b = businesses.find(x => x.name === p.biz);
-          return (
-            <article key={p.biz} className="o-plan-row" style={{ "--c": b?.color }}>
-              <div className="o-plan-img" style={b?.next?.image ? { backgroundImage: `url(${b.next.image})` } : undefined} />
-              <div className="o-plan-body">
-                <h3>{p.biz}</h3>
-                <p>הפוסט החזק של השבוע ייבחר לפי ביצועים ואיכות. ₪{p.daily} ליום × {p.days} ימים = ₪{p.daily * p.days}.</p>
-                <div className="o-actions"><button className="o-btn" disabled>אשר קידום</button><span className="o-muted">יופעל אחרי חיבור ערוץ</span></div>
-              </div>
-            </article>
-          );
-        })}
       </div>
     </>
   );
