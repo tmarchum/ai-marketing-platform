@@ -2705,6 +2705,7 @@ Return ONLY JSON: {"content": "full post text in Hebrew", "hashtags": ["#tag1", 
             media_type: cp.media_type || 'image',
             // headline = short Hebrew text we overlay on the generated image (real font, perfect rendering)
             headline: cp.caption_short || cp.hook || cp.theme,
+            hook: cp.hook || null,
             // visual_concept = rich Hebrew scene description (who/where/what/lighting). The
             // image generator reads this so it draws a quiz scene, not generic professionals.
             visual_concept: cp.visual_concept || null,
@@ -2801,6 +2802,17 @@ score: 1-10 for how well it would stop someone scrolling. problems: short phrase
   }
 }
 
+// The calendar's "headline" is the post's opening sentence (up to 200 chars).
+// Clipping it to fit produced half-sentences ("את הדילים הכי") that the quality
+// gate rightly failed. Take the first candidate short enough to be a whole
+// headline; if none is, the image ships as a clean photo with no text.
+function pickOverlayHeadline(calMeta: any): string {
+  const candidates = [calMeta?.headline, calMeta?.hook, calMeta?.theme]
+    .map(c => String(c || '').trim().replace(/[\s,:;–-]+$/, ''))
+    .filter(Boolean);
+  return candidates.find(c => c.length <= 60) || '';
+}
+
 app.post('/api/posts/:id/generate-media', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
@@ -2825,18 +2837,7 @@ app.post('/api/posts/:id/generate-media', async (req: any, res) => {
     // Pull the headline up front — we pass it directly to the image model
     // so it draws the exact Hebrew letters instead of inventing gibberish.
     const calMeta = (post.performance || {}).calendar_meta || {};
-    const overlayCandidate =
-      (req.body?.overlay_text as string) ||
-      (calMeta.headline as string) ||
-      (calMeta.theme as string) ||
-      ((post.content || '').split(/[\n.!?]/)[0] || '').trim();
-    // Cut at a word boundary: slicing at 70 characters produced "וסוכנ" and "יעדי".
-    const hebrewHeadline = (() => {
-      const t = (overlayCandidate || '').trim();
-      if (t.length <= 70) return t;
-      const cut = t.slice(0, 71);
-      return cut.slice(0, cut.lastIndexOf(' ')).replace(/[\s,:;–-]+$/, '');
-    })();
+    const hebrewHeadline = String(req.body?.overlay_text || '').trim() || pickOverlayHeadline(calMeta);
     const brandColor = biz?.color || '#1a1a2e';
 
     // CACHE NOTE: `topic` feeds the cache key — must be deterministic. Use post.content.
@@ -3100,13 +3101,19 @@ FINAL CHECK: the space between the audience and the glowing screen is empty open
     await sb.storage.createBucket('media', { public: true }).catch(() => {});
 
     const sharpMod = (await import('sharp')).default;
+    // addHebrewOverlay hands back the untouched photo when the headline can't be
+    // drawn (no font, too long). Remember which images actually carry it, so the
+    // judge doesn't fail a clean photo for a "missing" headline.
+    const drawn = new WeakSet<Buffer>();
     const compose = (list: { base64: string }[]) => Promise.all(list.map(async r => {
       const raw = Buffer.from(r.base64, 'base64');
       const out = hebrewHeadline ? await addHebrewOverlay(raw, hebrewHeadline, brandColor) : raw;
-      return sharpMod(out).jpeg({ quality: 90 }).toBuffer();
+      const final = await sharpMod(out).jpeg({ quality: 90 }).toBuffer();
+      if (out !== raw) drawn.add(final);
+      return final;
     }));
     const judgeAll = (bufs: Buffer[]) => claudeKey
-      ? Promise.all(bufs.map(b => judgeImage(claudeKey, b, post.content || topic, hebrewHeadline, brandImageChecks(post.business_name || ''))))
+      ? Promise.all(bufs.map(b => judgeImage(claudeKey, b, post.content || topic, drawn.has(b) ? hebrewHeadline : '', brandImageChecks(post.business_name || ''))))
       : Promise.resolve(bufs.map(() => null));
 
     let finals = await compose(successful as any);
@@ -3974,8 +3981,7 @@ app.post('/api/posts/:id/judge-image', async (req: any, res) => {
     // Same derivation generate-media uses, so the judge expects the headline
     // that was actually meant to be drawn.
     const calMeta = (post.performance || {}).calendar_meta || {};
-    const headline = String(calMeta.headline || calMeta.theme
-      || ((post.content || '').split(/[\n.!?]/)[0] || '').trim()).slice(0, 70);
+    const headline = pickOverlayHeadline(calMeta);
     const v = await judgeImage(claudeKey, jpeg, post.content || '', headline, brandImageChecks(post.business_name || ''));
     if (v) await sb.from('content_posts').update({
       performance: { ...(post.performance || {}), image_qc: { ...v, at: new Date().toISOString() } },
@@ -4554,13 +4560,39 @@ app.get('/api/cron/media-fill', async (req: any, res) => {
     // Skipped and blocked posts never publish, so don't spend generation on them.
     // Three per run: each generate-media can now judge and retry, and the cron
     // has 300 seconds.
-    const posts = (postsRaw || []).filter(isPublishable).slice(0, 3);
+    const missing = (postsRaw || []).filter(isPublishable).map((p: any) => ({ ...p, retry: false }));
+
+    // Images the quality gate failed used to wait for the owner forever, and
+    // the post silently never published (22 of them by 13.11). Regenerate
+    // upcoming ones automatically, at most twice each; after that it waits.
+    const nowIso = new Date().toISOString();
+    const in3w = new Date(Date.now() + 21 * 86400000).toISOString();
+    const { data: failedRaw } = await sb
+      .from('content_posts')
+      .select('id, business_name, scheduled_at, status, performance')
+      .is('published_at', null)
+      .in('status', ['draft'])
+      .gte('scheduled_at', nowIso).lte('scheduled_at', in3w)
+      .order('scheduled_at', { ascending: true })
+      .limit(40);
+    const failed = (failedRaw || []).filter((p: any) => {
+      const pf = p.performance || {};
+      return pf.image_qc && pf.image_qc.pass === false && !pf.skipped && !pf.publish_blocked
+        && !pf.image_chosen_by_owner && (pf.qc_retries || 0) < 2;
+    }).map((p: any) => ({ ...p, retry: true }));
+
+    const posts = [...missing, ...failed].slice(0, failed.length ? 2 : 3);
     if (!posts.length) return res.json({ message: 'no posts need media' });
 
     const results: any[] = [];
     for (const p of posts) {
       try {
-        const r = await fetch(`${PROD_URL}/api/posts/${p.id}/generate-media?variants=1`, {
+        if (p.retry) {
+          await sb.from('content_posts').update({
+            performance: { ...(p.performance || {}), qc_retries: (p.performance?.qc_retries || 0) + 1 },
+          }).eq('id', p.id);
+        }
+        const r = await fetch(`${PROD_URL}/api/posts/${p.id}/generate-media?variants=${p.retry ? 2 : 1}${p.retry ? '&force=1' : ''}`, {
           method: 'POST', headers: internalHeaders, body: '{}',
         });
         const d = await r.json() as any;
