@@ -68,6 +68,26 @@ const requireUserOrCron = (req: any, res: any, next: any) => {
 };
 app.use(['/api/gemini', '/api/upload'], requireUserOrCron);
 
+// ── Everything else under /api needs a signed-in user ──
+// /api/businesses used to hand every page's Meta token to anyone who asked,
+// and PUT could rewrite them. Only the routes below stay public.
+// Server-to-server self-calls (monthly calendar, media fill) prove themselves
+// with a hash of the service key, which never leaves the server.
+const INTERNAL_KEY = createHash('sha256').update('internal:' + (process.env.SUPABASE_SERVICE_KEY || '')).digest('hex');
+const internalHeaders = { 'Content-Type': 'application/json', 'x-internal-key': INTERNAL_KEY };
+function isPublicApi(method: string, p: string): boolean {
+  if (p.startsWith('/api/cron') || p.startsWith('/api/owner')) return true; // own gates above
+  if (method === 'GET' && (p === '/api/health' || p.startsWith('/api/landing/'))) return true;
+  if (method === 'POST' && p === '/api/leads') return true; // public lead form
+  if (method === 'GET' && /^\/api\/auth\/(facebook|google)(\/callback)?$/.test(p)) return true; // OAuth redirects
+  return false;
+}
+app.use('/api', (req: any, res: any, next: any) => {
+  if (req.method === 'OPTIONS' || isPublicApi(req.method, req.originalUrl.split('?')[0])) return next();
+  if (req.userId || isCronCaller(req) || (process.env.SUPABASE_SERVICE_KEY && req.headers['x-internal-key'] === INTERNAL_KEY)) return next();
+  res.status(401).json({ error: 'sign in required' });
+});
+
 // ── Lightweight error tracking — last-N-errors ring buffer + daily summary email.
 // No external service (no Sentry). When an endpoint catches an error, push it
 // here. A cron summarizes once a day and emails the user if there were errors.
@@ -4467,7 +4487,7 @@ app.get('/api/cron/monthly-calendar', async (req: any, res) => {
 
     // Generate + approve via self-fetch (reuses the full pipeline incl. short links)
     const genR = await fetch(`${PROD_URL}/api/calendars/generate`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: internalHeaders,
       body: JSON.stringify({ business_id: target.id, year: targetYear, month: targetMonth, posts_count: POSTS_PER_MONTH + 3 }),
     });
     const gen = await genR.json() as any;
@@ -4476,7 +4496,7 @@ app.get('/api/cron/monthly-calendar', async (req: any, res) => {
     // 11 posts used to leave it with ~25.
     const briefs = (gen.posts || []).slice(0, Math.max(0, POSTS_PER_MONTH - (counts[target.name] || 0)));
     const appR = await fetch(`${PROD_URL}/api/calendars/approve`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: internalHeaders,
       body: JSON.stringify({ business_id: target.id, posts: briefs }),
     });
     const app_ = await appR.json() as any;
@@ -4541,7 +4561,7 @@ app.get('/api/cron/media-fill', async (req: any, res) => {
     for (const p of posts) {
       try {
         const r = await fetch(`${PROD_URL}/api/posts/${p.id}/generate-media?variants=1`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+          method: 'POST', headers: internalHeaders, body: '{}',
         });
         const d = await r.json() as any;
         results.push({ id: p.id, business: p.business_name, ok: !!d.ok, error: d.error || null });
