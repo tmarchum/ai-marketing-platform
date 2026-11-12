@@ -4743,6 +4743,12 @@ app.get('/api/cron/refresh-tokens', async (req: any, res) => {
       const oldToken = fb?.tokens?.META_ACCESS_TOKEN;
       if (!oldToken) { results.push({ name: b.name, skipped: 'no token' }); continue; }
       try {
+        // System-user page tokens never expire (expires_at === 0) — exchanging them fails, so skip.
+        try {
+          const dr = await fetch(`https://graph.facebook.com/v25.0/debug_token?input_token=${oldToken}&access_token=${fbAppId}|${fbAppSecret}`);
+          const dd: any = await dr.json();
+          if (dd?.data?.is_valid && dd.data.expires_at === 0) { results.push({ name: b.name, skipped: 'never expires' }); continue; }
+        } catch { /* fall through to exchange */ }
         const r = await fetch(
           `https://graph.facebook.com/v25.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${fbAppId}&client_secret=${fbAppSecret}&fb_exchange_token=${oldToken}`
         );
