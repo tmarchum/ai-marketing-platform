@@ -2762,7 +2762,11 @@ type ImageVerdictT = z.infer<typeof ImageVerdict>;
 // Facts about a business that an image can visibly get wrong. A generic judge
 // passed a front-projector setup for a company whose whole pitch is rear
 // projection; these make the gate check the brand, not just the photo.
-function brandImageChecks(bizName: string): string[] {
+function brandImageChecks(bizName: string, content = ''): string[] {
+  if (/הנצחה|שכול|לזכר/.test(content)) return [
+    'This is a MEMORIAL post. A calm symbolic image (a candle, a quiet path, a hillside) IS on-topic: do not fail it for not showing a quiz, phones or people.',
+    'Fail the image if it shows cheerful or playful content, children, groups, phones, flags, military or political symbols, any text, or anything that feels commercial or disrespectful.',
+  ];
   if (/קולנוע/.test(bizName)) return [
     'A projector is visible in front of the screen or among the audience (this company projects from BEHIND the screen; showing a front projector advertises the competition).',
     'The screen is not a large freestanding inflatable screen (indoors in a hall or outdoors), or it shows no film.',
@@ -2852,7 +2856,9 @@ app.post('/api/posts/:id/generate-media', async (req: any, res) => {
     // Pull the headline up front — we pass it directly to the image model
     // so it draws the exact Hebrew letters instead of inventing gibberish.
     const calMeta = (post.performance || {}).calendar_meta || {};
-    const hebrewHeadline = String(req.body?.overlay_text || '').trim() || pickOverlayHeadline(calMeta);
+    // Memorial posts (הנצחה / שכול / לזכר) get a quiet symbolic image: no people, no phones, no text.
+    const isMemorialPost = /הנצחה|שכול|לזכר/.test(String(post.content || ''));
+    const hebrewHeadline = isMemorialPost ? '' : (String(req.body?.overlay_text || '').trim() || pickOverlayHeadline(calMeta));
     const brandColor = biz?.color || '#1a1a2e';
 
     // CACHE NOTE: `topic` feeds the cache key — must be deterministic. Use post.content.
@@ -2876,7 +2882,7 @@ app.post('/api/posts/:id/generate-media', async (req: any, res) => {
     const postContent = (post.content || '').slice(0, 800);
     const postTheme = ((post.performance || {}).calendar_meta || {}).theme || '';
 
-    const sceneDescription = (claudeKey || geminiKey)
+    const sceneDescription = ((claudeKey || geminiKey) && !isMemorialPost)
       ? await (async () => {
           const claudeMessage = `You write photography briefs in the style of REAL Israeli documentary photographers (think: actual brand pages, lifestyle photographers shooting community events). NOT corporate stock. NOT LinkedIn-style.
 
@@ -2930,6 +2936,12 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
     //    (it renders correctly-shaped Hebrew letters but the wrong words). So we
     //    handle the headline ourselves with a real font overlay after generation.
     function buildImagePrompt(scene: string, hebrewScene: string): string {
+      if (isMemorialPost) return `Generate a calm, respectful, photorealistic photograph, square format (1:1). Quiet, dignified still-life or landscape style.
+
+SCENE TO CAPTURE:
+${scene}
+
+RULES: no people, no faces, no hands, no children, no phones, no flags, no military or political symbols, no text, no letters, no numbers, no logos, no watermarks. Soft natural light (dusk or late afternoon), muted warm palette, shallow depth of field, gentle and respectful mood: not cheerful, not dramatic, not sentimental. Keep the lower third calm and uncluttered.`;
       const isQuiz = bizName === 'החידונאים';
       const isCinema = bizName === 'הקולנוע הנודד';
       const isFlights = bizName === 'צייד טיסות';
@@ -3142,7 +3154,7 @@ FINAL CHECK: the space between the audience and the glowing screen is empty open
       return final;
     }));
     const judgeAll = (bufs: Buffer[]) => claudeKey
-      ? Promise.all(bufs.map(b => judgeImage(claudeKey, b, post.content || topic, drawn.has(b) ? hebrewHeadline : '', brandImageChecks(post.business_name || ''))))
+      ? Promise.all(bufs.map(b => judgeImage(claudeKey, b, post.content || topic, drawn.has(b) ? hebrewHeadline : '', brandImageChecks(post.business_name || '', post.content || ''))))
       : Promise.resolve(bufs.map(() => null));
 
     let finals = await compose(successful as any);
@@ -4011,7 +4023,7 @@ app.post('/api/posts/:id/judge-image', async (req: any, res) => {
     // that was actually meant to be drawn.
     const calMeta = (post.performance || {}).calendar_meta || {};
     const headline = pickOverlayHeadline(calMeta);
-    const v = await judgeImage(claudeKey, jpeg, post.content || '', headline, brandImageChecks(post.business_name || ''));
+    const v = await judgeImage(claudeKey, jpeg, post.content || '', headline, brandImageChecks(post.business_name || '', post.content || ''));
     if (v) await sb.from('content_posts').update({
       performance: { ...(post.performance || {}), image_qc: { ...v, at: new Date().toISOString() } },
     }).eq('id', post.id);
