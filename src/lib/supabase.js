@@ -8,12 +8,12 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 // Helper: fetch with auth token
 // Some networks/content filters answer "Access Denied" to API paths that end in
 // an id (/api/owner/posts/<uuid>), which broke every save. Ids travel in the
-// query string instead ("/~" placeholder + __p=<id>); the server puts them back.
+// query string instead ("/item" placeholder + __p=<id>); the server puts them back.
 const UUID_SEG = /\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?=\/|\?|$)/gi;
 function hideIds(url) {
   if (typeof url !== 'string' || !url.startsWith('/api/')) return url;
   const ids = [];
-  const u = url.replace(UUID_SEG, (_, id) => { ids.push(id); return '/~'; });
+  const u = url.replace(UUID_SEG, (_, id) => { ids.push(id); return '/item'; });
   return ids.length ? u + (u.includes('?') ? '&' : '?') + ids.map(i => '__p=' + i).join('&') : url;
 }
 

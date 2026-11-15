@@ -30,7 +30,7 @@ app.use((req: any, _res: any, next: any) => {
   const ids = params.getAll('__p');
   params.delete('__p');
   let n = 0;
-  const path = req.url.slice(0, i).replace(/\/~(?=\/|$)/g, () => '/' + (ids[n++] || '~'));
+  const path = req.url.slice(0, i).replace(/\/item(?=\/|$)/g, () => '/' + (ids[n++] || 'item'));
   const qs = params.toString();
   req.url = path + (qs ? '?' + qs : '');
   next();
