@@ -2867,7 +2867,7 @@ app.post('/api/posts/:id/generate-media', async (req: any, res) => {
     // business-specific Hebrew scene description — feed THAT to the scene model, not the
     // (often short) post.content. Without this the model invents generic scenes that have
     // nothing to do with the business. Fallback to image_prompt then content.
-    const sceneSource = (calMeta.visual_concept as string) || post.image_prompt || topic;
+    const sceneSource = String(req.body?.scene || '').trim() || (calMeta.visual_concept as string) || post.image_prompt || topic;
     const vi = biz?.visual_identity || '';
     const bizDescription = biz?.description || '';
     const bizName = biz?.name || '';
