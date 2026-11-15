@@ -2764,8 +2764,8 @@ type ImageVerdictT = z.infer<typeof ImageVerdict>;
 // projection; these make the gate check the brand, not just the photo.
 function brandImageChecks(bizName: string, content = ''): string[] {
   if (/הנצחה|שכול|לזכר/.test(content)) return [
-    'This is a MEMORIAL post. A calm symbolic image (a candle, a quiet path, a hillside) IS on-topic: do not fail it for not showing a quiz, phones or people.',
-    'Fail the image if it shows cheerful or playful content, children, groups, phones, flags, military or political symbols, any text, or anything that feels commercial or disrespectful.',
+    'This is a MEMORIAL post. Soldiers photographed from behind with an Israeli flag IS on-topic and desired: do not fail it for not showing a quiz or phones. A candle or quiet hillside also passes.',
+    'Fail the image if any face is clearly visible, if the flag is wrong or garbled, if it shows combat, weapons aimed, blood or violence, cheerful or playful content, children, phones, any text, or anything that feels commercial, political or disrespectful.',
   ];
   if (/קולנוע/.test(bizName)) return [
     'A projector is visible in front of the screen or among the audience (this company projects from BEHIND the screen; showing a front projector advertises the competition).',
@@ -2936,12 +2936,12 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
     //    (it renders correctly-shaped Hebrew letters but the wrong words). So we
     //    handle the headline ourselves with a real font overlay after generation.
     function buildImagePrompt(scene: string, hebrewScene: string): string {
-      if (isMemorialPost) return `Generate a calm, respectful, photorealistic photograph, square format (1:1). Quiet, dignified still-life or landscape style.
+      if (isMemorialPost) return `Generate a deeply moving, respectful, photorealistic documentary-style photograph, square format (1:1). A group of Israeli soldiers in olive-green IDF uniforms and helmets photographed strictly FROM BEHIND, standing quietly together in a line, with an Israeli flag (white with a blue Star of David and two blue stripes) held at the center or hanging beside them, seen from behind or in profile. Dignified memorial ceremony / cemetery-hillside atmosphere at dusk.
 
 SCENE TO CAPTURE:
 ${scene}
 
-RULES: no people, no faces, no hands, no children, no phones, no flags, no military or political symbols, no text, no letters, no numbers, no logos, no watermarks. Soft natural light (dusk or late afternoon), muted warm palette, shallow depth of field, gentle and respectful mood: not cheerful, not dramatic, not sentimental. Keep the lower third calm and uncluttered.`;
+RULES: all people are seen ONLY from behind or as silhouettes: NO faces visible at all, no one looking at the camera. No weapons pointed, no blood, no combat, no violence, no explosions. The flag must be a correct Israeli flag with no text on it. No text, no letters, no numbers, no logos, no watermarks anywhere. Soft golden-hour light, muted warm palette, shallow depth of field, solemn and respectful mood: not cheerful, not dramatic, not political. Keep the lower third calm and uncluttered.`;
       const isQuiz = bizName === 'החידונאים';
       const isCinema = bizName === 'הקולנוע הנודד';
       const isFlights = bizName === 'צייד טיסות';
