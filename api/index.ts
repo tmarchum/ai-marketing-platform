@@ -2968,6 +2968,11 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
    ❌ Generic "American suburb" aesthetic — must feel ISRAELI
    ❌ Adults-only crowds with no kids/teens visible
 `;
+      if (isQuiz && /גמלא|גיל השלישי|סבא|סבתא|מילואים|יחידה|מתנדב|עובדים|בוגרים|דיור מוגן/.test(`${post.content || ''} ${sceneSource || ''}`)) {
+        brandRules += `
+   ⚠️ THIS POST IS FOR AN ADULT AUDIENCE (seniors, grandparents with grandchildren, a military unit, volunteers or employees). This OVERRIDES the rules above about kids, running and sitting: the primary subjects are those adults. Seniors (65-85): a small group walking slowly through a real Israeli neighbourhood, some with a cane or light walker, a guide pointing at a landmark, one person holding a phone, relaxed smiles. Grandparents with grandchildren: the generations side by side, phone passed between them. Unit or volunteers: 8-15 adults in casual clothes in a team. Adults-only IS allowed here. Movement is a calm walk between stops, not running. Everything else stays: real Israeli setting, no text, no logos.
+`;
+      }
       if (isCinema) brandRules = `🎬 MANDATORY for ${bizName} (Moving Cinema / קולנוע נודד) — INFLATABLE CINEMA, OUTDOORS OR INDOORS, at a REALISTIC NEIGHBORHOOD/EVENT scale (NOT concert/festival scale). The service runs in closed venues too (senior clubs, day centers, assisted-living halls, community halls, school multipurpose rooms, sports halls, ceremony halls, winter/rainy-day events). If the post text or the scene brief mentions an indoor or closed venue, seniors/pensioners, a hall, a ceremony, winter or rain, you MUST pick an INDOOR archetype (G, H, I or J) — never put such a post in a park. Otherwise pick an outdoor one. Pick ONE archetype:
 
    ARCHETYPE A — backyard family screening (4-8 people): one family on blankets/beanbags in their own backyard, parents and 2-3 kids in pajamas, kids leaning back in awe, inflatable screen glowing in the corner of the yard
