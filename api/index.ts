@@ -2992,6 +2992,11 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
    ✅ CLEAN SIGHTLINE: between the audience and the screen there is only open grass (outdoors) or open floor (indoors) — no table, tripod, box, device or equipment of any kind. The screen glows on its own, lit from behind; nothing stands in front of it.
    🚫 FORBIDDEN: rows of fixed cinema-theatre seats | TV screens | empty venues | a scene where the inflatable screen is not visible | suits | concert-scale crowds (max 30 visible people) | religious styling | a park or lawn when the post is about an indoor venue
 `;
+      if (isCinema && /אולם|גמלא|מועדון|בית אבות|דיור מוגן|חורף|גשם|סגור|מתנ"ס|מתנס|טקס|חדר/.test(`${post.content || ''} ${sceneSource || ''}`)) {
+        brandRules += `
+   ⚠️ THIS POST IS ABOUT A CLOSED VENUE, WINTER OR A CEREMONY. You MUST pick INDOOR archetype G, H, I or J: an enclosed hall with walls, a ceiling and windows, people in autumn/winter clothes (cardigans, jackets) if relevant, the inflatable screen glowing inside the room. NOT a park, NOT a lawn, NOT grass, NOT an evening sky, NOT summer clothing. The outdoor archetypes A-F are forbidden for this post.
+`;
+      }
       if (isFlights) brandRules = `✈️ MANDATORY for ${bizName} (Flight Hunter / צייד טיסות) — ISRAELI TRAVELERS getting deals and reaching incredible destinations. REALISTIC, intimate moments (1-6 people max). Pick ONE archetype:
 
    ARCHETYPE A — couple at destination: a young Israeli couple (early-mid 30s) embracing on a Mediterranean beach at sunset / overlooking European old town / at a Asian street market, casual travel clothes, joyful arrival expression
