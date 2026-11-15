@@ -22,6 +22,20 @@ function getSupabase() {
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 
+// ── Put ids back into the path (see authFetch in src/lib/supabase.js) ──
+app.use((req: any, _res: any, next: any) => {
+  const i = req.url.indexOf('?');
+  if (i < 0 || !req.url.includes('__p=')) return next();
+  const params = new URLSearchParams(req.url.slice(i + 1));
+  const ids = params.getAll('__p');
+  params.delete('__p');
+  let n = 0;
+  const path = req.url.slice(0, i).replace(/\/~(?=\/|$)/g, () => '/' + (ids[n++] || '~'));
+  const qs = params.toString();
+  req.url = path + (qs ? '?' + qs : '');
+  next();
+});
+
 // ── Auth middleware — extract user from JWT ──
 async function authMiddleware(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization;
@@ -2751,7 +2765,8 @@ type ImageVerdictT = z.infer<typeof ImageVerdict>;
 function brandImageChecks(bizName: string): string[] {
   if (/קולנוע/.test(bizName)) return [
     'A projector is visible in front of the screen or among the audience (this company projects from BEHIND the screen; showing a front projector advertises the competition).',
-    'The screen is not an inflatable outdoor screen, or it shows no film.',
+    'The screen is not a large freestanding inflatable screen (indoors in a hall or outdoors), or it shows no film.',
+    'The setting contradicts the post: an outdoor park for a post about an indoor venue (senior club, hall, ceremony, winter), or an indoor hall for a post about an outdoor evening.',
   ];
   if (/טיסות/.test(bizName)) return [
     'Note for this business: an aspirational destination abroad, an airport gate or travellers with luggage IS on-topic for a flight-deal service. Do not fail an image for not depicting searching, screens or AI.',
@@ -2953,7 +2968,7 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
    ❌ Generic "American suburb" aesthetic — must feel ISRAELI
    ❌ Adults-only crowds with no kids/teens visible
 `;
-      if (isCinema) brandRules = `🎬 MANDATORY for ${bizName} (Moving Cinema / קולנוע נודד) — OUTDOOR INFLATABLE CINEMA at a REALISTIC NEIGHBORHOOD/EVENT scale (NOT concert/festival scale). Pick ONE archetype:
+      if (isCinema) brandRules = `🎬 MANDATORY for ${bizName} (Moving Cinema / קולנוע נודד) — INFLATABLE CINEMA, OUTDOORS OR INDOORS, at a REALISTIC NEIGHBORHOOD/EVENT scale (NOT concert/festival scale). The service runs in closed venues too (senior clubs, day centers, assisted-living halls, community halls, school multipurpose rooms, sports halls, ceremony halls, winter/rainy-day events). If the post text or the scene brief mentions an indoor or closed venue, seniors/pensioners, a hall, a ceremony, winter or rain, you MUST pick an INDOOR archetype (G, H, I or J) — never put such a post in a park. Otherwise pick an outdoor one. Pick ONE archetype:
 
    ARCHETYPE A — backyard family screening (4-8 people): one family on blankets/beanbags in their own backyard, parents and 2-3 kids in pajamas, kids leaning back in awe, inflatable screen glowing in the corner of the yard
    ARCHETYPE B — neighborhood community event (15-30 people MAX): several family groups on blankets across a kibbutz lawn or schoolyard, all facing the inflatable screen, fairy lights strung between trees
@@ -2961,6 +2976,10 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
    ARCHETYPE D — corporate event (10-20 people): co-workers on bean-bags in a company courtyard at evening, casual dress (no suits), inflatable screen at the front, snacks
    ARCHETYPE E — wedding/celebration backdrop: inflatable screen in the background of an event venue tent, guests dressed up but casual-elegant, screen showing a couple's home movie (out of focus / not readable)
    ARCHETYPE F — equipment setup close-up: 1-2 technicians erecting the inflatable screen at dusk, focus on the screen inflating against an Israeli sky
+   ARCHETYPE G — INDOOR senior club / day center / assisted-living hall (15-25 people): older Israelis (65-85) in comfortable armchairs and wheelchairs arranged in a loose semicircle in a bright community hall, warm smiles, a caregiver or volunteer serving tea at the side, the large inflatable screen glowing at the front of the room with a colourful blurred film frame, soft daylight from windows with curtains half-drawn. Warm, dignified, social — never sad or clinical
+   ARCHETYPE H — INDOOR community hall / school multipurpose room / gym (20-30 people): families with children on mats and low chairs on the hall floor, the inflatable screen glowing at the front, ceiling lights dimmed, a tidy stage or basketball hoop visible in the background
+   ARCHETYPE I — INDOOR ceremony / graduation / company event in a hall (15-30 people): rows of chairs, the inflatable screen on a low stage showing a colourful blurred frame, people in smart-casual clothes turning toward it, relaxed festive mood
+   ARCHETYPE J — INDOOR equipment setup close-up: 1-2 technicians inflating and positioning the screen inside an empty hall in under an hour, cables neatly taped, projector BEHIND the screen out of sight
 
    🇮🇱 REALISTIC ISRAELI LOOK:
    - Secular/hiloni Israelis — casual t-shirts, shorts, jeans, light dresses
@@ -2968,10 +2987,10 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
    - Multi-cultural Israelis OK (Russian-Israeli, Ethiopian-Israeli, etc.)
    - NO religious styling (no kippot, no head coverings, no modesty-coded clothing) — secular Israeli vibe only
 
-   ✅ COMMON RULES: large INFLATABLE freestanding screen (4-5m) glowing in evening, audience FACING the screen, warm light from the screen on faces, fairy lights/paper lanterns OK, REALISTIC group size
+   ✅ COMMON RULES: large INFLATABLE freestanding screen (4-5m) glowing (in the evening outdoors, or in a dimmed hall indoors), audience FACING the screen, warm light from the screen on faces, fairy lights/paper lanterns OK outdoors, REALISTIC group size
    ✅ THE SCREEN ALWAYS SHOWS A FILM: a colourful, blurred movie frame is projected on it. Never a blank white or empty screen.
-   ✅ CLEAN SIGHTLINE: between the audience and the screen there is only open grass — no table, tripod, box, device or equipment of any kind. The screen glows on its own, lit from behind; nothing stands in front of it.
-   🚫 FORBIDDEN: indoor cinema seats | TV screens | empty corporate venues | daytime without screen visible | suits | concert-scale crowds (max 30 visible people) | religious styling
+   ✅ CLEAN SIGHTLINE: between the audience and the screen there is only open grass (outdoors) or open floor (indoors) — no table, tripod, box, device or equipment of any kind. The screen glows on its own, lit from behind; nothing stands in front of it.
+   🚫 FORBIDDEN: rows of fixed cinema-theatre seats | TV screens | empty venues | a scene where the inflatable screen is not visible | suits | concert-scale crowds (max 30 visible people) | religious styling | a park or lawn when the post is about an indoor venue
 `;
       if (isFlights) brandRules = `✈️ MANDATORY for ${bizName} (Flight Hunter / צייד טיסות) — ISRAELI TRAVELERS getting deals and reaching incredible destinations. REALISTIC, intimate moments (1-6 people max). Pick ONE archetype:
 
@@ -3237,7 +3256,7 @@ app.post('/api/posts/:id/generate-video', async (req: any, res) => {
    🚫 FORBIDDEN: ANY soccer/ball sports | family walking calmly on a path | quiet contemplative shot | static portrait | kids sitting | cards/papers | adults dominating frame | single child alone
 `;
         if (isCinemaV) brandRulesV = `🎬 MANDATORY ACTIVITY for הקולנוע הנודד — this is an OUTDOOR INFLATABLE CINEMA EVENT.
-   ✅ The video MUST show: large inflatable cinema screen (4-5m) glowing in the evening, audience on blankets/beanbags/low chairs FACING the screen, families with kids, fairy lights, projector glow lighting faces, warm dusk
+   ✅ The video MUST show: large inflatable cinema screen (4-5m) glowing (outdoors at dusk, OR indoors in a dimmed community hall / senior club if the post is about a closed venue), audience on blankets/beanbags/low chairs/armchairs FACING the screen, families with kids or older adults as the post requires, projector glow lighting faces
    ✅ Camera: slow dolly back from a child's awe-struck face revealing the audience and the giant screen behind, OR slow tracking shot along rows of relaxed viewers
    🚫 FORBIDDEN: indoor cinema seats | TVs | suits | corporate venues | daytime without screen visible | empty venues
 `;
