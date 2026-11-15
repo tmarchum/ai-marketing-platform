@@ -2764,7 +2764,7 @@ type ImageVerdictT = z.infer<typeof ImageVerdict>;
 // projection; these make the gate check the brand, not just the photo.
 function brandImageChecks(bizName: string, content = ''): string[] {
   if (/הנצחה|שכול|לזכר/.test(content)) return [
-    'This is a MEMORIAL post. Soldiers photographed from behind with an Israeli flag IS on-topic and desired: do not fail it for not showing a quiz or phones. A candle or quiet hillside also passes.',
+    'This is a MEMORIAL post. Soldiers in berets photographed from behind on a peacetime stretcher march with Israeli flags (or at a cemetery) IS on-topic and desired: do not fail it for not showing a quiz or phones. A candle or quiet hillside also passes.',
     'Fail the image if any face is clearly visible, if the flag is wrong or garbled, if it shows combat, weapons aimed, blood or violence, cheerful or playful content, children, phones, any text, or anything that feels commercial, political or disrespectful.',
   ];
   if (/קולנוע/.test(bizName)) return [
@@ -2936,7 +2936,7 @@ Output ONE dense paragraph (3-5 sentences) in the style of the CRAFT REFERENCES.
     //    (it renders correctly-shaped Hebrew letters but the wrong words). So we
     //    handle the headline ourselves with a real font overlay after generation.
     function buildImagePrompt(scene: string, hebrewScene: string): string {
-      if (isMemorialPost) return `Generate a deeply moving, respectful, photorealistic documentary-style photograph, square format (1:1). A group of Israeli soldiers in olive-green IDF uniforms and helmets photographed strictly FROM BEHIND, standing quietly together in a line, with an Israeli flag (white with a blue Star of David and two blue stripes) held at the center or hanging beside them, seen from behind or in profile. Dignified memorial ceremony / cemetery-hillside atmosphere at dusk.
+      if (isMemorialPost) return `Generate a deeply moving, respectful, photorealistic documentary-style photograph, square format (1:1). A group of Israeli soldiers in olive-green IDF uniforms and berets (NO helmets) photographed strictly FROM BEHIND, marching together on a dirt trail in a peacetime stretcher-march (a traditional IDF "masa alonka"), carrying a stretcher on their shoulders, with Israeli flags (white with a blue Star of David and two blue stripes) raised among them. Not a cemetery, not a battlefield: an open landscape trail at golden hour, a proud, solemn, brotherhood atmosphere.
 
 SCENE TO CAPTURE:
 ${scene}
