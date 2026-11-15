@@ -287,7 +287,10 @@ function PostCard({ p, color, focused, onChange, reload }) {
 
         <div className="o-actions">
           {p.skipped
-            ? <button className="o-btn" disabled={!!busy} onClick={() => act("restore")}>החזר לתור</button>
+            ? <>
+              <label className="o-ghost o-file">{busy === "up" ? "מעלה…" : "העלה צילום"}<input type="file" accept="image/*" onChange={e => { upload(e.target.files?.[0]); e.target.value = ""; }} /></label>
+              <button className="o-btn" disabled={!!busy} onClick={() => act("restore")}>החזר לתור</button>
+            </>
             : editing
               ? <><button className="o-btn" disabled={!!busy} onClick={() => act("edit", { content: txt })}>שמור</button><button className="o-ghost" onClick={() => { setEditing(false); setTxt(p.content); }}>ביטול</button></>
               : <>
