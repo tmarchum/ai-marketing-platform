@@ -4838,14 +4838,19 @@ app.get('/api/cron/refresh-tokens', async (req: any, res) => {
       try {
         // System-user page tokens never expire (expires_at === 0) — exchanging them fails, so skip.
         try {
-          const dr = await fetch(`https://graph.facebook.com/v25.0/debug_token?input_token=${oldToken}&access_token=${fbAppId}|${fbAppSecret}`);
-          const dd: any = await dr.json();
+          // The token may belong to a different app (system-user app) than FB_APP_ID, so the
+          // app-token debug can fail. Debug with the token itself as a second try.
+          let dd: any = await (await fetch(`https://graph.facebook.com/v25.0/debug_token?input_token=${oldToken}&access_token=${fbAppId}|${fbAppSecret}`)).json();
+          if (!dd?.data?.is_valid) dd = await (await fetch(`https://graph.facebook.com/v25.0/debug_token?input_token=${oldToken}&access_token=${oldToken}`)).json();
           if (dd?.data?.is_valid && dd.data.expires_at === 0) { results.push({ name: b.name, skipped: 'never expires' }); continue; }
         } catch { /* fall through to exchange */ }
         const r = await fetch(
           `https://graph.facebook.com/v25.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${fbAppId}&client_secret=${fbAppSecret}&fb_exchange_token=${oldToken}`
         );
         const d: any = await r.json();
+        // A token issued by another app (system user) cannot be exchanged with this app's
+        // secret; that is not a failure worth an alert email.
+        if (d.error && /does not belong to application/i.test(String(d.error.message))) { results.push({ name: b.name, skipped: 'other app token' }); continue; }
         if (d.error) { results.push({ name: b.name, error: d.error.message }); continue; }
         const newToken = d.access_token;
         if (!newToken) { results.push({ name: b.name, error: 'no token in response' }); continue; }
