@@ -90,7 +90,7 @@ app.use(['/api/gemini', '/api/upload'], requireUserOrCron);
 const INTERNAL_KEY = createHash('sha256').update('internal:' + (process.env.SUPABASE_SERVICE_KEY || '')).digest('hex');
 const internalHeaders = { 'Content-Type': 'application/json', 'x-internal-key': INTERNAL_KEY };
 function isPublicApi(method: string, p: string): boolean {
-  if (p.startsWith('/api/cron') || p.startsWith('/api/owner')) return true; // own gates above
+  if (p.startsWith('/api/cron') || p.startsWith('/api/owner') || p.startsWith('/api/meta-ads')) return true; // own gates (meta-ads: x-ads-key)
   if (method === 'GET' && (p === '/api/health' || p.startsWith('/api/landing/'))) return true;
   if (method === 'POST' && p === '/api/leads') return true; // public lead form
   if (method === 'GET' && /^\/api\/auth\/(facebook|google)(\/callback)?$/.test(p)) return true; // OAuth redirects
@@ -4817,6 +4817,102 @@ app.get('/api/analytics/summary', async (req: any, res) => {
 // resets the 60-day window. Without this, tokens silently expire and
 // every publish fails at 60+ days.
 // ══════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════
+// Direct Meta Marketing API interface for the Grok bots (no browser login).
+// Uses the never-expiring system-user token (user_api_keys.META_SYSTEM_TOKEN) so
+// the bots never sign in to the owner's personal Facebook account again.
+// Auth: header `x-ads-key` (owner reads it at GET /api/owner/ads-key) or a signed-in user.
+// ══════════════════════════════════════════════════════════════
+const ADS_KEY = createHash('sha256').update('ads:' + (process.env.SUPABASE_SERVICE_KEY || '')).digest('hex');
+const META_BUSINESS_ID = '549436962670981';
+function adsAuth(req: any, res: any, next: any) {
+  if (req.userId || (process.env.SUPABASE_SERVICE_KEY && req.headers['x-ads-key'] === ADS_KEY)) return next();
+  res.status(401).json({ error: 'x-ads-key required' });
+}
+async function metaGraph(sb: any, path: string, method: 'GET' | 'POST', params: Record<string, any> = {}) {
+  const token = await getUserKey(sb, null, 'META_SYSTEM_TOKEN');
+  if (!token) throw new Error('META_SYSTEM_TOKEN not set (save it in the dashboard admin keys)');
+  const url = new URL(`https://graph.facebook.com/v25.0/${path.replace(/^\/+/, '')}`);
+  const body = new URLSearchParams({ access_token: token });
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null) continue;
+    const s = typeof v === 'string' ? v : JSON.stringify(v);
+    if (method === 'GET') url.searchParams.set(k, s); else body.set(k, s);
+  }
+  if (method === 'GET') url.searchParams.set('access_token', token);
+  const r = await fetch(url.toString(), method === 'POST' ? { method, body } : undefined);
+  const j: any = await r.json();
+  if (j.error) throw new Error(`${j.error.message}${j.error.error_user_msg ? ' — ' + j.error.error_user_msg : ''}`);
+  return j;
+}
+app.get('/api/owner/ads-key', (req: any, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'sign in required' });
+  res.json({ header: 'x-ads-key', key: ADS_KEY, base: '/api/meta-ads' });
+});
+app.use('/api/meta-ads', adsAuth);
+// Every ad account the system user can reach: directly, owned by the business, or client accounts.
+app.get('/api/meta-ads/accounts', async (_req: any, res) => {
+  try {
+    const sb = getSupabase();
+    const f = 'name,account_id,account_status,currency,amount_spent,balance,disable_reason';
+    const out: Record<string, any> = {};
+    for (const p of ['me/adaccounts', `${META_BUSINESS_ID}/owned_ad_accounts`, `${META_BUSINESS_ID}/client_ad_accounts`]) {
+      try { for (const a of (await metaGraph(sb, p, 'GET', { fields: f, limit: 100 })).data || []) out[a.id || 'act_' + a.account_id] = a; } catch (e: any) { out['_error_' + p] = e.message; }
+    }
+    res.json({ accounts: out });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+// Campaigns with the last days of performance. ?account=act_123&date_preset=last_7d
+app.get('/api/meta-ads/campaigns', async (req: any, res) => {
+  try {
+    const account = String(req.query.account || '');
+    if (!/^act_\d+$/.test(account)) return res.status(400).json({ error: 'account=act_<id> required' });
+    const preset = String(req.query.date_preset || 'last_7d').replace(/[^a-z0-9_]/gi, '');
+    const j = await metaGraph(getSupabase(), `${account}/campaigns`, 'GET', {
+      fields: `name,status,effective_status,objective,daily_budget,lifetime_budget,insights.date_preset(${preset}){spend,impressions,clicks,cpc,ctr,actions}`, limit: 100,
+    });
+    res.json(j);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+// Ad sets / ads of a campaign or account: ?parent=<campaign id or act_id>&level=adsets|ads
+app.get('/api/meta-ads/children', async (req: any, res) => {
+  try {
+    const parent = String(req.query.parent || ''); const level = req.query.level === 'ads' ? 'ads' : 'adsets';
+    if (!/^(act_)?\d+$/.test(parent)) return res.status(400).json({ error: 'parent id required' });
+    res.json(await metaGraph(getSupabase(), `${parent}/${level}`, 'GET', { fields: 'name,status,effective_status,daily_budget,targeting,insights.date_preset(last_7d){spend,clicks,actions}', limit: 100 }));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+// Pause / resume a campaign, ad set or ad.  body: { id, status: "ACTIVE" | "PAUSED" }
+app.post('/api/meta-ads/status', async (req: any, res) => {
+  try {
+    const { id, status } = req.body || {};
+    if (!/^\d+$/.test(String(id)) || !['ACTIVE', 'PAUSED'].includes(status)) return res.status(400).json({ error: 'id and status ACTIVE|PAUSED required' });
+    console.log('[meta-ads] status', id, status);
+    res.json(await metaGraph(getSupabase(), String(id), 'POST', { status }));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+// Daily budget in shekels (converted to agorot).  body: { id, daily_budget }
+app.post('/api/meta-ads/budget', async (req: any, res) => {
+  try {
+    const { id, daily_budget } = req.body || {};
+    const n = Number(daily_budget);
+    if (!/^\d+$/.test(String(id)) || !(n > 0)) return res.status(400).json({ error: 'id and daily_budget (>0, in ILS) required' });
+    console.log('[meta-ads] budget', id, n);
+    res.json(await metaGraph(getSupabase(), String(id), 'POST', { daily_budget: Math.round(n * 100) }));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+// Full access: any Marketing API call (GET/POST) on an ad account or a child object.
+// body: { path: "act_123/campaigns", method: "POST", params: {...} }  — create campaigns, ad sets, creatives, ads.
+app.post('/api/meta-ads/graph', async (req: any, res) => {
+  try {
+    const { path, method = 'GET', params = {} } = req.body || {};
+    if (!/^(act_\d+|\d+)(\/[a-z_]+)*$/i.test(String(path))) return res.status(400).json({ error: 'path must be act_<id>/... or <object id>/...' });
+    if (!['GET', 'POST'].includes(method)) return res.status(400).json({ error: 'GET or POST only (no DELETE: pause instead)' });
+    if (method === 'POST') console.log('[meta-ads] graph POST', path, JSON.stringify(params).slice(0, 300));
+    res.json(await metaGraph(getSupabase(), String(path), method, params));
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
 
 app.get('/api/cron/refresh-tokens', async (req: any, res) => {
   const sb = getSupabase();
