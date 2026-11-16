@@ -538,6 +538,35 @@ function Ads() {
 
 // ── 5. הגדרות ───────────────────────────────────────────────────────────────
 const DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+// Direct Meta ads access for the bots: save the system-user token once, hand the bots a key.
+function AdsAccess() {
+  const [st, setSt] = useState(null);
+  const [tok, setTok] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = () => api("/api/owner/ads-status").then(setSt).catch(e => setMsg(String(e.message || e)));
+  useEffect(() => { load(); }, []);
+  const save = async () => {
+    setBusy(true); setMsg("");
+    try { const d = await post("/api/owner/ads-token", { token: tok.trim() }); setTok(""); setMsg(`נשמר. הרשאות: ${(d.scopes || []).join(", ")}`); await load(); }
+    catch (e) { setMsg(String(e.message || e)); }
+    setBusy(false);
+  };
+  const copy = () => { try { navigator.clipboard.writeText(st.key); setMsg("המפתח הועתק"); } catch { setMsg("לא הצלחתי להעתיק"); } };
+  return (
+    <div className="o-boost" style={{ display: "block" }}>
+      <h3>גישה ישירה לפרסום ב-Meta (בלי התחברות בדפדפן)</h3>
+      <p>{!st ? "טוען…" : !st.set ? "עדיין לא נשמר טוקן. הדבק כאן את הטוקן של משתמש המערכת (עם ads_management)." : st.accounts?.length ? `מחובר. חשבונות מודעות נגישים: ${st.accounts.map(a => `${a.name} (${a.id})`).join(" · ")}` : `הטוקן נשמר, אבל אין חשבונות נגישים. ${st.error || "שייך חשבונות מודעות למשתמש המערכת ב-Business Settings."}`}</p>
+      <input type="password" value={tok} onChange={e => setTok(e.target.value)} placeholder="טוקן משתמש מערכת" autoComplete="off" style={{ width: "100%", padding: 10, margin: "6px 0" }} />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className="o-btn" disabled={busy || tok.trim().length < 40} onClick={save}>{busy ? "בודק…" : "שמור טוקן"}</button>
+        {st?.key && <button className="o-ghost" onClick={copy}>העתק מפתח לבוטים</button>}
+      </div>
+      {msg && <p className="o-msg">{msg}</p>}
+    </div>
+  );
+}
+
 function Settings({ businesses, onClassic }) {
   return (
     <>
@@ -555,6 +584,7 @@ function Settings({ businesses, onClassic }) {
           </article>
         ))}
       </div>
+      <AdsAccess />
       <div className="o-boost">
         <div className="o-idea-icon"><i className="ti ti-adjustments" aria-hidden="true" /></div>
         <div>

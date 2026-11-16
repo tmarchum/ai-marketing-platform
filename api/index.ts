@@ -4850,6 +4850,36 @@ app.get('/api/owner/ads-key', (req: any, res) => {
   if (!req.userId) return res.status(401).json({ error: 'sign in required' });
   res.json({ header: 'x-ads-key', key: ADS_KEY, base: '/api/meta-ads' });
 });
+// Owner screens: is the system token saved and what can it reach; save a new token (validated, never echoed).
+app.get('/api/owner/ads-status', async (req: any, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'sign in required' });
+  try {
+    const sb = getSupabase();
+    if (!(await getUserKey(sb, req.userId, 'META_SYSTEM_TOKEN'))) return res.json({ set: false, key: ADS_KEY });
+    const out: Record<string, any> = {};
+    let error = '';
+    for (const p of ['me/adaccounts', `${META_BUSINESS_ID}/owned_ad_accounts`, `${META_BUSINESS_ID}/client_ad_accounts`]) {
+      try { for (const a of (await metaGraph(sb, p, 'GET', { fields: 'name,account_id,account_status', limit: 100 })).data || []) out[a.account_id] = { name: a.name, id: 'act_' + a.account_id, status: a.account_status }; } catch (e: any) { error = e.message; }
+    }
+    res.json({ set: true, key: ADS_KEY, accounts: Object.values(out), error: Object.keys(out).length ? '' : error });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/owner/ads-token', async (req: any, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'sign in required' });
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const token = String(req.body?.token || '').trim();
+    if (token.length < 40) return res.status(400).json({ error: 'token looks too short' });
+    const d: any = await (await fetch(`https://graph.facebook.com/v25.0/debug_token?input_token=${encodeURIComponent(token)}&access_token=${encodeURIComponent(token)}`)).json();
+    const dd = d?.data;
+    if (!dd?.is_valid) return res.status(400).json({ error: d?.error?.message || 'token is not valid' });
+    const scopes: string[] = dd.scopes || [];
+    if (!scopes.includes('ads_management') && !scopes.includes('ads_read')) return res.status(400).json({ error: 'token has no ads_management / ads_read permission', scopes });
+    await sb.from('user_api_keys').upsert({ user_id: req.userId, key_name: 'META_SYSTEM_TOKEN', key_value: token, updated_at: new Date().toISOString() }, { onConflict: 'user_id,key_name' });
+    res.json({ ok: true, expires_at: dd.expires_at, scopes });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
 app.use('/api/meta-ads', adsAuth);
 // Every ad account the system user can reach: directly, owned by the business, or client accounts.
 app.get('/api/meta-ads/accounts', async (_req: any, res) => {
