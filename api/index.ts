@@ -66,13 +66,13 @@ app.use(authMiddleware);
 // Vercel cron sends `Authorization: Bearer $CRON_SECRET`; the dashboard sends
 // a logged-in user's token. Anything else is refused.
 function isCronCaller(req: any): boolean {
-  const secret = process.env.CRON_SECRET;
-  return !!secret && req.headers.authorization === `Bearer ${secret}`;
+  const secret = (process.env.CRON_SECRET || '').trim();
+  return !!secret && String(req.headers.authorization || '').trim() === `Bearer ${secret}`;
 }
 // Enforced only once CRON_SECRET exists in the Vercel environment: before that,
 // Vercel's own scheduler sends no header and locking would stop all publishing.
 app.use('/api/cron', (req: any, res: any, next: any) => {
-  if (!process.env.CRON_SECRET) return next();
+  if (!(process.env.CRON_SECRET || '').trim()) return next();
   if (isCronCaller(req) || req.userId) return next();
   res.status(401).json({ error: 'cron endpoints require CRON_SECRET or a signed-in user' });
 });
