@@ -11,13 +11,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger replies cron
+        env:
+          # Passed as an env var so the value is not written into the script or logs.
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          response=$(curl -s -w "\n%{http_code}" --max-time 120 "https://dashboard-steel-delta-52.vercel.app/api/cron/replies")
+          response=$(curl -sS --fail-with-body -w "\n%{http_code}" --max-time 120 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "https://dashboard-steel-delta-52.vercel.app/api/cron/replies") || curl_ec=$?
           body=$(echo "$response" | head -n -1)
           code=$(echo "$response" | tail -n 1)
-          echo "HTTP $code"
+          echo "HTTP ${code:-000}"
           echo "Response: $body"
-          if [ "$code" != "200" ]; then
-            echo "::error::Cron endpoint returned $code"
+          if [ "${curl_ec:-0}" != "0" ] || [ "$code" != "200" ]; then
+            echo "::error::Cron endpoint returned ${code:-000}"
             exit 1
           fi
