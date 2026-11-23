@@ -2979,6 +2979,7 @@ RULES: all people are seen ONLY from behind or as silhouettes: NO faces visible 
    ❌ Haredi/ultra-Orthodox styling (this brand's market is municipalities + schools, not Haredi communities)
    ❌ Generic "American suburb" aesthetic — must feel ISRAELI
    ❌ Adults-only crowds with no kids/teens visible
+   ❌ ANY readable sign, street sign, banner, poster, shop sign, flag lettering, signpost or billboard: if a sign must exist it is blank or seen only from behind. AI-drawn signs come out as garbled gibberish and fail quality control.
 `;
       if (isQuiz && /גמלא|גיל השלישי|סבא|סבתא|מילואים|יחידה|מתנדב|עובדים|בוגרים|דיור מוגן/.test(`${post.content || ''} ${sceneSource || ''}`)) {
         brandRules += `
@@ -4622,6 +4623,32 @@ app.get('/api/cron/media-fill', async (req: any, res) => {
         && !pf.image_chosen_by_owner && (pf.qc_retries || 0) < 2;
     }).map((p: any) => ({ ...p, retry: true }));
 
+    // Posts that exhausted their retries within 3 days of publishing would
+    // otherwise be skipped silently. Tell the owner once.
+    try {
+      const in3d = new Date(Date.now() + 3 * 86400000).toISOString();
+      const stuck = (failedRaw || []).filter((p: any) => {
+        const pf = p.performance || {};
+        return pf.image_qc && pf.image_qc.pass === false && !pf.skipped && !pf.publish_blocked
+          && !pf.image_chosen_by_owner && (pf.qc_retries || 0) >= 2 && !pf.stuck_notified
+          && p.scheduled_at <= in3d;
+      });
+      if (stuck.length) {
+        const { data: notifRow } = await sb.from('user_api_keys').select('key_value').eq('key_name', 'NOTIFICATION_EMAIL').limit(1).maybeSingle();
+        const to = notifRow?.key_value || process.env.REPORT_EMAIL || '';
+        if (to) {
+          const rows = stuck.map((p: any) => `<li>${p.business_name} — ${new Date(p.scheduled_at).toLocaleString('he-IL')}</li>`).join('');
+          const sent = await sendEmail(to, `⚠️ ${stuck.length} פוסטים תקועים — התמונה נפסלה`,
+            `<div dir="rtl"><p>הפוסטים הבאים לא יפורסמו כי התמונה נפסלה בבקרת האיכות אחרי 2 ניסיונות:</p><ul>${rows}</ul><p><a href="https://dashboard-steel-delta-52.vercel.app">פתח את הדשבורד</a> כדי לבחור תמונה ידנית.</p></div>`);
+          if (sent.ok) {
+            for (const p of stuck) {
+              await sb.from('content_posts').update({ performance: { ...(p.performance || {}), stuck_notified: new Date().toISOString() } }).eq('id', p.id);
+            }
+          }
+        }
+      }
+    } catch (e) { /* notification is best-effort */ }
+
     const posts = [...missing, ...failed].slice(0, failed.length ? 2 : 3);
     if (!posts.length) return res.json({ message: 'no posts need media' });
 
@@ -4633,8 +4660,19 @@ app.get('/api/cron/media-fill', async (req: any, res) => {
             performance: { ...(p.performance || {}), qc_retries: (p.performance?.qc_retries || 0) + 1 },
           }).eq('id', p.id);
         }
+        // On a QC retry the same scene tends to fail the same way (e.g. garbled
+        // signs). Swap to a different, sign-free archetype scene for quiz posts.
+        let retryBody = '{}';
+        if (p.retry && p.business_name === 'החידונאים') {
+          const alt = [
+            'Close-up from behind of 3-4 children huddled over one smartphone in a dusty Israeli neighbourhood park, eucalyptus trees, golden hour. No signs, no text anywhere.',
+            'Two small teams of children running along a limestone-walled neighbourhood path, one child per team gripping a phone at chest height. No signs, no text anywhere.',
+            'A multi-generational family walking together on a quiet Israeli sidewalk, the child in the middle holding the phone, parent pointing at an old stone building. No signs, no text anywhere.',
+          ];
+          retryBody = JSON.stringify({ scene: alt[(p.performance?.qc_retries || 0) % alt.length] });
+        }
         const r = await fetch(`${PROD_URL}/api/posts/${p.id}/generate-media?variants=${p.retry ? 2 : 1}${p.retry ? '&force=1' : ''}`, {
-          method: 'POST', headers: internalHeaders, body: '{}',
+          method: 'POST', headers: internalHeaders, body: retryBody,
         });
         const d = await r.json() as any;
         results.push({ id: p.id, business: p.business_name, ok: !!d.ok, error: d.error || null });
