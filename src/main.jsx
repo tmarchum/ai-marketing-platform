@@ -6,6 +6,7 @@ import OwnerApp from './owner/OwnerApp.jsx'
 import AuthPage from './components/AuthPage.jsx'
 import LandingPage from './components/LandingPage.jsx'
 import LeadFormPage from './components/LeadFormPage.jsx'
+import { PrivacyPage, TermsPage } from './components/LegalPages.jsx'
 import { supabase } from './lib/supabase'
 
 // ── Unregister any existing service worker + clear caches ──
@@ -29,7 +30,12 @@ const _host = window.location.hostname;
 const _isVercel = _host.includes('vercel.app') || _host === 'localhost' || _host === '127.0.0.1';
 const _leadMatch = _path.match(/^\/l\/([^/]+)/);
 
-if (_leadMatch) {
+if (_path === '/privacy' || _path === '/terms') {
+  // public legal pages (needed to publish the Google sign-in app)
+  createRoot(document.getElementById('root')).render(
+    <StrictMode>{_path === '/privacy' ? <PrivacyPage /> : <TermsPage />}</StrictMode>
+  );
+} else if (_leadMatch) {
   // /l/:slug
   createRoot(document.getElementById('root')).render(
     <StrictMode>

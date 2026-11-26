@@ -587,6 +587,11 @@ function Users() {
     try { await put(`/api/superadmin/users/${u.id}/businesses`, { businessIds: ids }); setMsg(""); }
     catch (e) { setMsg(String(e.message || e)); load(); }
   }
+  async function removeUser(u) {
+    if (!confirm(`למחוק את ${u.email} לגמרי? הוא לא יוכל להיכנס יותר. העסקים נשארים אצלך.`)) return;
+    try { await api(`/api/superadmin/users/${u.id}`, { method: "DELETE" }); await load(); setMsg(`${u.email} נמחק`); }
+    catch (e) { setMsg(String(e.message || e)); }
+  }
   async function setAccess(u, approved) {
     if (!approved && !confirm(`לחסום את ${u.email}? הוא לא יוכל להיכנס עד שתשחרר.`)) return;
     try { await put(`/api/superadmin/users/${u.id}/access`, { approved }); await load(); }
@@ -609,10 +614,29 @@ function Users() {
       </div>
       {msg && <p className="o-msg">{msg}</p>}
 
+      {(users || []).some(u => u.pending) && (
+        <>
+          <h2 className="o-h2">ממתינים לאישור</h2>
+          <div className="o-set">
+            {(users || []).filter(u => u.pending).map(u => (
+              <article key={u.id} className="o-set-row">
+                <h3 dir="ltr" style={{ textAlign: "right" }}>{u.email}</h3>
+                <div className="o-set-items"><span className="bad">נרשם בלי הזמנה. אין לו גישה.</span></div>
+                <BizChecks biz={biz} value={pick} onChange={setPick} />
+                <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+                  <button className="o-btn" onClick={async () => { try { await put(`/api/superadmin/users/${u.id}/access`, { approved: true }); if (pick.length) await put(`/api/superadmin/users/${u.id}/businesses`, { businessIds: pick }); setPick([]); await load(); } catch (e) { setMsg(String(e.message || e)); } }}>אשר גישה</button>
+                  <button className="o-ghost" onClick={() => removeUser(u)}>מחק</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      )}
+
       <h2 className="o-h2">משתמשים קיימים</h2>
       {!users && <div className="o-loading">טוען…</div>}
       <div className="o-set">
-        {(users || []).map(u => (
+        {(users || []).filter(u => !u.pending).map(u => (
           <article key={u.id} className="o-set-row">
             <h3 dir="ltr" style={{ textAlign: "right" }}>{u.email}</h3>
             <div className="o-set-items">
@@ -624,7 +648,8 @@ function Users() {
                 <BizChecks biz={biz} value={u.businessIds || []} onChange={ids => saveBiz(u, ids)} disabled={u.blocked} />
                 {!(u.businessIds || []).length && !u.blocked && <p className="o-muted">אין עסקים מסומנים: המשתמש יראה מסך ריק.</p>}
                 <div style={{ marginTop: 10 }}>
-                  <button className="o-ghost" onClick={() => setAccess(u, !!u.blocked)}>{u.blocked ? "שחרר גישה" : "חסום גישה"}</button>
+                  <button className="o-ghost" onClick={() => setAccess(u, !!u.blocked)}>{u.blocked ? "שחרר גישה" : "חסום גישה"}</button>{" "}
+                  <button className="o-ghost" onClick={() => removeUser(u)}>מחק משתמש</button>
                 </div>
               </>
             )}

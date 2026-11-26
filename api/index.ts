@@ -6222,6 +6222,22 @@ app.put('/api/superadmin/users/:id/businesses', requireAdmin, async (req: any, r
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// Remove a user completely (account + profile). Never an admin, never yourself.
+app.delete('/api/superadmin/users/:id', requireAdmin, async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    if (req.params.id === req.userId) return res.status(400).json({ error: 'אי אפשר למחוק את עצמך' });
+    const { data: prof } = await sb.from('user_profiles').select('is_admin').eq('id', req.params.id).maybeSingle();
+    if (prof?.is_admin) return res.status(400).json({ error: 'אי אפשר למחוק אדמין' });
+    // Their businesses stay with the owner; only access is removed.
+    const { error } = await sb.auth.admin.deleteUser(req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+    await sb.from('user_profiles').delete().eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // Cut off or restore a user's access. Admins cannot be cut off from here.
 app.put('/api/superadmin/users/:id/access', requireAdmin, async (req: any, res) => {
   const sb = getSupabase();
@@ -6229,7 +6245,12 @@ app.put('/api/superadmin/users/:id/access', requireAdmin, async (req: any, res) 
   try {
     const { data: prof } = await sb.from('user_profiles').select('is_admin').eq('id', req.params.id).maybeSingle();
     if (prof?.is_admin) return res.status(400).json({ error: 'אי אפשר לחסום אדמין' });
-    await setUserMeta(sb, req.params.id, { approved: req.body?.approved !== false });
+    const approve = req.body?.approved !== false;
+    await setUserMeta(sb, req.params.id, approve ? { approved: true, business_ids: (await sb.auth.admin.getUserById(req.params.id)).data?.user?.app_metadata?.business_ids ?? [] } : { approved: false });
+    if (approve && !prof) {
+      const { data: au } = await sb.auth.admin.getUserById(req.params.id);
+      await sb.from('user_profiles').insert({ id: req.params.id, email: au?.user?.email || null, plan: 'free', is_admin: false });
+    }
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -6275,7 +6296,20 @@ app.get('/api/superadmin/users', requireAdmin, async (req: any, res) => {
     lastLogin: loginMap[p.id] || null,
     businessIds: Array.isArray(metaMap[p.id]?.business_ids) ? metaMap[p.id].business_ids : null,
     blocked: metaMap[p.id]?.approved === false,
+    pending: false,
   }));
+
+  // Accounts that exist in Supabase Auth but were never approved (someone signed in
+  // with Google, or registered, without being added). They have no access until approved.
+  const known = new Set((profiles || []).map((p: any) => p.id));
+  for (const u of (authUsers?.users || [])) {
+    if (known.has(u.id)) continue;
+    users.push({
+      id: u.id, email: u.email, plan: 'free', isAdmin: false, createdAt: u.created_at,
+      businesses: 0, posts: 0, lastLogin: u.last_sign_in_at || null,
+      businessIds: null, blocked: false, pending: true,
+    } as any);
+  }
 
   res.json(users);
 });
