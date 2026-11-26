@@ -23,7 +23,7 @@
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "test": "npx -y tsx --test planner.test.ts",
+    "test": "npx -y tsx --test _lib/planner.test.ts",
     "typecheck": "tsc --noEmit -p ."
   }
 }

@@ -31,8 +31,8 @@ import {
   textShingles,
   shingleSimilarity,
   POST_SIMILARITY_LIMIT,
-} from './planner-lib.js';
-import type { HolidaySpan, KeywordGroup } from './planner-lib.js';
+} from './_lib/planner-lib.js';
+import type { HolidaySpan, KeywordGroup } from './_lib/planner-lib.js';
 
 const app = express();
 
