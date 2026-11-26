@@ -66,6 +66,9 @@ app.use((req: any, _res: any, next: any) => {
 });
 
 // ── Auth middleware — extract user from JWT ──
+// Accounts created before this moment are grandfathered (only the owner existed).
+const ACCESS_RULE_CUTOFF = Date.parse('2026-11-26T15:00:00Z');
+
 async function authMiddleware(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
@@ -79,6 +82,12 @@ async function authMiddleware(req: any, res: any, next: any) {
     if (!sb) { req.userId = null; return next(); }
     const { data: { user }, error } = await sb.auth.getUser(token);
     if (error || !user) { req.userId = null; return next(); }
+    // Access is by invitation only. An account counts when an admin approved it
+    // (app_metadata is writable only server-side) or it existed before this rule.
+    // Anyone else who managed to create a Supabase account gets no access.
+    const approved = (user as any).app_metadata?.approved === true
+      || new Date(user.created_at || Date.now()).getTime() < ACCESS_RULE_CUTOFF;
+    if (!approved) { req.userId = null; return next(); }
     req.userId = user.id;
     req.userEmail = user.email;
   } catch {
@@ -162,6 +171,7 @@ function isPublicApi(method: string, p: string): boolean {
   if (p.startsWith('/api/cron') || p.startsWith('/api/owner') || p.startsWith('/api/meta-ads')) return true; // own gates (meta-ads: x-ads-key)
   if (method === 'GET' && (p === '/api/health' || p.startsWith('/api/landing/'))) return true;
   if (method === 'POST' && p === '/api/leads') return true; // public lead form
+  if (method === 'POST' && p === '/api/inquiry') return true; // landing-page "get information" form
   if (method === 'GET' && /^\/api\/auth\/(facebook|google)(\/callback)?$/.test(p)) return true; // OAuth redirects
   return false;
 }
@@ -6066,6 +6076,74 @@ app.get('/api/superadmin/me', async (req: any, res) => {
 });
 
 // Get all users with stats
+// Invite a user: the only way in. Creates the Supabase account, marks it approved
+// (server-side app_metadata) and makes sure it has a profile row.
+app.post('/api/superadmin/users/invite', requireAdmin, async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'כתובת אימייל לא תקינה' });
+  try {
+    const redirectTo = process.env.PUBLIC_URL || 'https://dashboard-steel-delta-52.vercel.app';
+    const { data, error } = await sb.auth.admin.inviteUserByEmail(email, { redirectTo });
+    let userId = data?.user?.id;
+    if (error) {
+      // Already registered: find the account and just approve it.
+      const { data: list } = await sb.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      const existing = (list?.users || []).find((u: any) => (u.email || '').toLowerCase() === email);
+      if (!existing) return res.status(400).json({ error: error.message });
+      userId = existing.id;
+    }
+    await sb.auth.admin.updateUserById(userId!, { app_metadata: { approved: true } });
+    const { data: prof } = await sb.from('user_profiles').select('id').eq('id', userId).maybeSingle();
+    if (!prof) await sb.from('user_profiles').insert({ id: userId, email, plan: 'free', is_admin: false });
+    res.json({ ok: true, email, invited: !error });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Public "get information" form on the landing page. Emails the platform owner.
+// Best-effort per-IP limit plus a honeypot field; every value is length-capped and escaped.
+const _inquiryHits = new Map<string, number[]>();
+app.post('/api/inquiry', async (req: any, res) => {
+  const b = req.body || {};
+  if (b.website) return res.json({ ok: true }); // honeypot: bots fill this, people never see it
+  const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+  const now = Date.now();
+  const hits = (_inquiryHits.get(ip) || []).filter(t => now - t < 3_600_000);
+  if (hits.length >= 5) return res.status(429).json({ error: 'נשלחו יותר מדי פניות. נסו שוב מאוחר יותר.' });
+  hits.push(now); _inquiryHits.set(ip, hits);
+
+  const name = String(b.name || '').trim().slice(0, 80);
+  const phone = String(b.phone || '').trim().slice(0, 30);
+  const email = String(b.email || '').trim().slice(0, 120);
+  const message = String(b.message || '').trim().slice(0, 1000);
+  if (name.length < 2) return res.status(400).json({ error: 'נא למלא שם' });
+  if (!phone && !email) return res.status(400).json({ error: 'נא להשאיר טלפון או אימייל' });
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'כתובת אימייל לא תקינה' });
+
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { data: admin } = await sb.from('user_profiles').select('id, email').eq('is_admin', true).limit(1).maybeSingle();
+    const to = (admin?.id && await getUserKey(sb, admin.id, 'NOTIFICATION_EMAIL')) || admin?.email || process.env.REPORT_EMAIL;
+    if (!to) return res.status(503).json({ error: 'לא ניתן לשלוח כרגע' });
+    const html = `<div style="direction:rtl;font-family:Arial;padding:20px;max-width:520px">
+      <h2>פנייה חדשה מדף הבית — בקשת מידע</h2>
+      <p><b>שם:</b> ${escapeHtml(name)}</p>
+      ${phone ? `<p><b>טלפון:</b> ${escapeHtml(phone)}</p>` : ''}
+      ${email ? `<p><b>אימייל:</b> ${escapeHtml(email)}</p>` : ''}
+      ${message ? `<p><b>הודעה:</b><br>${escapeHtml(message).replace(/\n/g, '<br>')}</p>` : ''}
+    </div>`;
+    const r = await sendEmail(to, `📩 בקשת מידע חדשה: ${name}`, html);
+    if (!r.ok) return res.status(500).json({ error: 'השליחה נכשלה, נסו שוב' });
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: 'השליחה נכשלה, נסו שוב' });
+  }
+});
+
 app.get('/api/superadmin/users', requireAdmin, async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });

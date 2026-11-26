@@ -18,10 +18,6 @@ export default function AuthPage({ onBack }) {
       if (mode === 'login') {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-      } else if (mode === 'signup') {
-        const { error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
-        setMessage('נשלח אליך מייל אימות. בדוק את תיבת הדואר.');
       } else if (mode === 'forgot') {
         const { error } = await supabase.auth.resetPasswordForEmail(email);
         if (error) throw error;
@@ -45,7 +41,9 @@ export default function AuthPage({ onBack }) {
     if (error) {
       setError(/provider|not enabled/i.test(error.message || '')
         ? 'התחברות עם Google עדיין לא הופעלה במערכת'
-        : (error.message || 'שגיאה'));
+        : (/signups? not allowed|not allowed/i.test(error.message || '')
+          ? 'הגישה למערכת בהזמנה בלבד'
+          : (error.message || 'שגיאה')));
     }
   }
 
@@ -73,7 +71,6 @@ export default function AuthPage({ onBack }) {
           </h1>
           <p style={{ margin: '6px 0 0', color: '#666', fontSize: 13 }}>
             {mode === 'login' ? 'התחבר לחשבון שלך' :
-             mode === 'signup' ? 'צור חשבון חדש' :
              'איפוס סיסמה'}
           </p>
         </div>
@@ -178,12 +175,8 @@ export default function AuthPage({ onBack }) {
 
         <div style={{ marginTop: 16, textAlign: 'center', fontSize: 12, color: '#888' }}>
           {mode === 'login' && <>
-            <span>אין לך חשבון? </span>
-            <button onClick={() => { setMode('signup'); setError(''); setMessage(''); }}
-              style={{ background: 'none', border: 'none', color: '#8B5CF6', cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
-              הירשם
-            </button>
-            <span style={{ margin: '0 8px' }}>|</span>
+            <span>הגישה למערכת בהזמנה בלבד. </span>
+            <span style={{ margin: '0 4px' }} />
             <button onClick={() => { setMode('forgot'); setError(''); setMessage(''); }}
               style={{ background: 'none', border: 'none', color: '#8B5CF6', cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
               שכחתי סיסמה

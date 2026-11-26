@@ -5468,6 +5468,24 @@ function SuperAdmin() {
   const [savingConfig, setSavingConfig] = useState(false);
   const [configSaved, setConfigSaved] = useState(false);
   const [editConfig, setEditConfig] = useState(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteMsg, setInviteMsg] = useState(null);
+  const [inviting, setInviting] = useState(false);
+
+  async function inviteUser() {
+    const email = inviteEmail.trim();
+    if (!email) return;
+    setInviting(true); setInviteMsg(null);
+    try {
+      const r = await authFetch("/api/superadmin/users/invite", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ email }) });
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || "שגיאה");
+      setInviteMsg({ ok:true, text: d.invited ? `נשלחה הזמנה ל-${email}` : `${email} כבר רשום ואושר` });
+      setInviteEmail("");
+      const ur = await authFetch("/api/superadmin/users"); const ud = await ur.json(); if (Array.isArray(ud)) setUsers(ud);
+    } catch(e) { setInviteMsg({ ok:false, text: e.message }); }
+    setInviting(false);
+  }
 
   useEffect(()=>{
     (async()=>{
@@ -5521,6 +5539,22 @@ function SuperAdmin() {
 
   return <div style={{animation:"fadeUp 0.3s ease"}}>
     <SectionTitle sub="ניהול משתמשים, תוכניות ותמחור">👑 ניהול פלטפורמה</SectionTitle>
+
+    {/* Invite a user — access is by invitation only */}
+    <div style={{background:"#fff",border:"1px solid #e5e7eb",borderRadius:12,padding:16,marginBottom:16}}>
+      <div style={{fontWeight:700,fontSize:14,marginBottom:4}}>➕ הוספת משתמש</div>
+      <div style={{color:"#6b7280",fontSize:12,marginBottom:10}}>הכניסה למערכת מותרת רק למי שהוזמן כאן. תישלח אליו הזמנה במייל.</div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <input type="email" value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)} placeholder="email@example.com" dir="ltr"
+          onKeyDown={e=>{ if (e.key==="Enter") inviteUser(); }}
+          style={{flex:"1 1 220px",padding:"9px 12px",borderRadius:8,border:"1px solid #d1d5db",fontSize:13}}/>
+        <button onClick={inviteUser} disabled={inviting||!inviteEmail.trim()}
+          style={{padding:"9px 18px",borderRadius:8,border:"none",background:"#8B5CF6",color:"#fff",fontWeight:600,fontSize:13,cursor:inviting?"wait":"pointer",opacity:(!inviteEmail.trim()||inviting)?0.6:1}}>
+          {inviting?"שולח...":"שלח הזמנה"}
+        </button>
+      </div>
+      {inviteMsg && <div style={{marginTop:8,fontSize:12,color:inviteMsg.ok?"#16a34a":"#dc2626"}}>{inviteMsg.text}</div>}
+    </div>
 
     {/* Stats Overview */}
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12,marginBottom:20}}>

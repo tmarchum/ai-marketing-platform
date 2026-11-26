@@ -1,4 +1,29 @@
+import { useState } from "react";
+
 export default function LandingPage({ onGetStarted }) {
+  const [formOpen, setFormOpen] = useState(false);
+  const [form, setForm] = useState({ name: "", phone: "", email: "", message: "", website: "" });
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [formError, setFormError] = useState("");
+  const openForm = () => { setFormOpen(true); setSent(false); setFormError(""); };
+
+  async function submitInquiry(e) {
+    e.preventDefault();
+    setFormError("");
+    setSending(true);
+    try {
+      const r = await fetch("/api/inquiry", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "השליחה נכשלה, נסו שוב");
+      setSent(true);
+      setForm({ name: "", phone: "", email: "", message: "", website: "" });
+    } catch (err) {
+      setFormError(err.message || "השליחה נכשלה, נסו שוב");
+    }
+    setSending(false);
+  }
+
   const FEATURES = [
     { icon: "🤖", title: "תוכן AI חכם", desc: "Claude יוצר פוסטים מותאמים לעסק שלך — בעברית, בטון הנכון, עם האשטגים רלוונטיים" },
     { icon: "🎨", title: "מדיה AI", desc: "תמונות מקצועיות עם Flux ווידאו עם Runway — בלחיצת כפתור" },
@@ -15,7 +40,7 @@ export default function LandingPage({ onGetStarted }) {
   ];
 
   const FAQS = [
-    { q: "האם זה בחינם?", a: "כן, יש תוכנית חינמית. תוכנית Pro תהיה זמינה בקרוב עם יכולות מורחבות." },
+    { q: "איך מצטרפים?", a: "הגישה למערכת בהזמנה. השאירו פרטים ונחזור אליכם עם מידע והצעה מותאמת." },
     { q: "האם צריך ידע טכני?", a: "ממש לא. הממשק בעברית, פשוט ואינטואיטיבי. ה-AI עושה את העבודה הקשה." },
     { q: "איך מתחברים לפייסבוק?", a: "בלחיצה אחת — חיבור OAuth מאובטח של Meta. לא צריך להעתיק טוקנים ידנית." },
     { q: "מה קורה עם התוכן לפני פרסום?", a: "שום דבר לא מתפרסם בלי אישור שלך. תמיד אתה מחליט מה עולה." },
@@ -48,9 +73,9 @@ export default function LandingPage({ onGetStarted }) {
             color: "#fff", borderRadius: 10, padding: "8px 20px", cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" }}>
             התחברות
           </button>
-          <button onClick={onGetStarted} className="land-btn" style={{ background: "linear-gradient(135deg,#8B5CF6,#EC4899)",
+          <button onClick={openForm} className="land-btn" style={{ background: "linear-gradient(135deg,#8B5CF6,#EC4899)",
             border: "none", color: "#fff", borderRadius: 10, padding: "8px 24px", cursor: "pointer", fontSize: 14, fontWeight: 700, fontFamily: "inherit" }}>
-            התחל בחינם
+            קבלת מידע
           </button>
         </div>
       </nav>
@@ -70,14 +95,14 @@ export default function LandingPage({ onGetStarted }) {
           AI יוצר לך פוסטים, תמונות, סרטונים ואווטארים — בעברית, מותאם לעסק שלך, מוכן לפרסום בפייסבוק ואינסטגרם.
         </p>
         <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-          <button onClick={onGetStarted} className="land-btn" style={{ background: "linear-gradient(135deg,#8B5CF6,#EC4899)",
+          <button onClick={openForm} className="land-btn" style={{ background: "linear-gradient(135deg,#8B5CF6,#EC4899)",
             border: "none", color: "#fff", borderRadius: 14, padding: "14px 40px", cursor: "pointer", fontSize: 18, fontWeight: 700, fontFamily: "inherit",
             boxShadow: "0 4px 20px rgba(139,92,246,0.3)" }}>
-            התחל בחינם — ללא כרטיס אשראי
+            השאירו פרטים לקבלת מידע
           </button>
         </div>
         <p style={{ color: "#64748b", fontSize: 13, marginTop: 14 }}>
-          הרשמה תוך 30 שניות. ללא התחייבות.
+          נחזור אליכם בהקדם. ללא התחייבות.
         </p>
       </section>
 
@@ -140,48 +165,23 @@ export default function LandingPage({ onGetStarted }) {
         </div>
       </section>
 
-      {/* PRICING */}
-      <section style={{ maxWidth: 800, margin: "0 auto 80px", padding: "0 24px" }}>
-        <h2 style={{ textAlign: "center", fontSize: 32, fontWeight: 700, marginBottom: 12 }}>תוכניות ומחירים</h2>
-        <p style={{ textAlign: "center", color: "#94a3b8", fontSize: 14, marginBottom: 40 }}>התחל בחינם, שדרג כשתרצה</p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20 }}>
-          {/* Free */}
-          <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 20, padding: 28 }}>
-            <div style={{ color: "#94a3b8", fontSize: 13, fontWeight: 600, marginBottom: 8 }}>חינם</div>
-            <div style={{ fontSize: 36, fontWeight: 700, marginBottom: 4 }}>0 ₪</div>
-            <div style={{ color: "#64748b", fontSize: 12, marginBottom: 20 }}>לנצח</div>
-            <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
-              {["עד 3 עסקים", "5 פוסטים בחודש", "יצירת תמונות AI", "חיבור פייסבוק", "ניתוח בסיסי"].map((f, i) => (
-                <li key={i} style={{ color: "#94a3b8", fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ color: "#10B981" }}>✓</span> {f}
-                </li>
-              ))}
-            </ul>
-            <button onClick={onGetStarted} style={{ width: "100%", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
-              color: "#fff", borderRadius: 12, padding: "12px", cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" }}>
-              התחל בחינם
-            </button>
-          </div>
-          {/* Pro */}
-          <div style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.15), rgba(236,72,153,0.1))",
-            border: "1px solid rgba(139,92,246,0.3)", borderRadius: 20, padding: 28, position: "relative" }}>
-            <div style={{ position: "absolute", top: -12, right: 20, background: "linear-gradient(135deg,#8B5CF6,#EC4899)",
-              borderRadius: 8, padding: "4px 12px", fontSize: 11, fontWeight: 700 }}>מומלץ</div>
-            <div style={{ color: "#a78bfa", fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Pro</div>
-            <div style={{ fontSize: 36, fontWeight: 700, marginBottom: 4 }}>בקרוב</div>
-            <div style={{ color: "#64748b", fontSize: 12, marginBottom: 20 }}>מחיר יפורסם בהמשך</div>
-            <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
-              {["עסקים ללא הגבלה", "פוסטים ללא הגבלה", "וידאו AI + אווטאר UGC", "ניתוח מתחרים מתקדם", "תזמון פרסומים", "תמיכה ישירה"].map((f, i) => (
-                <li key={i} style={{ color: "#c4b5fd", fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ color: "#a78bfa" }}>✓</span> {f}
-                </li>
-              ))}
-            </ul>
-            <button onClick={onGetStarted} className="land-btn" style={{ width: "100%", background: "linear-gradient(135deg,#8B5CF6,#EC4899)",
-              border: "none", color: "#fff", borderRadius: 12, padding: "12px", cursor: "pointer", fontSize: 14, fontWeight: 700, fontFamily: "inherit" }}>
-              הירשם עכשיו
-            </button>
-          </div>
+      {/* ACCESS */}
+      <section style={{ maxWidth: 620, margin: "0 auto 80px", padding: "0 24px" }}>
+        <h2 style={{ textAlign: "center", fontSize: 32, fontWeight: 700, marginBottom: 12 }}>גישה בהזמנה</h2>
+        <p style={{ textAlign: "center", color: "#94a3b8", fontSize: 14, marginBottom: 32 }}>המערכת פתוחה כרגע למשתמשים מוזמנים. השאירו פרטים ונחזור אליכם עם מידע והצעה מותאמת לעסק שלכם.</p>
+        <div style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.15), rgba(236,72,153,0.1))",
+          border: "1px solid rgba(139,92,246,0.3)", borderRadius: 20, padding: 28, textAlign: "center" }}>
+          <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: 10, marginBottom: 24, alignItems: "center" }}>
+            {["יצירת פוסטים ותמונות AI בעברית", "תזמון ופרסום בפייסבוק ואינסטגרם", "ניתוח ביצועים ומתחרים", "תמיכה ישירה"].map((f, i) => (
+              <li key={i} style={{ color: "#c4b5fd", fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ color: "#a78bfa" }}>✓</span> {f}
+              </li>
+            ))}
+          </ul>
+          <button onClick={openForm} className="land-btn" style={{ background: "linear-gradient(135deg,#8B5CF6,#EC4899)",
+            border: "none", color: "#fff", borderRadius: 12, padding: "12px 32px", cursor: "pointer", fontSize: 15, fontWeight: 700, fontFamily: "inherit" }}>
+            השאירו פרטים
+          </button>
         </div>
       </section>
 
@@ -206,14 +206,71 @@ export default function LandingPage({ onGetStarted }) {
       {/* CTA */}
       <section style={{ textAlign: "center", padding: "60px 24px 40px",
         background: "linear-gradient(180deg, transparent, rgba(139,92,246,0.08))" }}>
-        <h2 style={{ fontSize: 28, fontWeight: 700, marginBottom: 12 }}>מוכן להתחיל?</h2>
+        <h2 style={{ fontSize: 28, fontWeight: 700, marginBottom: 12 }}>רוצים לשמוע עוד?</h2>
         <p style={{ color: "#94a3b8", fontSize: 16, marginBottom: 28 }}>הצטרף לעסקים שכבר משתמשים ב-AI לשיווק חכם יותר</p>
-        <button onClick={onGetStarted} className="land-btn" style={{ background: "linear-gradient(135deg,#8B5CF6,#EC4899)",
+        <button onClick={openForm} className="land-btn" style={{ background: "linear-gradient(135deg,#8B5CF6,#EC4899)",
           border: "none", color: "#fff", borderRadius: 14, padding: "14px 40px", cursor: "pointer", fontSize: 18, fontWeight: 700, fontFamily: "inherit",
           boxShadow: "0 4px 20px rgba(139,92,246,0.3)" }}>
-          התחל בחינם עכשיו
+          השאירו פרטים לקבלת מידע
         </button>
       </section>
+
+      {/* INQUIRY MODAL */}
+      {formOpen && (
+        <div onClick={() => setFormOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex",
+          alignItems: "center", justifyContent: "center", padding: 16, zIndex: 50 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#12122a", border: "1px solid rgba(139,92,246,0.3)", borderRadius: 18,
+            padding: 28, width: "100%", maxWidth: 420, maxHeight: "92vh", overflowY: "auto" }}>
+            {sent ? (
+              <div style={{ textAlign: "center", padding: "16px 0" }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
+                <h3 style={{ fontSize: 20, marginBottom: 8 }}>תודה, קיבלנו!</h3>
+                <p style={{ color: "#94a3b8", fontSize: 14, marginBottom: 20 }}>נחזור אליכם בהקדם עם מידע.</p>
+                <button onClick={() => setFormOpen(false)} style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                  color: "#fff", borderRadius: 10, padding: "10px 28px", cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" }}>סגירה</button>
+              </div>
+            ) : (
+              <form onSubmit={submitInquiry}>
+                <h3 style={{ fontSize: 20, marginBottom: 6 }}>השאירו פרטים לקבלת מידע</h3>
+                <p style={{ color: "#94a3b8", fontSize: 13, marginBottom: 18 }}>נחזור אליכם בהקדם. מספיק טלפון או אימייל.</p>
+                {[
+                  { k: "name", label: "שם", type: "text", req: true, ph: "השם שלך" },
+                  { k: "phone", label: "טלפון", type: "tel", ph: "050-0000000" },
+                  { k: "email", label: "אימייל", type: "email", ph: "name@email.com" },
+                ].map(f => (
+                  <label key={f.k} style={{ display: "block", marginBottom: 12, fontSize: 12, fontWeight: 600, color: "#cbd5e1" }}>
+                    {f.label}{f.req ? " *" : ""}
+                    <input type={f.type} value={form[f.k]} required={f.req} maxLength={f.k === "email" ? 120 : f.k === "phone" ? 30 : 80}
+                      placeholder={f.ph} onChange={e => setForm({ ...form, [f.k]: e.target.value })}
+                      style={{ display: "block", width: "100%", marginTop: 5, padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)",
+                        background: "rgba(255,255,255,0.05)", color: "#fff", fontSize: 14, fontFamily: "inherit", direction: f.k === "name" ? "rtl" : "ltr", textAlign: "right" }} />
+                  </label>
+                ))}
+                <label style={{ display: "block", marginBottom: 12, fontSize: 12, fontWeight: 600, color: "#cbd5e1" }}>
+                  במה אתם מעוניינים? (לא חובה)
+                  <textarea value={form.message} maxLength={1000} rows={3} onChange={e => setForm({ ...form, message: e.target.value })}
+                    style={{ display: "block", width: "100%", marginTop: 5, padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)",
+                      background: "rgba(255,255,255,0.05)", color: "#fff", fontSize: 14, fontFamily: "inherit", resize: "vertical" }} />
+                </label>
+                {/* honeypot: hidden from people, bots fill it */}
+                <input type="text" tabIndex={-1} autoComplete="off" aria-hidden="true" value={form.website}
+                  onChange={e => setForm({ ...form, website: e.target.value })}
+                  style={{ position: "absolute", left: "-9999px", width: 1, height: 1, opacity: 0 }} />
+                {formError && <div style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.4)", color: "#fca5a5",
+                  borderRadius: 8, padding: "8px 12px", fontSize: 12, marginBottom: 12 }}>{formError}</div>}
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button type="submit" disabled={sending} className="land-btn" style={{ flex: 1, background: "linear-gradient(135deg,#8B5CF6,#EC4899)",
+                    border: "none", color: "#fff", borderRadius: 10, padding: "11px", cursor: sending ? "wait" : "pointer", fontSize: 14, fontWeight: 700, fontFamily: "inherit" }}>
+                    {sending ? "שולח..." : "שליחה"}
+                  </button>
+                  <button type="button" onClick={() => setFormOpen(false)} style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.2)",
+                    color: "#fff", borderRadius: 10, padding: "11px 18px", cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit" }}>ביטול</button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* FOOTER */}
       <footer style={{ borderTop: "1px solid rgba(255,255,255,0.06)", padding: "24px", textAlign: "center" }}>
