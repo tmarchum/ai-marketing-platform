@@ -89,6 +89,17 @@ async function authMiddleware(req: any, res: any, next: any) {
     const approved = meta.approved === true
       || (meta.approved !== false && (user.created_at ? new Date(user.created_at).getTime() : Infinity) < ACCESS_RULE_CUTOFF);
     if (!approved) { req.userId = null; return next(); }
+    // Google-only: when GOOGLE_ONLY=1 is set in the Vercel environment, a session
+    // counts only if it was obtained through an OAuth (Google) sign-in. The switch
+    // stays off until Google sign-in works, so nobody is locked out in between.
+    if ((process.env.GOOGLE_ONLY || '').trim() === '1') {
+      let viaOAuth = false;
+      try {
+        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+        viaOAuth = Array.isArray(payload.amr) && payload.amr.some((a: any) => a?.method === 'oauth');
+      } catch { /* unreadable token: not accepted */ }
+      if (!viaOAuth) { req.userId = null; return next(); }
+    }
     req.userId = user.id;
     req.userEmail = user.email;
     // A user invited with a list of businesses (app_metadata.business_ids, set only
@@ -6128,8 +6139,9 @@ app.post('/api/superadmin/users/invite', requireAdmin, async (req: any, res) => 
   const email = String(req.body?.email || '').trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'כתובת אימייל לא תקינה' });
   try {
-    const redirectTo = process.env.PUBLIC_URL || 'https://dashboard-steel-delta-52.vercel.app';
-    const { data, error } = await sb.auth.admin.inviteUserByEmail(email, { redirectTo });
+    // No invitation email: access is Google-only, so the person just signs in with
+    // Google using this address. The account is created already confirmed.
+    const { data, error } = await sb.auth.admin.createUser({ email, email_confirm: true });
     let userId = data?.user?.id;
     if (error) {
       // Already registered: find the account and just approve it.

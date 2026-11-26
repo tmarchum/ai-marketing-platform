@@ -5480,7 +5480,7 @@ function SuperAdmin() {
       const r = await authFetch("/api/superadmin/users/invite", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ email }) });
       const d = await r.json();
       if (!r.ok || d.error) throw new Error(d.error || "שגיאה");
-      setInviteMsg({ ok:true, text: d.invited ? `נשלחה הזמנה ל-${email}` : `${email} כבר רשום ואושר` });
+      setInviteMsg({ ok:true, text: d.invited ? `${email} נוסף. הוא נכנס עם Google באותה כתובת.` : `${email} כבר רשום ואושר` });
       setInviteEmail("");
       const ur = await authFetch("/api/superadmin/users"); const ud = await ur.json(); if (Array.isArray(ud)) setUsers(ud);
     } catch(e) { setInviteMsg({ ok:false, text: e.message }); }

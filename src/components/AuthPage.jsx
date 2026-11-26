@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { supabase } from '../lib/supabase';
 
 export default function AuthPage({ onBack }) {
+  // Google is the only sign-in offered. The password form stays reachable only at
+  // ?password=1, as a way back in for the owner while Google is being set up.
+  const emergency = new URLSearchParams(location.search).has('password');
   const [mode, setMode] = useState('login'); // login | signup | forgot
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -83,12 +86,12 @@ export default function AuthPage({ onBack }) {
             AI Marketing Platform
           </h1>
           <p style={{ margin: '6px 0 0', color: '#666', fontSize: 13 }}>
-            {mode === 'login' ? 'התחבר לחשבון שלך' :
+            {!emergency ? 'התחברות עם חשבון Google' : mode === 'login' ? 'התחבר לחשבון שלך' :
              'איפוס סיסמה'}
           </p>
         </div>
 
-        <form onSubmit={handleSubmit}>
+        {emergency && <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: 14 }}>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#444', marginBottom: 5 }}>
               אימייל
@@ -158,15 +161,15 @@ export default function AuthPage({ onBack }) {
              mode === 'signup' ? 'הירשם' :
              'שלח מייל איפוס'}
           </button>
-        </form>
+        </form>}
 
         {mode !== 'forgot' && (
           <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '16px 0', color: '#aaa', fontSize: 12 }}>
+            {emergency && <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '16px 0', color: '#aaa', fontSize: 12 }}>
               <div style={{ flex: 1, height: 1, background: '#e5e5e5' }} />
               <span>או</span>
               <div style={{ flex: 1, height: 1, background: '#e5e5e5' }} />
-            </div>
+            </div>}
             <button
               type="button" onClick={handleGoogle}
               style={{
@@ -186,8 +189,12 @@ export default function AuthPage({ onBack }) {
           </>
         )}
 
+        {error && !emergency && (
+          <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '8px 12px', margin: '12px 0', color: '#DC2626', fontSize: 12 }}>{error}</div>
+        )}
         <div style={{ marginTop: 16, textAlign: 'center', fontSize: 12, color: '#888' }}>
-          {mode === 'login' && <>
+          {!emergency && <span>הכניסה בהזמנה בלבד, עם חשבון Google.</span>}
+          {emergency && mode === 'login' && <>
             <span>הגישה למערכת בהזמנה בלבד. </span>
             <span style={{ margin: '0 4px' }} />
             <button onClick={() => { setMode('forgot'); setError(''); setMessage(''); }}
@@ -195,14 +202,14 @@ export default function AuthPage({ onBack }) {
               שכחתי סיסמה
             </button>
           </>}
-          {mode === 'signup' && <>
+          {emergency && mode === 'signup' && <>
             <span>יש לך חשבון? </span>
             <button onClick={() => { setMode('login'); setError(''); setMessage(''); }}
               style={{ background: 'none', border: 'none', color: '#8B5CF6', cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
               התחבר
             </button>
           </>}
-          {mode === 'forgot' && <>
+          {emergency && mode === 'forgot' && <>
             <button onClick={() => { setMode('login'); setError(''); setMessage(''); }}
               style={{ background: 'none', border: 'none', color: '#8B5CF6', cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
               חזור להתחברות

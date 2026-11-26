@@ -577,7 +577,7 @@ function Users() {
     setBusy(true); setMsg("");
     try {
       const d = await post("/api/superadmin/users/invite", { email: email.trim(), businessIds: pick });
-      setMsg(d.invited ? `נשלחה הזמנה ל-${email.trim()}` : `${email.trim()} כבר רשום, והגישה שלו עודכנה`);
+      setMsg(d.invited ? `${email.trim()} נוסף. הוא נכנס עם Google באותה כתובת.` : `${email.trim()} כבר רשום, והגישה שלו עודכנה`);
       setEmail(""); setPick([]); await load();
     } catch (e) { setMsg(String(e.message || e)); }
     setBusy(false);
@@ -599,12 +599,12 @@ function Users() {
 
       <div className="o-boost" style={{ display: "block" }}>
         <h3>הוספת משתמש</h3>
-        <p>תישלח הזמנה במייל. בחר לאילו עסקים תהיה לו גישה (אפשר לשנות אחר כך).</p>
+        <p>לא נשלח מייל: הוא נכנס עם Google באותה כתובת. בחר לאילו עסקים תהיה לו גישה (אפשר לשנות אחר כך).</p>
         <input type="email" dir="ltr" value={email} onChange={e => setEmail(e.target.value)} placeholder="email@example.com"
           style={{ width: "100%", padding: 10, margin: "6px 0 10px" }} />
         <BizChecks biz={biz} value={pick} onChange={setPick} />
         <div style={{ marginTop: 12 }}>
-          <button className="o-btn" disabled={busy || !email.trim()} onClick={invite}>{busy ? "שולח…" : "שלח הזמנה"}</button>
+          <button className="o-btn" disabled={busy || !email.trim()} onClick={invite}>{busy ? "מוסיף…" : "הוסף משתמש"}</button>
         </div>
       </div>
       {msg && <p className="o-msg">{msg}</p>}
