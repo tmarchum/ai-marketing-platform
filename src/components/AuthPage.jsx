@@ -34,10 +34,23 @@ export default function AuthPage({ onBack }) {
   async function handleGoogle() {
     setError('');
     setMessage('');
-    const { error } = await supabase.auth.signInWithOAuth({
+    const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.origin },
+      options: { redirectTo: window.location.origin, skipBrowserRedirect: true },
     });
+    if (!error && data?.url) {
+      // Ask Supabase first: when the Google provider is switched off it answers 400
+      // with raw JSON, and a plain redirect would leave the user on that error page.
+      try {
+        const probe = await fetch(data.url, { redirect: 'manual' });
+        if (probe.status === 400) {
+          setError('התחברות עם Google עדיין לא הופעלה במערכת. התחבר עם אימייל וסיסמה.');
+          return;
+        }
+      } catch { /* network/CORS hiccup: fall through to the normal redirect */ }
+      window.location.href = data.url;
+      return;
+    }
     if (error) {
       setError(/provider|not enabled/i.test(error.message || '')
         ? 'התחברות עם Google עדיין לא הופעלה במערכת'
