@@ -12,7 +12,8 @@ const TABS = [
   { id: "queue", label: "לאישור", icon: "circle-check" },
   { id: "leads", label: "פניות", icon: "address-book" },
   { id: "calendar", label: "לוח פרסום", icon: "calendar-event" },
-  { id: "ads", label: "פרסום ממומן", icon: "speakerphone" },
+  { id: "ads", label: "פרסום ממומן", icon: "speakerphone", admin: true },
+  { id: "users", label: "משתמשים", icon: "users", admin: true },
   { id: "settings", label: "הגדרות", icon: "settings" },
 ];
 
@@ -53,8 +54,11 @@ function holidayOn(iso) {
   return null;
 }
 
-export default function OwnerApp({ session, onClassic }) {
+export default function OwnerApp({ session }) {
   const [tab, setTab] = useState("home");
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => { api("/api/superadmin/me").then(d => setIsAdmin(!!d.isAdmin)).catch(() => {}); }, []);
+  const visibleTabs = TABS.filter(t => !t.admin || isAdmin);
   const [overview, setOverview] = useState(null);
   const [posts, setPosts] = useState(null);
   const [err, setErr] = useState("");
@@ -78,14 +82,13 @@ export default function OwnerApp({ session, onClassic }) {
       <header className="o-top">
         <div className="o-brand"><span className="o-logo"><i className="ti ti-chart-arrows-vertical" aria-hidden="true" /></span>מרכז השיווק</div>
         <nav className="o-tabs">
-          {TABS.map(t => (
+          {visibleTabs.map(t => (
             <button key={t.id} className={tab === t.id ? "on" : ""} onClick={() => setTab(t.id)}>
               <i className={`ti ti-${t.icon}`} aria-hidden="true" /> {t.label}
               {t.id === "queue" && needsYou > 0 && <b className="o-dot">{needsYou}</b>}
             </button>
           ))}
         </nav>
-        <button className="o-ghost" onClick={onClassic}>ממשק קודם</button>
       </header>
 
       <main className="o-main">
@@ -96,12 +99,13 @@ export default function OwnerApp({ session, onClassic }) {
         {overview && tab === "queue" && <Queue posts={posts || []} businesses={overview.businesses} focus={focusPost} onChange={replacePost} reload={load} />}
         {overview && tab === "leads" && <Leads businesses={overview.businesses} />}
         {overview && tab === "calendar" && <Calendar posts={posts || []} businesses={overview.businesses} onOpenPost={openPost} />}
-        {overview && tab === "ads" && <Ads />}
-        {overview && tab === "settings" && <Settings businesses={overview.businesses} onClassic={onClassic} />}
+        {overview && tab === "ads" && isAdmin && <Ads />}
+        {overview && tab === "users" && isAdmin && <Users />}
+        {overview && tab === "settings" && <Settings businesses={overview.businesses} isAdmin={isAdmin} />}
       </main>
 
       <nav className="o-bottom">
-        {TABS.map(t => (
+        {visibleTabs.map(t => (
           <button key={t.id} className={tab === t.id ? "on" : ""} onClick={() => setTab(t.id)}>
             <i className={`ti ti-${t.icon}`} aria-hidden="true" /><small>{t.label}</small>
             {t.id === "queue" && needsYou > 0 && <b className="o-dot">{needsYou}</b>}
@@ -536,6 +540,101 @@ function Ads() {
   );
 }
 
+// ── משתמשים (מנהל בלבד) ─────────────────────────────────────────────────────
+const put = (path, body) => api(path, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+const toggleId = (list, id) => (list.includes(id) ? list.filter(x => x !== id) : [...list, id]);
+
+function BizChecks({ biz, value, onChange, disabled }) {
+  return (
+    <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+      {biz.map(b => (
+        <label key={b.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, opacity: disabled ? 0.5 : 1 }}>
+          <input type="checkbox" disabled={disabled} checked={value.includes(b.id)} onChange={() => onChange(toggleId(value, b.id))} />
+          <span style={{ color: b.color || "inherit", fontWeight: 600 }}>{b.name}</span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function Users() {
+  const [users, setUsers] = useState(null);
+  const [biz, setBiz] = useState([]);
+  const [msg, setMsg] = useState("");
+  const [email, setEmail] = useState("");
+  const [pick, setPick] = useState([]);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [u, b] = await Promise.all([api("/api/superadmin/users"), api("/api/superadmin/businesses")]);
+      setUsers(Array.isArray(u) ? u : []); setBiz(Array.isArray(b) ? b : []);
+    } catch (e) { setMsg(String(e.message || e)); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function invite() {
+    setBusy(true); setMsg("");
+    try {
+      const d = await post("/api/superadmin/users/invite", { email: email.trim(), businessIds: pick });
+      setMsg(d.invited ? `נשלחה הזמנה ל-${email.trim()}` : `${email.trim()} כבר רשום, והגישה שלו עודכנה`);
+      setEmail(""); setPick([]); await load();
+    } catch (e) { setMsg(String(e.message || e)); }
+    setBusy(false);
+  }
+  async function saveBiz(u, ids) {
+    setUsers(us => us.map(x => x.id === u.id ? { ...x, businessIds: ids } : x));
+    try { await put(`/api/superadmin/users/${u.id}/businesses`, { businessIds: ids }); setMsg(""); }
+    catch (e) { setMsg(String(e.message || e)); load(); }
+  }
+  async function setAccess(u, approved) {
+    if (!approved && !confirm(`לחסום את ${u.email}? הוא לא יוכל להיכנס עד שתשחרר.`)) return;
+    try { await put(`/api/superadmin/users/${u.id}/access`, { approved }); await load(); }
+    catch (e) { setMsg(String(e.message || e)); }
+  }
+
+  return (
+    <>
+      <div className="o-hello"><h1>משתמשים</h1><span>הכניסה למערכת בהזמנה בלבד. כל משתמש רואה רק את העסקים שסימנת לו</span></div>
+
+      <div className="o-boost" style={{ display: "block" }}>
+        <h3>הוספת משתמש</h3>
+        <p>תישלח הזמנה במייל. בחר לאילו עסקים תהיה לו גישה (אפשר לשנות אחר כך).</p>
+        <input type="email" dir="ltr" value={email} onChange={e => setEmail(e.target.value)} placeholder="email@example.com"
+          style={{ width: "100%", padding: 10, margin: "6px 0 10px" }} />
+        <BizChecks biz={biz} value={pick} onChange={setPick} />
+        <div style={{ marginTop: 12 }}>
+          <button className="o-btn" disabled={busy || !email.trim()} onClick={invite}>{busy ? "שולח…" : "שלח הזמנה"}</button>
+        </div>
+      </div>
+      {msg && <p className="o-msg">{msg}</p>}
+
+      <h2 className="o-h2">משתמשים קיימים</h2>
+      {!users && <div className="o-loading">טוען…</div>}
+      <div className="o-set">
+        {(users || []).map(u => (
+          <article key={u.id} className="o-set-row">
+            <h3 dir="ltr" style={{ textAlign: "right" }}>{u.email}</h3>
+            <div className="o-set-items">
+              <span className={u.isAdmin ? "good" : u.blocked ? "bad" : ""}>{u.isAdmin ? "אדמין" : u.blocked ? "חסום" : "מוזמן"}</span>
+              <span>{u.lastLogin ? `כניסה אחרונה: ${u.lastLogin.slice(0, 10)}` : "עוד לא נכנס"}</span>
+            </div>
+            {u.isAdmin ? <p className="o-muted">גישה מלאה לכל העסקים.</p> : (
+              <>
+                <BizChecks biz={biz} value={u.businessIds || []} onChange={ids => saveBiz(u, ids)} disabled={u.blocked} />
+                {!(u.businessIds || []).length && !u.blocked && <p className="o-muted">אין עסקים מסומנים: המשתמש יראה מסך ריק.</p>}
+                <div style={{ marginTop: 10 }}>
+                  <button className="o-ghost" onClick={() => setAccess(u, !!u.blocked)}>{u.blocked ? "שחרר גישה" : "חסום גישה"}</button>
+                </div>
+              </>
+            )}
+          </article>
+        ))}
+      </div>
+    </>
+  );
+}
+
 // ── 5. הגדרות ───────────────────────────────────────────────────────────────
 const DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
 // Direct Meta ads access for the bots: save the system-user token once, hand the bots a key.
@@ -567,7 +666,7 @@ function AdsAccess() {
   );
 }
 
-function Settings({ businesses, onClassic }) {
+function Settings({ businesses, isAdmin }) {
   return (
     <>
       <div className="o-hello"><h1>הגדרות</h1><span>חיבורים וקצב פרסום</span></div>
@@ -584,15 +683,17 @@ function Settings({ businesses, onClassic }) {
           </article>
         ))}
       </div>
-      <AdsAccess />
-      <div className="o-boost">
-        <div className="o-idea-icon"><i className="ti ti-adjustments" aria-hidden="true" /></div>
-        <div>
-          <h3>הגדרות מתקדמות</h3>
-          <p>בסיס הידע, זהות ויזואלית, מענה אוטומטי, דף נחיתה ומפתחות — נמצאים עדיין בממשק הקודם.</p>
-          <button className="o-btn" onClick={onClassic}>פתח את הממשק הקודם</button>
+      {isAdmin && <AdsAccess />}
+      {isAdmin && (
+        <div className="o-boost">
+          <div className="o-idea-icon"><i className="ti ti-adjustments" aria-hidden="true" /></div>
+          <div>
+            <h3>כלי ניהול מתקדמים</h3>
+            <p>בסיס הידע, זהות ויזואלית, מענה אוטומטי, דף נחיתה ומפתחות עדיין נערכים במסך ניהול נפרד, למנהל בלבד.</p>
+            <a className="o-btn" href="?classic=1">פתח כלי ניהול</a>
+          </div>
         </div>
-      </div>
+      )}
     </>
   );
 }

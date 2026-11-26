@@ -48,8 +48,10 @@ if (_leadMatch) {
 function Root() {
   const [session, setSession] = useState(undefined); // undefined = loading, null = no session
   const [showAuth, setShowAuth] = useState(false);
-  const [ui, setUiState] = useState(() => { try { return localStorage.getItem('ui') || 'owner'; } catch { return 'owner'; } });
-  const setUi = v => { setUiState(v); try { localStorage.setItem('ui', v); } catch {} };
+  // One interface for everyone. The previous one stays in the code for admin
+  // tools that have not moved yet, but is not offered anywhere in the UI: it opens
+  // only from the address ?classic=1 (and every non-admin call it makes is refused).
+  const ui = new URLSearchParams(location.search).has('classic') ? 'classic' : 'owner';
 
   useEffect(() => {
     // Get initial session
@@ -85,14 +87,14 @@ function Root() {
   if (session) {
     if (ui === 'classic') {
       return <>
-        <button onClick={() => setUi('owner')} style={{
+        <button onClick={() => { location.href = location.pathname; }} style={{
           position: 'fixed', bottom: 84, left: 16, zIndex: 9999, border: 0, borderRadius: 999,
           padding: '10px 16px', background: '#2f5d50', color: '#fff', fontWeight: 600, cursor: 'pointer',
           fontFamily: 'Heebo, sans-serif', boxShadow: '0 2px 8px rgba(0,0,0,.2)' }}>← לממשק החדש</button>
         <App session={session} />
       </>;
     }
-    return <OwnerApp session={session} onClassic={() => setUi('classic')} />;
+    return <OwnerApp session={session} />;
   }
 
   // Not logged in — show landing or auth

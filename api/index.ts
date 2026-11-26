@@ -85,11 +85,16 @@ async function authMiddleware(req: any, res: any, next: any) {
     // Access is by invitation only. An account counts when an admin approved it
     // (app_metadata is writable only server-side) or it existed before this rule.
     // Anyone else who managed to create a Supabase account gets no access.
-    const approved = (user as any).app_metadata?.approved === true
-      || (user.created_at ? new Date(user.created_at).getTime() : Infinity) < ACCESS_RULE_CUTOFF;
+    const meta = (user as any).app_metadata || {};
+    const approved = meta.approved === true
+      || (meta.approved !== false && (user.created_at ? new Date(user.created_at).getTime() : Infinity) < ACCESS_RULE_CUTOFF);
     if (!approved) { req.userId = null; return next(); }
     req.userId = user.id;
     req.userEmail = user.email;
+    // A user invited with a list of businesses (app_metadata.business_ids, set only
+    // by an admin) is a member: they see and act on those businesses and nothing else.
+    req.isMember = Array.isArray(meta.business_ids);
+    req.assignedIds = req.isMember ? meta.business_ids.filter((x: any) => typeof x === 'string') : null;
   } catch {
     req.userId = null;
   }
@@ -135,8 +140,9 @@ async function isAdminUser(userId: string | null): Promise<boolean> {
 // them. Ownership is read from the row(s); a row with no recorded owner stays
 // reachable so legacy data is never locked away from the real owner. Cron and
 // server-to-server callers (no userId) are not restricted.
-async function ownsBusiness(sb: any, userId: string | null, businessId: string): Promise<boolean> {
+async function ownsBusiness(sb: any, userId: string | null, businessId: string, assigned: string[] | null = null): Promise<boolean> {
   if (!userId) return true;
+  if (assigned && assigned.includes(businessId)) return true;
   const { data } = await sb.from('businesses').select('user_id').eq('id', businessId).maybeSingle();
   if (!data) return false;
   return !data.user_id || data.user_id === userId || await isAdminUser(userId);
@@ -179,6 +185,20 @@ app.use('/api', (req: any, res: any, next: any) => {
   if (req.method === 'OPTIONS' || isPublicApi(req.method, req.originalUrl.split('?')[0])) return next();
   if (req.userId || isCronCaller(req) || (process.env.SUPABASE_SERVICE_KEY && req.headers['x-internal-key'] === INTERNAL_KEY)) return next();
   res.status(401).json({ error: 'sign in required' });
+});
+
+// Members (invited with a business list) may only use the owner screens for their
+// own businesses. Everything else (keys, cron, ads tokens, platform admin, the
+// per-business classic endpoints) stays closed to them.
+app.use('/api', async (req: any, res: any, next: any) => {
+  if (!req.userId || !req.isMember) return next();
+  const p = req.originalUrl.split('?')[0];
+  try { if (await isAdminUser(req.userId)) return next(); } catch { /* treated as member */ }
+  const ok = (p.startsWith('/api/owner') && !/^\/api\/owner\/ads-/.test(p))
+    || p === '/api/superadmin/me' || p === '/api/health'
+    || (isPublicApi(req.method, p) && !p.startsWith('/api/cron') && !p.startsWith('/api/meta-ads') && !p.startsWith('/api/owner'));
+  if (ok) return next();
+  res.status(403).json({ error: 'אין לך הרשאה לפעולה הזו' });
 });
 
 // ── Lightweight error tracking — last-N-errors ring buffer + daily summary email.
@@ -826,8 +846,15 @@ app.get('/api/debug/overlay-test', async (req, res) => {
 
 const OWNER_DAY = 86_400_000;
 
-async function ownerBusinesses(sb: any, userId: string) {
-  const { data } = await sb.from('businesses').select('id, name, url, color, schedule, social').eq('user_id', userId);
+// Businesses a user may work with: the ones they own plus the ones an admin assigned.
+async function scopedBusinessRows(sb: any, userId: string, assigned: string[] | null, select: string) {
+  const owned = (await sb.from('businesses').select(select).eq('user_id', userId)).data || [];
+  const extraIds = (assigned || []).filter(id => !owned.some((o: any) => o.id === id));
+  const extra = extraIds.length ? ((await sb.from('businesses').select(select).in('id', extraIds)).data || []) : [];
+  return [...owned, ...extra];
+}
+async function ownerBusinesses(sb: any, userId: string, assigned: string[] | null = null) {
+  const data = await scopedBusinessRows(sb, userId, assigned, 'id, name, url, color, schedule, social');
   return (data || []).map((b: any) => ({
     id: b.id, name: b.name, url: b.url, color: b.color || '#6366f1',
     schedule: b.schedule || null,
@@ -884,7 +911,7 @@ app.get('/api/owner/overview', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   try {
-    const businesses = await ownerBusinesses(sb, req.userId);
+    const businesses = await ownerBusinesses(sb, req.userId, req.assignedIds);
     const names = businesses.map((b: any) => b.name);
     const ids = businesses.map((b: any) => b.id);
     const now = Date.now();
@@ -932,7 +959,7 @@ app.get('/api/owner/posts', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   try {
-    const businesses = await ownerBusinesses(sb, req.userId);
+    const businesses = await ownerBusinesses(sb, req.userId, req.assignedIds);
     const names = businesses.map((b: any) => b.name);
     if (!names.length) return res.json({ posts: [] });
     const days = Math.min(Math.max(Number(req.query.days) || 14, 1), 60);
@@ -954,7 +981,7 @@ app.post('/api/owner/posts/:id', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   try {
-    const names = (await ownerBusinesses(sb, req.userId)).map((b: any) => b.name);
+    const names = (await ownerBusinesses(sb, req.userId, req.assignedIds)).map((b: any) => b.name);
     const { data: post } = await sb.from('content_posts').select('*').eq('id', req.params.id).maybeSingle();
     if (!post || !names.includes(post.business_name)) return res.status(404).json({ error: 'not found' });
     if (post.published_at) return res.status(409).json({ error: 'already published' });
@@ -986,7 +1013,7 @@ app.get('/api/owner/leads', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   try {
-    const businesses = await ownerBusinesses(sb, req.userId);
+    const businesses = await ownerBusinesses(sb, req.userId, req.assignedIds);
     const ids = businesses.map((b: any) => b.id);
     if (!ids.length) return res.json({ leads: [] });
     const { data, error } = await sb.from('leads')
@@ -1001,7 +1028,7 @@ app.post('/api/owner/leads/:id', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   try {
-    const ids = (await ownerBusinesses(sb, req.userId)).map((b: any) => b.id);
+    const ids = (await ownerBusinesses(sb, req.userId, req.assignedIds)).map((b: any) => b.id);
     const status = String(req.body?.status || '');
     if (!['new', 'contacted', 'converted', 'closed'].includes(status)) return res.status(400).json({ error: 'bad status' });
     const { data, error } = await sb.from('leads').update({ status }).eq('id', req.params.id).in('business_id', ids).select('id, status').maybeSingle();
@@ -1060,7 +1087,7 @@ app.get('/api/owner/growth', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   try {
-    const { data: rows } = await sb.from('businesses').select('id, name, color, social').eq('user_id', req.userId);
+    const rows = await scopedBusinessRows(sb, req.userId, req.assignedIds, 'id, name, color, social');
     const ids = (rows || []).map((b: any) => b.id);
     const since = new Date(Date.parse(GROWTH_START) - 30 * OWNER_DAY).toISOString();
     const { data: leads } = ids.length
@@ -1099,8 +1126,8 @@ app.post('/api/owner/growth/:bizId/channel', async (req: any, res) => {
   try {
     const key = String(req.body?.key || ''), status = String(req.body?.status || '');
     if (!['todo', 'doing', 'done'].includes(status) || !/^[a-z_]{2,30}$/.test(key)) return res.status(400).json({ error: 'bad input' });
-    const { data: b } = await sb.from('businesses').select('id, social').eq('id', req.params.bizId).eq('user_id', req.userId).maybeSingle();
-    if (!b) return res.status(404).json({ error: 'not found' });
+    const { data: b } = await sb.from('businesses').select('id, social, user_id').eq('id', req.params.bizId).maybeSingle();
+    if (!b || !(b.user_id === req.userId || (req.assignedIds || []).includes(b.id))) return res.status(404).json({ error: 'not found' });
     const social = b.social || {};
     social.growth = { ...(social.growth || {}), channels: { ...(social.growth?.channels || {}), [key]: status } };
     const { error } = await sb.from('businesses').update({ social }).eq('id', b.id);
@@ -1116,7 +1143,7 @@ app.post('/api/owner/leads', async (req: any, res) => {
   try {
     const { businessId, name, phone, message, source } = req.body || {};
     if (!LEAD_SOURCES[source]) return res.status(400).json({ error: 'bad source' });
-    const biz = (await ownerBusinesses(sb, req.userId)).find((b: any) => b.id === businessId);
+    const biz = (await ownerBusinesses(sb, req.userId, req.assignedIds)).find((b: any) => b.id === businessId);
     if (!biz) return res.status(404).json({ error: 'business not found' });
     const { data, error } = await sb.from('leads').insert({
       business_id: biz.id, business_name: biz.name, name: String(name || '').slice(0, 120) || 'פנייה טלפונית',
@@ -2139,7 +2166,7 @@ app.post('/api/calendars/generate', async (req: any, res) => {
     // Get business
     const { data: biz, error: bizErr } = await sb.from('businesses').select('*').eq('id', business_id).single();
     if (bizErr || !biz) return res.status(404).json({ error: 'Business not found' });
-    if (!(await ownsBusiness(sb, req.userId, business_id))) return res.status(403).json({ error: 'Not your business' });
+    if (!(await ownsBusiness(sb, req.userId, business_id, req.assignedIds))) return res.status(403).json({ error: 'Not your business' });
 
     // Get Claude + Gemini keys (Gemini is the fallback if Claude billing is out)
     let _kq: any = sb.from('user_api_keys').select('key_name, key_value').limit(20);
@@ -2370,7 +2397,7 @@ app.post('/api/calendars/approve', async (req: any, res) => {
 
     const { data: biz } = await sb.from('businesses').select('*').eq('id', business_id).single();
     if (!biz) return res.status(404).json({ error: 'Business not found' });
-    if (!(await ownsBusiness(sb, req.userId, business_id))) return res.status(403).json({ error: 'Not your business' });
+    if (!(await ownsBusiness(sb, req.userId, business_id, req.assignedIds))) return res.status(403).json({ error: 'Not your business' });
 
     // Get Claude + Gemini keys for expanding posts (Gemini fallback when Claude billing is out)
     let _kq: any = sb.from('user_api_keys').select('key_name, key_value').limit(20);
@@ -4771,13 +4798,15 @@ async function metaGraph(sb: any, path: string, method: 'GET' | 'POST', params: 
   if (j.error) throw new Error(`${j.error.message}${j.error.error_user_msg ? ' — ' + j.error.error_user_msg : ''}`);
   return j;
 }
-app.get('/api/owner/ads-key', (req: any, res) => {
+app.get('/api/owner/ads-key', async (req: any, res) => {
   if (!req.userId) return res.status(401).json({ error: 'sign in required' });
+  if (!(await isAdminUser(req.userId))) return res.status(403).json({ error: 'Admin only' });
   res.json({ header: 'x-ads-key', key: ADS_KEY, base: '/api/meta-ads' });
 });
 // Owner screens: is the system token saved and what can it reach; save a new token (validated, never echoed).
 app.get('/api/owner/ads-status', async (req: any, res) => {
   if (!req.userId) return res.status(401).json({ error: 'sign in required' });
+  if (!(await isAdminUser(req.userId))) return res.status(403).json({ error: 'Admin only' });
   try {
     const sb = getSupabase();
     if (!(await getUserKey(sb, req.userId, 'META_SYSTEM_TOKEN'))) return res.json({ set: false, key: ADS_KEY });
@@ -4791,6 +4820,7 @@ app.get('/api/owner/ads-status', async (req: any, res) => {
 });
 app.post('/api/owner/ads-token', async (req: any, res) => {
   if (!req.userId) return res.status(401).json({ error: 'sign in required' });
+  if (!(await isAdminUser(req.userId))) return res.status(403).json({ error: 'Admin only' });
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   try {
@@ -6076,6 +6106,20 @@ app.get('/api/superadmin/me', async (req: any, res) => {
 });
 
 // Get all users with stats
+// Merge keys into a user's app_metadata (server-side only; users cannot edit it).
+async function setUserMeta(sb: any, userId: string, patch: Record<string, any>) {
+  const { data } = await sb.auth.admin.getUserById(userId);
+  const merged = { ...(data?.user?.app_metadata || {}), ...patch };
+  const { error } = await sb.auth.admin.updateUserById(userId, { app_metadata: merged });
+  if (error) throw new Error(error.message);
+}
+async function onlyRealBusinessIds(sb: any, ids: any): Promise<string[]> {
+  const want = (Array.isArray(ids) ? ids : []).filter((x: any) => typeof x === 'string');
+  if (!want.length) return [];
+  const { data } = await sb.from('businesses').select('id').in('id', want);
+  return (data || []).map((b: any) => b.id);
+}
+
 // Invite a user: the only way in. Creates the Supabase account, marks it approved
 // (server-side app_metadata) and makes sure it has a profile row.
 app.post('/api/superadmin/users/invite', requireAdmin, async (req: any, res) => {
@@ -6094,7 +6138,8 @@ app.post('/api/superadmin/users/invite', requireAdmin, async (req: any, res) => 
       if (!existing) return res.status(400).json({ error: error.message });
       userId = existing.id;
     }
-    await sb.auth.admin.updateUserById(userId!, { app_metadata: { approved: true } });
+    const businessIds = await onlyRealBusinessIds(sb, req.body?.businessIds);
+    await setUserMeta(sb, userId!, { approved: true, business_ids: businessIds });
     const { data: prof } = await sb.from('user_profiles').select('id').eq('id', userId).maybeSingle();
     if (!prof) await sb.from('user_profiles').insert({ id: userId, email, plan: 'free', is_admin: false });
     res.json({ ok: true, email, invited: !error });
@@ -6144,6 +6189,39 @@ app.post('/api/inquiry', async (req: any, res) => {
   }
 });
 
+// Businesses an admin can hand out.
+app.get('/api/superadmin/businesses', requireAdmin, async (_req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  const { data } = await sb.from('businesses').select('id, name, color').order('name');
+  res.json(data || []);
+});
+
+// Set which businesses a member may use.
+app.put('/api/superadmin/users/:id/businesses', requireAdmin, async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { data: prof } = await sb.from('user_profiles').select('is_admin').eq('id', req.params.id).maybeSingle();
+    if (prof?.is_admin) return res.status(400).json({ error: 'לאדמין יש גישה לכל העסקים שלו' });
+    const businessIds = await onlyRealBusinessIds(sb, req.body?.businessIds);
+    await setUserMeta(sb, req.params.id, { business_ids: businessIds });
+    res.json({ ok: true, businessIds });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Cut off or restore a user's access. Admins cannot be cut off from here.
+app.put('/api/superadmin/users/:id/access', requireAdmin, async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const { data: prof } = await sb.from('user_profiles').select('is_admin').eq('id', req.params.id).maybeSingle();
+    if (prof?.is_admin) return res.status(400).json({ error: 'אי אפשר לחסום אדמין' });
+    await setUserMeta(sb, req.params.id, { approved: req.body?.approved !== false });
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/superadmin/users', requireAdmin, async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
@@ -6168,8 +6246,10 @@ app.get('/api/superadmin/users', requireAdmin, async (req: any, res) => {
   // Get last login from auth.users
   const { data: authUsers } = await sb.auth.admin.listUsers();
   const loginMap: Record<string, string> = {};
+  const metaMap: Record<string, any> = {};
   for (const u of (authUsers?.users || [])) {
     loginMap[u.id] = u.last_sign_in_at || '';
+    metaMap[u.id] = u.app_metadata || {};
   }
 
   const users = (profiles || []).map((p: any) => ({
@@ -6181,6 +6261,8 @@ app.get('/api/superadmin/users', requireAdmin, async (req: any, res) => {
     businesses: bizMap[p.id] || 0,
     posts: postMap[p.id] || 0,
     lastLogin: loginMap[p.id] || null,
+    businessIds: Array.isArray(metaMap[p.id]?.business_ids) ? metaMap[p.id].business_ids : null,
+    blocked: metaMap[p.id]?.approved === false,
   }));
 
   res.json(users);
