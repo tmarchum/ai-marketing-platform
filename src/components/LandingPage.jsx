@@ -88,7 +88,7 @@ export default function LandingPage({ onGetStarted }) {
           <div style={{ background: "#12122a", borderRadius: 18, padding: "40px 32px", textAlign: "center" }}>
             <div style={{ display: "flex", justifyContent: "center", gap: 24, flexWrap: "wrap" }}>
               {[
-                { emoji: "🎬", label: "הקולנוע הנייד", stat: "12 פוסטים", color: "#F59E0B" },
+                { emoji: "🎬", label: "הקולנוע הנודד", stat: "12 פוסטים", color: "#F59E0B" },
                 { emoji: "✈️", label: "צייד טיסות", stat: "8 פוסטים", color: "#3B82F6" },
                 { emoji: "🧩", label: "החידונאים", stat: "5 פוסטים", color: "#EC4899" },
               ].map((b, i) => (

@@ -6,6 +6,34 @@ import express from 'express';
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 
+import {
+  HEB_FMT,
+  hebrewParts,
+  holidayOn,
+  APPROX_HOLIDAYS,
+  HOLIDAY_LEAD_DAYS,
+  DAY_MS,
+  isoDay,
+  atNoonUTC,
+  holidaySpans,
+  heDate,
+  daysBetween,
+  hebrewCalendarBrief,
+  HOLIDAY_ALIASES,
+  HEB_LETTER,
+  mentionsTerm,
+  STALE_WINDOW_DAYS,
+  staleHolidayRefs,
+  CINEMA_KEYWORD_BANK,
+  keywordBankFor,
+  keywordBankBrief,
+  hebrewAnchorsBrief,
+  textShingles,
+  shingleSimilarity,
+  POST_SIMILARITY_LIMIT,
+} from './planner-lib.js';
+import type { HolidaySpan, KeywordGroup } from './planner-lib.js';
+
 const app = express();
 
 // ── Supabase ──
@@ -73,9 +101,49 @@ function isCronCaller(req: any): boolean {
 // Vercel's own scheduler sends no header and locking would stop all publishing.
 app.use('/api/cron', (req: any, res: any, next: any) => {
   if (!(process.env.CRON_SECRET || '').trim()) return next();
-  if (isCronCaller(req) || req.userId) return next();
-  res.status(401).json({ error: 'cron endpoints require CRON_SECRET or a signed-in user' });
+  if (isCronCaller(req)) return next();
+  if (process.env.SUPABASE_SERVICE_KEY && req.headers['x-internal-key'] === INTERNAL_KEY) return next();
+  if (!req.userId) return res.status(401).json({ error: 'cron endpoints require CRON_SECRET or a signed-in admin' });
+  // Cron jobs act on every business (publish, reply, scan), so a regular
+  // signed-in user must not be able to trigger them.
+  isAdminUser(req.userId).then(ok => ok ? next() : res.status(403).json({ error: 'Admin only' })).catch(() => res.status(500).json({ error: 'auth check failed' }));
 });
+const _adminCache = new Map<string, { ok: boolean; at: number }>();
+async function isAdminUser(userId: string | null): Promise<boolean> {
+  if (!userId) return false;
+  const hit = _adminCache.get(userId);
+  if (hit && Date.now() - hit.at < 60_000) return hit.ok;
+  const sb = getSupabase();
+  if (!sb) return false;
+  const { data } = await sb.from('user_profiles').select('is_admin').eq('id', userId).maybeSingle();
+  const ok = !!data?.is_admin;
+  _adminCache.set(userId, { ok, at: Date.now() });
+  return ok;
+}
+
+// Tenant check: a signed-in user may only touch a business/post that belongs to
+// them. Ownership is read from the row(s); a row with no recorded owner stays
+// reachable so legacy data is never locked away from the real owner. Cron and
+// server-to-server callers (no userId) are not restricted.
+async function ownsBusiness(sb: any, userId: string | null, businessId: string): Promise<boolean> {
+  if (!userId) return true;
+  const { data } = await sb.from('businesses').select('user_id').eq('id', businessId).maybeSingle();
+  if (!data) return false;
+  return !data.user_id || data.user_id === userId || await isAdminUser(userId);
+}
+async function ownsPost(sb: any, userId: string | null, postId: string): Promise<boolean> {
+  if (!userId) return true;
+  const { data: post } = await sb.from('content_posts').select('user_id, business_id').eq('id', postId).maybeSingle();
+  if (!post) return true; // the route returns its own 404
+  const owners: string[] = [];
+  if (post.user_id) owners.push(post.user_id);
+  if (post.business_id) {
+    const { data: b } = await sb.from('businesses').select('user_id').eq('id', post.business_id).maybeSingle();
+    if (b?.user_id) owners.push(b.user_id);
+  }
+  return !owners.length || owners.includes(userId) || await isAdminUser(userId);
+}
+
 const requireUserOrCron = (req: any, res: any, next: any) => {
   if (isCronCaller(req) || req.userId) return next();
   res.status(401).json({ error: 'sign in required' });
@@ -122,75 +190,9 @@ function trackError(req: any, err: any) {
 }
 
 // Endpoint to read recent errors (for debugging from dashboard)
-app.get('/api/debug/errors', (req: any, res) => {
+app.get('/api/debug/errors', async (req: any, res) => {
+  if (!(await isAdminUser(req.userId))) return res.status(403).json({ error: 'Admin only' });
   res.json({ count: _errorLog.length, errors: _errorLog.slice(-50).reverse() });
-});
-
-// Helper to save any single key/value to user_api_keys via API. No auth so it's
-// a temporary endpoint — remove in next cleanup pass.
-app.post('/api/debug/save-key', async (req: any, res) => {
-  const sb = getSupabase();
-  if (!sb) return res.json({ error: 'no db' });
-  const { user_id, key_name, key_value } = req.body;
-  if (!user_id || !key_name || !key_value) return res.json({ error: 'user_id + key_name + key_value required' });
-  try {
-    const { error } = await sb.from('user_api_keys').upsert(
-      { user_id, key_name, key_value, updated_at: new Date().toISOString() },
-      { onConflict: 'user_id,key_name' }
-    );
-    if (error) return res.json({ error: error.message });
-    res.json({ ok: true, saved: key_name });
-  } catch (e: any) { res.json({ error: e.message }); }
-});
-
-// Debug: check what notification keys are stored for a user
-app.get('/api/debug/notif-keys', async (req: any, res) => {
-  const sb = getSupabase();
-  if (!sb) return res.json({ error: 'no db' });
-  const user_id = (req.query.user_id as string) || '702b86ed-4ce5-4e70-98d0-50a55dbf4af6';
-  const names = ['TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID','NOTIFICATION_EMAIL','NOTIFICATION_PHONE','CALLMEBOT_API_KEY','GMAIL_USER','GMAIL_APP_PASSWORD'];
-  const { data } = await sb.from('user_api_keys').select('key_name, key_value').eq('user_id', user_id).in('key_name', names);
-  const result: Record<string,string> = {};
-  for (const r of (data || [])) {
-    const v = r.key_value || '';
-    result[r.key_name] = v.length > 15 ? v.slice(0,8) + '...' + v.slice(-4) + ` (len ${v.length})` : v;
-  }
-  res.json({ user_id, found: Object.keys(result), values: result });
-});
-
-// Debug: try to send a test message via the SAME code path the leads use
-app.get('/api/debug/test-telegram', async (req: any, res) => {
-  const sb = getSupabase();
-  if (!sb) return res.json({ error: 'no db' });
-  const user_id = (req.query.user_id as string) || '702b86ed-4ce5-4e70-98d0-50a55dbf4af6';
-  const tgToken = await getUserKey(sb, user_id, 'TELEGRAM_BOT_TOKEN');
-  const tgChatId = await getUserKey(sb, user_id, 'TELEGRAM_CHAT_ID');
-  if (!tgToken || !tgChatId) return res.json({ error: 'keys missing', has_token: !!tgToken, has_chat_id: !!tgChatId });
-  try {
-    const r = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: tgChatId, text: '🧪 בדיקת telegram מהשרת — אם אתה רואה את זה, החיבור פעיל' }),
-    });
-    const d = await r.json() as any;
-    res.json({ http: r.status, ok: d.ok, error: d.description || null, chat_id_used: tgChatId, token_prefix: tgToken.slice(0,15) });
-  } catch (e: any) { res.json({ exception: e.message }); }
-});
-
-// Backward-compat alias for the cloud TTS save
-app.post('/api/debug/save-cloud-tts-key', async (req: any, res) => {
-  const sb = getSupabase();
-  if (!sb) return res.json({ error: 'no db' });
-  const { user_id, key } = req.body;
-  if (!user_id || !key) return res.json({ error: 'user_id + key required' });
-  try {
-    const { error } = await sb.from('user_api_keys').upsert(
-      { user_id, key_name: 'CLOUD_TTS_API_KEY', key_value: key, updated_at: new Date().toISOString() },
-      { onConflict: 'user_id,key_name' }
-    );
-    if (error) return res.json({ error: error.message });
-    res.json({ ok: true, saved: 'CLOUD_TTS_API_KEY' });
-  } catch (e: any) { res.json({ error: e.message }); }
 });
 
 // Debug: surface raw Cloud TTS error so we can see which project the GEMINI_API_KEY belongs to.
@@ -231,7 +233,9 @@ app.get('/api/debug/post-detail', async (req: any, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 5, 30);
     const includePub = req.query.published === '1';
-    let q = sb.from('content_posts').select('id, business_name, content, hashtags, image_prompt, motion_prompt, image_url, video_url, scheduled_at, published_at, performance, created_at').order('created_at', { ascending: false }).limit(limit);
+    let q: any = sb.from('content_posts').select('id, business_name, content, hashtags, image_prompt, motion_prompt, image_url, video_url, scheduled_at, published_at, performance, created_at').order('created_at', { ascending: false }).limit(limit);
+    // Own posts only: this used to read any user's posts by business name.
+    q = q.eq('user_id', req.userId);
     if (!includePub) q = q.is('published_at', null);
     if (id) q = q.eq('id', id);
     if (biz) q = q.eq('business_name', biz);
@@ -244,24 +248,24 @@ app.get('/api/debug/post-detail', async (req: any, res) => {
 app.get('/api/debug/stuck-posts', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.json({ error: 'no db' });
-  const all = req.query.all === '1';
+  const all = false; // cross-user listing removed
   try {
-    let q = sb
+    let q: any = sb
       .from('content_posts')
       .select('id, user_id, business_name, content, status, scheduled_at, published_at, image_url, video_url, image_prompt, motion_prompt, performance, created_at')
       .is('published_at', null)
       .order('created_at', { ascending: false })
       .limit(50);
     if (!all) {
-      const user_id = (req.query.user_id as string) || '702b86ed-4ce5-4e70-98d0-50a55dbf4af6';
-      q = q.eq('user_id', user_id);
+      q = q.eq('user_id', req.userId);
     }
     if (req.query.include_published === '1') {
       // override the is-null filter by re-selecting
       q = sb.from('content_posts')
         .select('id, user_id, business_name, content, status, scheduled_at, published_at, image_url, video_url, performance, created_at')
+        .eq('user_id', req.userId)
         .order('created_at', { ascending: false })
-        .limit(50);
+        .limit(50) as any;
     }
     const { data, error } = await q;
     if (error) return res.json({ error: error.message });
@@ -1163,7 +1167,7 @@ app.delete('/api/businesses/:id', async (req: any, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/businesses/sync', async (req, res) => {
+app.post('/api/businesses/sync', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   const { businesses: items } = req.body;
@@ -1178,7 +1182,9 @@ app.post('/api/businesses/sync', async (req, res) => {
       competitor_analysis: item.competitorAnalysis || null,
       business_profile: item.businessProfile || null,
     };
-    const { data: existing } = await sb.from('businesses').select('id').eq('name', item.name).maybeSingle();
+    let exq: any = sb.from('businesses').select('id').eq('name', item.name);
+    if (req.userId) { exq = exq.eq('user_id', req.userId); row.user_id = req.userId; }
+    const { data: existing } = await exq.maybeSingle();
     if (existing) {
       const { data } = await sb.from('businesses').update(row).eq('id', existing.id).select().single();
       if (data) results.push(data);
@@ -1193,6 +1199,9 @@ app.post('/api/businesses/sync', async (req, res) => {
 // ── Backfill: assign orphan rows to the logged-in user ──
 app.post('/api/claim-data', async (req: any, res) => {
   if (!req.userId) return res.status(401).json({ error: 'Not authenticated' });
+  // Claiming orphan rows hands over everything with no owner (including posts
+  // the monthly cron created), so only an admin may do it.
+  if (!(await isAdminUser(req.userId))) return res.status(403).json({ error: 'Admin only' });
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
   // Assign all businesses with null user_id to this user
@@ -1236,8 +1245,10 @@ app.post('/api/content', async (req: any, res) => {
 app.put('/api/content/:id', async (req, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
-  const updates = { ...req.body }; delete updates.id; delete updates.created_at;
-  const { data, error } = await sb.from('content_posts').update(updates).eq('id', req.params.id).select().single();
+  const updates = { ...req.body }; delete updates.id; delete updates.created_at; delete updates.user_id;
+  let uq: any = sb.from('content_posts').update(updates).eq('id', req.params.id);
+  if ((req as any).userId) uq = uq.eq('user_id', (req as any).userId);
+  const { data, error } = await uq.select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -1811,8 +1822,9 @@ async function getUserKey(sb: any, userId: string | null, keyName: string): Prom
   }
   // Fallback: env var
   if (process.env[keyName]) return process.env[keyName] as string;
-  // Fallback 2: grab ANY user's key (for cron endpoints without auth)
-  if (sb) {
+  // Fallback 2: grab ANY user's key, only for cron/server calls that have no
+  // user. A signed-in user must never run on someone else's keys.
+  if (sb && !userId) {
     const { data } = await sb.from('user_api_keys').select('key_value').eq('key_name', keyName).limit(1).maybeSingle();
     if (data?.key_value) return data.key_value;
   }
@@ -2027,218 +2039,6 @@ app.get('/api/cron/metrics', async (req: any, res) => {
 // ══════════════════════════════════════════════════════════════
 
 // Israeli holidays + cultural events by month (Gregorian dates — approx for 2025-2026)
-// ══════════════════════════════════════════════════════════════
-// HEBREW CALENDAR — exact, computed, never guessed.
-//
-// Every holiday post used to go out AFTER its holiday: Rosh Hashana (12.9)
-// published on 20.9, Yom Kippur (21.9) on 1.10, Sukkot (ended 2.10) on 8.10.
-// The cause was ISRAELI_EVENTS below — a fixed Gregorian table that literally
-// told the model "Purim (varies) — March 20". Intl's hebrew calendar gives the
-// real date for any year, so derive it instead of maintaining a table.
-// ══════════════════════════════════════════════════════════════
-
-const HEB_FMT = new Intl.DateTimeFormat('en-u-ca-hebrew', {
-  day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC',
-});
-
-function hebrewParts(d: Date): { day: number; month: string; year: string } {
-  const parts = HEB_FMT.formatToParts(d);
-  const get = (t: string) => parts.find(x => x.type === t)?.value || '';
-  return { day: parseInt(get('day'), 10), month: get('month'), year: get('year') };
-}
-
-// Hebrew month/day -> holiday name. Yom HaZikaron and Yom HaAtzmaut shift when
-// they would land on a weekend, so they are marked approximate downstream.
-function holidayOn(d: Date): string | null {
-  const { day, month } = hebrewParts(d);
-  if (month === 'Tishri') {
-    if (day === 1 || day === 2) return 'ראש השנה';
-    if (day === 10) return 'יום כיפור';
-    if (day >= 15 && day <= 21) return 'סוכות';
-    if (day === 22 || day === 23) return 'שמחת תורה';
-  }
-  if (month === 'Kislev' && day >= 25) return 'חנוכה';
-  if (month === 'Tevet' && day <= 3) return 'חנוכה';
-  if (month === 'Shevat' && day === 15) return 'ט"ו בשבט';
-  // In a leap year Intl reports "Adar I" / "Adar II" and Purim falls in Adar II.
-  if ((month === 'Adar' || month === 'Adar II') && day === 14) return 'פורים';
-  if (month === 'Nisan') {
-    if (day >= 15 && day <= 21) return 'פסח';
-    if (day === 27) return 'יום הזיכרון לשואה ולגבורה';
-  }
-  if (month === 'Iyar') {
-    if (day === 4) return 'יום הזיכרון';
-    if (day === 5) return 'יום העצמאות';
-    if (day === 18) return 'ל"ג בעומר';
-    if (day === 28) return 'יום ירושלים';
-  }
-  if (month === 'Sivan' && day === 6) return 'שבועות';
-  if (month === 'Av') {
-    if (day === 9) return 'תשעה באב';
-    if (day === 15) return 'ט"ו באב';
-  }
-  return null;
-}
-
-const APPROX_HOLIDAYS = new Set(['יום הזיכרון', 'יום העצמאות', 'יום הזיכרון לשואה ולגבורה']);
-
-// How far ahead a holiday post is still useful. A bookable event needs weeks of
-// lead time; a greeting is worthless the day after.
-// Generous for the bookable holidays: schools and municipalities close dates
-// months out, so Chanukah copy in early October is early-bird, not premature.
-const HOLIDAY_LEAD_DAYS: Record<string, number> = {
-  'פסח': 70, 'חנוכה': 60, 'סוכות': 50, 'ראש השנה': 50, 'פורים': 45,
-  'שבועות': 35, 'יום העצמאות': 35, 'ל"ג בעומר': 21, 'ט"ו בשבט': 21,
-  'שמחת תורה': 21, 'יום כיפור': 14, 'יום ירושלים': 14, 'ט"ו באב': 14,
-  'יום הזיכרון': 14, 'יום הזיכרון לשואה ולגבורה': 14, 'תשעה באב': 7,
-};
-
-type HolidaySpan = { name: string; from: string; to: string; approx: boolean };
-
-const DAY_MS = 86_400_000;
-const isoDay = (d: Date) => d.toISOString().slice(0, 10);
-const atNoonUTC = (iso: string) => new Date(iso.slice(0, 10) + 'T12:00:00Z');
-
-// Every holiday span touching [fromISO - lookbackDays, fromISO + aheadDays].
-function holidaySpans(fromISO: string, lookbackDays: number, aheadDays: number): HolidaySpan[] {
-  const base = atNoonUTC(fromISO).getTime();
-  const spans: HolidaySpan[] = [];
-  for (let i = -lookbackDays; i <= aheadDays; i++) {
-    const d = new Date(base + i * DAY_MS);
-    const name = holidayOn(d);
-    if (!name) continue;
-    const iso = isoDay(d);
-    const last = spans[spans.length - 1];
-    if (last && last.name === name && atNoonUTC(last.to).getTime() + DAY_MS >= d.getTime()) {
-      last.to = iso;
-    } else {
-      spans.push({ name, from: iso, to: iso, approx: APPROX_HOLIDAYS.has(name) });
-    }
-  }
-  return spans;
-}
-
-const heDate = (iso: string) => {
-  const [y, m, d] = iso.split('-');
-  return `${Number(d)}.${Number(m)}.${y.slice(2)}`;
-};
-
-const daysBetween = (fromISO: string, toISO: string) =>
-  Math.round((atNoonUTC(toISO).getTime() - atNoonUTC(fromISO).getTime()) / DAY_MS);
-
-// The calendar block handed to the content planner. States what already passed
-// as emphatically as what is coming, because the failure mode was always
-// writing about a holiday that was already over.
-function hebrewCalendarBrief(todayISO: string, windowFromISO: string, windowToISO: string): string {
-  const { day, month, year } = hebrewParts(atNoonUTC(todayISO));
-  const spans = holidaySpans(todayISO, 120, 200);
-  const passed = spans.filter(s => s.to < todayISO).slice(-5);
-  const ahead = spans.filter(s => s.to >= todayISO);
-  const inWindow = ahead.filter(s => s.from <= windowToISO);
-  const L: string[] = [];
-
-  L.push('📅 לוח השנה העברי — נתון מחושב מדויק. אל תנחש תאריכי חגים ואל תסתמך על זיכרון.');
-  L.push(`היום: ${todayISO} (${day} ${month} ${year}).`);
-  L.push(`חלון הפרסום של הלוח הזה: ${windowFromISO} עד ${windowToISO}.`);
-
-  if (passed.length) {
-    L.push('');
-    L.push('⛔ חגים שכבר עברו — אסור בשום אופן לכתוב עליהם כאירוע עתידי או קרוב:');
-    for (const s of passed) {
-      const when = s.from === s.to ? heDate(s.from) : `${heDate(s.from)}-${heDate(s.to)}`;
-      L.push(`   • ${s.name} — ${when} (עבר)`);
-    }
-  }
-
-  if (ahead.length) {
-    L.push('');
-    L.push('✅ חגים שלפנינו:');
-    for (const s of ahead.slice(0, 6)) {
-      const away = daysBetween(todayISO, s.from);
-      const lead = HOLIDAY_LEAD_DAYS[s.name] ?? 14;
-      const verdict = s.from <= windowToISO && s.from >= windowFromISO
-        ? 'בתוך חלון הלוח — מותר לכתוב עליו ישירות'
-        : (away <= lead
-          ? `מחוץ לחלון אבל בתוך חלון ההזמנה (${lead} יום מראש) — כן לקדם סגירת תאריכים מוקדמת`
-          : 'רחוק מדי — לא לגעת');
-      const when = s.from === s.to ? heDate(s.from) : `${heDate(s.from)}-${heDate(s.to)}`;
-      L.push(`   • ${s.name} — ${when}${s.approx ? ' (תאריך מקורב)' : ''}, בעוד ${away} יום. ${verdict}`);
-    }
-  }
-
-  if (!inWindow.length) {
-    L.push('');
-    L.push('⚠️ אין אף חג בתוך חלון הפרסום עצמו. אל תמציא עוגן חגיגי. במקום זה:');
-    L.push('   - אפשר לקדם הזמנה מוקדמת לחג הבא שבתוך חלון ההזמנה למעלה ("סוגרים תאריכים ל...").');
-    L.push('   - או עוגנים אמיתיים אחרים: קצב שנת הלימודים, תחילת/סוף חודש, עונה, חופשה.');
-  }
-
-  L.push('');
-  L.push('🔒 חוקי ברזל:');
-  L.push('   1. פוסט שמקדם שירות לחג חייב להתפרסם לפני תחילת החג, בתוך חלון ההזמנה שלו.');
-  L.push('   2. אסור להזכיר חג שעבר בלשון הווה/עתיד. "מחפשים פעילות לסוכות?" ב-8.10 — פסול.');
-  L.push('   3. ברכת חג נשלחת לפני החג או ביומו הראשון, לא אחריו.');
-  L.push('   4. אם אין חג רלוונטי — עדיף פוסט בלי חג מאשר פוסט על חג לא נכון.');
-  return L.join('\n');
-}
-
-// Wording that pins copy to a specific holiday. A bare holiday name is not
-// enough: "בסוכה הקהילתית" never says "סוכות", and "הקפות" never says
-// "שמחת תורה", yet both date the post just as precisely.
-const HOLIDAY_ALIASES: Record<string, string[]> = {
-  'סוכות': ['סוכות', 'סוכה', 'חג האסיף'],
-  'שמחת תורה': ['שמחת תורה', 'שמיני עצרת', 'הקפות'],
-  'ראש השנה': ['ראש השנה', 'שנה טובה', 'ליל הסדר של ראש השנה'],
-  'יום כיפור': ['יום כיפור', 'יום הכיפורים', 'גמר חתימה טובה', 'צום כיפור'],
-  'חנוכה': ['חנוכה', 'חנוכיה', 'חנוכייה', 'סופגניות'],
-  'פסח': ['פסח', 'ליל הסדר', 'אפיקומן', 'חג החירות'],
-  'פורים': ['פורים', 'משלוח מנות', 'מגילת אסתר'],
-  'שבועות': ['חג השבועות'],  // "שבועות" alone is just the word for "weeks"
-  'תשעה באב': ['תשעה באב', "ט'באב"],
-};
-
-// Hebrew glues prepositions onto the next word (לסוכות, בסוכה, ומהסוכות), so
-// allow up to two prefix letters while still refusing a match that sits inside
-// a longer word — which is what kept "סיפורים" from reading as "פורים".
-const HEB_LETTER = '\\u05d0-\\u05ea';
-function mentionsTerm(content: string, term: string): boolean {
-  const esc = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?<![${HEB_LETTER}])[בהוכלמשו]{0,2}${esc}(?![${HEB_LETTER}])`).test(content);
-}
-
-// Holidays referenced in copy that have just been missed.
-//
-// Naive "has this holiday ended?" is wrong for an annual event: last year's
-// Chanukah has always ended, so "סוגרים תאריכים לחנוכה" would be flagged while
-// it is in fact exactly the early-booking copy we want. A mention is only stale
-// when the holiday wrapped up recently AND the next one is too far off for the
-// copy to plausibly be about it.
-const STALE_WINDOW_DAYS = 45;
-
-function staleHolidayRefs(content: string, todayISO: string): string[] {
-  const spans = holidaySpans(todayISO, 400, 400);
-  const names = [...new Set(spans.map(s => s.name))];
-  const stale: string[] = [];
-
-  for (const name of names) {
-    const terms = HOLIDAY_ALIASES[name] || [name];
-    if (!terms.some(t => mentionsTerm(content, t))) continue;
-
-    const mine = spans.filter(s => s.name === name);
-    const lastEnded = mine.filter(s => s.to < todayISO).map(s => s.to).sort().pop();
-    const nextStarts = mine.filter(s => s.from >= todayISO).map(s => s.from).sort()[0];
-    if (!lastEnded) continue;
-
-    const sinceEnd = daysBetween(lastEnded, todayISO);
-    const untilNext = nextStarts ? daysBetween(todayISO, nextStarts) : Infinity;
-    const lead = HOLIDAY_LEAD_DAYS[name] ?? 14;
-
-    if (sinceEnd <= STALE_WINDOW_DAYS && untilNext > lead) {
-      stale.push(`${name} (הסתיים ${lastEnded}, לפני ${sinceEnd} יום)`);
-    }
-  }
-  return stale;
-}
 
 const ISRAELI_EVENTS: Record<number, { date: string; name: string; vibe: string }[]> = {
   1: [
@@ -2318,94 +2118,6 @@ async function fetchIsraelTrends(): Promise<string[]> {
   } catch { return []; }
 }
 
-// ══════════════════════════════════════════════════════════════
-// SEARCH KEYWORD BANK
-// Posts never used the search terms people actually type. The bank below is
-// built from Search Console queries, live Google IL results and the competitor
-// review for movingcinema.co.il. It is deliberately a BANK, not a list to paste:
-// each post weaves 2-3 terms for ITS OWN service naturally, and the terms rotate
-// across the month. Stuffing every term into every post reads as spam and
-// hurts reach. Terms are grouped per service so the two price tiers (rental vs
-// full service) are never mixed.
-// ══════════════════════════════════════════════════════════════
-type KeywordGroup = { service: string; landing: string; note?: string; terms: string[] };
-
-const CINEMA_KEYWORD_BANK: KeywordGroup[] = [
-  { service: 'הקרנות סרטים בחוץ (שירות מלא)', landing: '/OutdoorCinema',
-    terms: ['הקרנת סרטים בחוץ', 'קולנוע בחוץ', 'הקרנת סרט בחוץ', 'קולנוע בגינה', 'קולנוע בפארק', 'קולנוע בחצר', 'ערב סרט בחוץ'] },
-  { service: 'מסך מתנפח (שירות מלא)', landing: '/InflatableScreen',
-    terms: ['מסך מתנפח', 'מסך מתנפח להקרנה', 'מסך מתנפח לאירוע', 'מסך מתנפח למקרן', 'מסך הקרנה ענק'] },
-  { service: 'רשויות מקומיות ואירועי קהילה', landing: '/Municipalities',
-    terms: ['הקרנה לרשות מקומית', 'אירוע קהילתי לתושבים', 'קולנוע קהילתי', 'אירועי תרבות לרשויות', 'רישיון להקרנה פומבית'] },
-  { service: 'מסיבות סיום בבתי ספר', landing: '/SchoolEvents',
-    terms: ['מסיבת סיום', 'מסך גדול למסיבת סיום', 'הקרנה בחצר בית הספר', 'מסיבת סיום לוועד הורים', 'הקרנת סרטון מחזור'] },
-  { service: 'טקסים וסרטוני מחזור', landing: '/Ceremonies',
-    terms: ['טקס סיום', 'סרטון מחזור', 'מסך ענק לטקס', 'מצגת זיכרונות על מסך ענק'] },
-  { service: 'אירועי חברה וכנסים', landing: '/CorporateEvents',
-    terms: ['אירוע חברה', 'ערב גיבוש לעובדים', 'כנס עובדים', 'הקרנה לאירוע חברה'] },
-  { service: 'ערבי סרט לילדים', landing: '/KidsMovieNight',
-    terms: ['ערב סרט לילדים', 'הקרנה ליום הולדת', 'סרט לילדים בחוץ'] },
-  { service: 'הקרנות לגיל השלישי', landing: '/SeniorScreenings',
-    terms: ['סרטים לגיל השלישי', 'הקרנה למועדון קשישים', 'סרטים לגיל הזהב'] },
-  { service: 'השכרת ציוד הקרנה (מסלול נפרד, מחיר נפרד, בלי צוות)', landing: '/EquipmentRental',
-    note: 'מסלול ההשכרה בלבד. אסור לערבב במחיר או בניסוח עם השירות המלא.',
-    terms: ['השכרת מקרן ומסך', 'השכרת מסך למקרן', 'השכרת ציוד הקרנה', 'מקרן להשכרה', 'השכרת מסך גדול'] },
-];
-
-// Cinema gets the researched bank. Other businesses reuse the keywords from
-// their own cached SEO report when one exists; otherwise no bank is forced.
-function keywordBankFor(biz: any): KeywordGroup[] {
-  if (/קולנוע/.test(biz?.name || '')) return CINEMA_KEYWORD_BANK;
-  const k = biz?.scan_result?.seo_report?.keywords;
-  const terms = [...(k?.primary || []), ...(k?.long_tail || []), ...(k?.missing || [])]
-    .filter((t: any) => typeof t === 'string' && t.trim().length >= 3);
-  return terms.length ? [{ service: 'כללי', landing: '', terms }] : [];
-}
-
-function keywordBankBrief(bank: KeywordGroup[]): string {
-  if (!bank.length) return '';
-  const L: string[] = ['', '🔎 בנק מילות חיפוש (מה שאנשים באמת מקלידים בגוגל):'];
-  for (const g of bank) {
-    L.push(`• ${g.service}${g.landing ? ` [${g.landing}]` : ''}: ${g.terms.join(' | ')}${g.note ? `  — ${g.note}` : ''}`);
-  }
-  L.push('חוקים: בכל פוסט שדה "keywords" עם 2-3 ביטויים מהקבוצה של אותו שירות בלבד. פרוס את כל הביטויים על פני החודש כך שכמה שיותר מהבנק יכוסה, ואל תחזור על אותו ביטוי בפוסטים סמוכים. אין להכניס ביטויי מסלול השכרה לפוסט של שירות מלא ולהפך. הביטוי ייכנס לטקסט בצורה טבעית, לא כרשימה.');
-  return L.join('\n');
-}
-
-// Optional Hebrew-calendar hooks beyond holidays: Rosh Chodesh and Shabbat.
-// Not required by the planner, just available as real anchors.
-function hebrewAnchorsBrief(fromISO: string, toISO: string): string {
-  const roshChodesh: string[] = [];
-  const fridays: string[] = [];
-  const total = daysBetween(fromISO, toISO);
-  for (let i = 0; i <= total; i++) {
-    const d = new Date(atNoonUTC(fromISO).getTime() + i * DAY_MS);
-    const { day, month } = hebrewParts(d);
-    if ((day === 1 && month !== 'Tishri') || day === 30) roshChodesh.push(heDate(isoDay(d)));
-    if (d.getUTCDay() === 5) fridays.push(heDate(isoDay(d)));
-  }
-  const L: string[] = [];
-  if (roshChodesh.length) L.push(`ראש חודש (עוגן אופציונלי, חודש עברי חדש): ${roshChodesh.join(', ')}`);
-  if (fridays.length) L.push(`ימי שישי (ערב שבת, עוגן אופציונלי לתוכן רגוע/משפחתי): ${fridays.join(', ')}`);
-  return L.length ? `\n🗓️ עוגנים נוספים מהלוח העברי:\n${L.map(x => '• ' + x).join('\n')}` : '';
-}
-
-// Near-duplicate guard. Compares 3-word shingles so two posts that reuse the
-// same sentences in different order still collide.
-function textShingles(s: string): Set<string> {
-  const words = (s || '').replace(/https?:\/\/\S+/g, ' ').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 2);
-  const out = new Set<string>();
-  for (let i = 0; i + 2 < words.length; i++) out.add(words.slice(i, i + 3).join(' '));
-  return out;
-}
-function shingleSimilarity(a: Set<string>, b: Set<string>): number {
-  if (!a.size || !b.size) return 0;
-  let inter = 0;
-  for (const x of a) if (b.has(x)) inter++;
-  return inter / (a.size + b.size - inter);
-}
-const POST_SIMILARITY_LIMIT = 0.3;
-
 app.post('/api/calendars/generate', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
@@ -2416,9 +2128,12 @@ app.post('/api/calendars/generate', async (req: any, res) => {
     // Get business
     const { data: biz, error: bizErr } = await sb.from('businesses').select('*').eq('id', business_id).single();
     if (bizErr || !biz) return res.status(404).json({ error: 'Business not found' });
+    if (!(await ownsBusiness(sb, req.userId, business_id))) return res.status(403).json({ error: 'Not your business' });
 
     // Get Claude + Gemini keys (Gemini is the fallback if Claude billing is out)
-    const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
+    let _kq: any = sb.from('user_api_keys').select('key_name, key_value').limit(20);
+    if (req.userId) _kq = _kq.eq('user_id', req.userId);
+    const { data: keys } = await _kq;
     const keyMap: Record<string, string> = {};
     for (const k of (keys || [])) keyMap[k.key_name] = k.key_value;
     const claudeKey = keyMap.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
@@ -2644,9 +2359,12 @@ app.post('/api/calendars/approve', async (req: any, res) => {
 
     const { data: biz } = await sb.from('businesses').select('*').eq('id', business_id).single();
     if (!biz) return res.status(404).json({ error: 'Business not found' });
+    if (!(await ownsBusiness(sb, req.userId, business_id))) return res.status(403).json({ error: 'Not your business' });
 
     // Get Claude + Gemini keys for expanding posts (Gemini fallback when Claude billing is out)
-    const { data: keys } = await sb.from('user_api_keys').select('key_name, key_value').limit(20);
+    let _kq: any = sb.from('user_api_keys').select('key_name, key_value').limit(20);
+    if (req.userId) _kq = _kq.eq('user_id', req.userId);
+    const { data: keys } = await _kq;
     const keyMap: Record<string, string> = {};
     for (const k of (keys || [])) keyMap[k.key_name] = k.key_value;
     const claudeKey = keyMap.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
@@ -4200,6 +3918,16 @@ app.post('/api/posts/:id/select-variant', async (req: any, res) => {
 });
 
 // Batch endpoint: find all scheduled posts missing media and return their IDs
+app.use('/api/posts/:id', async (req: any, res: any, next: any) => {
+  if (!req.userId || !/^[0-9a-f-]{36}$/i.test(req.params.id || '')) return next();
+  const sb = getSupabase();
+  if (!sb) return next();
+  try {
+    if (!(await ownsPost(sb, req.userId, req.params.id))) return res.status(403).json({ error: 'Not your post' });
+  } catch { /* fall through to the route's own handling */ }
+  next();
+});
+
 app.get('/api/posts/pending-media', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.json({ posts: [] });
@@ -6612,7 +6340,7 @@ app.post('/api/posts/:id/performance-check', async (req: any, res) => {
     const r2 = await fetch(`https://graph.facebook.com/v25.0/${fb_post_id}?fields=likes.summary(true),comments.summary(true),shares&access_token=${access_token}`);
     const d2 = await r2.json() as any;
 
-    const metrics = {
+    const metrics: Record<string, number> = {
       likes: d2?.likes?.summary?.total_count || 0,
       comments: d2?.comments?.summary?.total_count || 0,
       shares: d2?.shares?.count || 0,
