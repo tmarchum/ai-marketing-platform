@@ -2318,6 +2318,94 @@ async function fetchIsraelTrends(): Promise<string[]> {
   } catch { return []; }
 }
 
+// ══════════════════════════════════════════════════════════════
+// SEARCH KEYWORD BANK
+// Posts never used the search terms people actually type. The bank below is
+// built from Search Console queries, live Google IL results and the competitor
+// review for movingcinema.co.il. It is deliberately a BANK, not a list to paste:
+// each post weaves 2-3 terms for ITS OWN service naturally, and the terms rotate
+// across the month. Stuffing every term into every post reads as spam and
+// hurts reach. Terms are grouped per service so the two price tiers (rental vs
+// full service) are never mixed.
+// ══════════════════════════════════════════════════════════════
+type KeywordGroup = { service: string; landing: string; note?: string; terms: string[] };
+
+const CINEMA_KEYWORD_BANK: KeywordGroup[] = [
+  { service: 'הקרנות סרטים בחוץ (שירות מלא)', landing: '/OutdoorCinema',
+    terms: ['הקרנת סרטים בחוץ', 'קולנוע בחוץ', 'הקרנת סרט בחוץ', 'קולנוע בגינה', 'קולנוע בפארק', 'קולנוע בחצר', 'ערב סרט בחוץ'] },
+  { service: 'מסך מתנפח (שירות מלא)', landing: '/InflatableScreen',
+    terms: ['מסך מתנפח', 'מסך מתנפח להקרנה', 'מסך מתנפח לאירוע', 'מסך מתנפח למקרן', 'מסך הקרנה ענק'] },
+  { service: 'רשויות מקומיות ואירועי קהילה', landing: '/Municipalities',
+    terms: ['הקרנה לרשות מקומית', 'אירוע קהילתי לתושבים', 'קולנוע קהילתי', 'אירועי תרבות לרשויות', 'רישיון להקרנה פומבית'] },
+  { service: 'מסיבות סיום בבתי ספר', landing: '/SchoolEvents',
+    terms: ['מסיבת סיום', 'מסך גדול למסיבת סיום', 'הקרנה בחצר בית הספר', 'מסיבת סיום לוועד הורים', 'הקרנת סרטון מחזור'] },
+  { service: 'טקסים וסרטוני מחזור', landing: '/Ceremonies',
+    terms: ['טקס סיום', 'סרטון מחזור', 'מסך ענק לטקס', 'מצגת זיכרונות על מסך ענק'] },
+  { service: 'אירועי חברה וכנסים', landing: '/CorporateEvents',
+    terms: ['אירוע חברה', 'ערב גיבוש לעובדים', 'כנס עובדים', 'הקרנה לאירוע חברה'] },
+  { service: 'ערבי סרט לילדים', landing: '/KidsMovieNight',
+    terms: ['ערב סרט לילדים', 'הקרנה ליום הולדת', 'סרט לילדים בחוץ'] },
+  { service: 'הקרנות לגיל השלישי', landing: '/SeniorScreenings',
+    terms: ['סרטים לגיל השלישי', 'הקרנה למועדון קשישים', 'סרטים לגיל הזהב'] },
+  { service: 'השכרת ציוד הקרנה (מסלול נפרד, מחיר נפרד, בלי צוות)', landing: '/EquipmentRental',
+    note: 'מסלול ההשכרה בלבד. אסור לערבב במחיר או בניסוח עם השירות המלא.',
+    terms: ['השכרת מקרן ומסך', 'השכרת מסך למקרן', 'השכרת ציוד הקרנה', 'מקרן להשכרה', 'השכרת מסך גדול'] },
+];
+
+// Cinema gets the researched bank. Other businesses reuse the keywords from
+// their own cached SEO report when one exists; otherwise no bank is forced.
+function keywordBankFor(biz: any): KeywordGroup[] {
+  if (/קולנוע/.test(biz?.name || '')) return CINEMA_KEYWORD_BANK;
+  const k = biz?.scan_result?.seo_report?.keywords;
+  const terms = [...(k?.primary || []), ...(k?.long_tail || []), ...(k?.missing || [])]
+    .filter((t: any) => typeof t === 'string' && t.trim().length >= 3);
+  return terms.length ? [{ service: 'כללי', landing: '', terms }] : [];
+}
+
+function keywordBankBrief(bank: KeywordGroup[]): string {
+  if (!bank.length) return '';
+  const L: string[] = ['', '🔎 בנק מילות חיפוש (מה שאנשים באמת מקלידים בגוגל):'];
+  for (const g of bank) {
+    L.push(`• ${g.service}${g.landing ? ` [${g.landing}]` : ''}: ${g.terms.join(' | ')}${g.note ? `  — ${g.note}` : ''}`);
+  }
+  L.push('חוקים: בכל פוסט שדה "keywords" עם 2-3 ביטויים מהקבוצה של אותו שירות בלבד. פרוס את כל הביטויים על פני החודש כך שכמה שיותר מהבנק יכוסה, ואל תחזור על אותו ביטוי בפוסטים סמוכים. אין להכניס ביטויי מסלול השכרה לפוסט של שירות מלא ולהפך. הביטוי ייכנס לטקסט בצורה טבעית, לא כרשימה.');
+  return L.join('\n');
+}
+
+// Optional Hebrew-calendar hooks beyond holidays: Rosh Chodesh and Shabbat.
+// Not required by the planner, just available as real anchors.
+function hebrewAnchorsBrief(fromISO: string, toISO: string): string {
+  const roshChodesh: string[] = [];
+  const fridays: string[] = [];
+  const total = daysBetween(fromISO, toISO);
+  for (let i = 0; i <= total; i++) {
+    const d = new Date(atNoonUTC(fromISO).getTime() + i * DAY_MS);
+    const { day, month } = hebrewParts(d);
+    if ((day === 1 && month !== 'Tishri') || day === 30) roshChodesh.push(heDate(isoDay(d)));
+    if (d.getUTCDay() === 5) fridays.push(heDate(isoDay(d)));
+  }
+  const L: string[] = [];
+  if (roshChodesh.length) L.push(`ראש חודש (עוגן אופציונלי, חודש עברי חדש): ${roshChodesh.join(', ')}`);
+  if (fridays.length) L.push(`ימי שישי (ערב שבת, עוגן אופציונלי לתוכן רגוע/משפחתי): ${fridays.join(', ')}`);
+  return L.length ? `\n🗓️ עוגנים נוספים מהלוח העברי:\n${L.map(x => '• ' + x).join('\n')}` : '';
+}
+
+// Near-duplicate guard. Compares 3-word shingles so two posts that reuse the
+// same sentences in different order still collide.
+function textShingles(s: string): Set<string> {
+  const words = (s || '').replace(/https?:\/\/\S+/g, ' ').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 2);
+  const out = new Set<string>();
+  for (let i = 0; i + 2 < words.length; i++) out.add(words.slice(i, i + 3).join(' '));
+  return out;
+}
+function shingleSimilarity(a: Set<string>, b: Set<string>): number {
+  if (!a.size || !b.size) return 0;
+  let inter = 0;
+  for (const x of a) if (b.has(x)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+const POST_SIMILARITY_LIMIT = 0.3;
+
 app.post('/api/calendars/generate', async (req: any, res) => {
   const sb = getSupabase();
   if (!sb) return res.status(503).json({ error: 'DB not configured' });
@@ -2359,11 +2447,14 @@ app.post('/api/calendars/generate', async (req: any, res) => {
     const todayISO = new Date().toISOString().slice(0, 10);
     const windowFrom = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
     const windowTo = new Date(Date.UTC(targetYear, targetMonth, 0)).toISOString().slice(0, 10);
+    const daysInMonth = new Date(Date.UTC(targetYear, targetMonth, 0)).getUTCDate();
     const calendarBrief = hebrewCalendarBrief(
       todayISO,
       windowFrom > todayISO ? windowFrom : todayISO,
       windowTo,
-    );
+    ) + hebrewAnchorsBrief(windowFrom > todayISO ? windowFrom : todayISO, windowTo);
+    const keywordBank = keywordBankFor(biz);
+    const keywordBrief = keywordBankBrief(keywordBank);
 
     // Build prompt
     const viContext = biz.visual_identity ? `\nזהות ויזואלית: ${biz.visual_identity.slice(0, 500)}` : '';
@@ -2377,7 +2468,7 @@ app.post('/api/calendars/generate', async (req: any, res) => {
     const kbContent = await getBizKnowledgeBase(sb, business_id, 14_000);
     const kbContext = kbContent ? `\n\n📚 ידע על העסק (מסמכים שהועלו — השתמש בפרטים קונקרטיים מתוכם!):${kbContent}` : '';
     const recentTitles = recentPosts?.length
-      ? recentPosts.slice(0, 10).map(p => `- ${(p.content || '').split('\n')[0].slice(0, 80)}`).join('\n')
+      ? recentPosts.slice(0, 20).map(p => `- ${(p.content || '').replace(/\s+/g, ' ').slice(0, 150)}`).join('\n')
       : '(אין היסטוריה)';
     const eventsText = events.length
       ? events.map(e => `- ${e.date}: ${e.name} (${e.vibe})`).join('\n')
@@ -2402,6 +2493,7 @@ app.post('/api/calendars/generate', async (req: any, res) => {
 ${recentTitles}
 
 ${calendarBrief}
+${keywordBrief}
 
 אירועים לועזיים בחודש ${targetMonth}:
 ${eventsText}${trendsText}
@@ -2439,9 +2531,9 @@ ${eventsText}${trendsText}
 - כל visual_concept חייב להזכיר: מי (אנשים אמיתיים), איפה (מקום מזוהה), מה עושים (פעולה קונקרטית), תאורה/mood.
 
 החזר JSON בלבד, ללא שום טקסט לפני או אחרי. כל שדה — קצר וענייני (מקסימום 120 תווים לשדה):
-{"posts":[{"day":1,"theme":"נושא קצר","service":"השירות/קהל היעד הספציפי של הפוסט","landing_path":"/ServicePage או ריק","type":"תוכן חינוכי","media_type":"image","caption_short":"משפט פתיחה","hook":"הוק","visual_concept":"סצנה קונקרטית: מי, איפה, מה עושים"}, ...]}
+{"posts":[{"day":1,"theme":"נושא קצר","service":"השירות/קהל היעד הספציפי של הפוסט","landing_path":"/ServicePage או ריק","keywords":["ביטוי חיפוש 1","ביטוי חיפוש 2"],"type":"תוכן חינוכי","media_type":"image","caption_short":"משפט פתיחה","hook":"הוק","visual_concept":"סצנה קונקרטית: מי, איפה, מה עושים"}, ...]}
 
-חוקים: day — מספר יום בחודש (1-30), פרוס על פני כל החודש כולל סופו, מרווחים הגיוניים. אין שדות נוספים.`;
+חוקים: day — מספר יום בחודש (1-${daysInMonth}), פרוס על פני כל החודש כולל סופו (גם השבוע האחרון), מרווחים הגיוניים. ${keywordBank.length ? 'keywords — 2-3 ביטויים מהבנק של אותו שירות בלבד. ' : ''}אין שדות נוספים.`;
 
     // Force Claude to return structured JSON via tool_use — no string parsing needed
     const calendarSchema = {
@@ -2453,7 +2545,8 @@ ${eventsText}${trendsText}
           items: {
             type: 'object',
             properties: {
-              day: { type: 'integer', minimum: 1, maximum: 30, description: 'יום בחודש (1-30) — לפרוס על כל החודש כולל סופו' },
+              day: { type: 'integer', minimum: 1, maximum: 31, description: `יום בחודש (1-${daysInMonth}) — לפרוס על כל החודש כולל סופו` },
+              keywords: { type: 'array', maxItems: 3, items: { type: 'string', maxLength: 60 }, description: '2-3 ביטויי חיפוש מבנק המילים, מאותו שירות של הפוסט בלבד' },
               theme: { type: 'string', maxLength: 120, description: 'נושא קצר של הפוסט' },
               service: { type: 'string', maxLength: 120, description: 'השירות או קהל היעד הספציפי שהפוסט עוסק בו — חייב להיות שונה בין פוסטים' },
               landing_path: { type: 'string', maxLength: 60, description: 'נתיב יחסי לעמוד הנחיתה המתאים באתר, אם קיים ברשימת עמודי הנחיתה בבסיס הידע (לדוגמה /EquipmentRental). אם אין התאמה — השאר ריק' },
@@ -2486,7 +2579,8 @@ ${eventsText}${trendsText}
 - media_type: רוב "image", ~20% "video"
 - caption_short: משפט פתיחה
 - hook: שורת פתיחה מושכת
-- visual_concept: סצנה קונקרטית — אנשים אמיתיים, פעולה, מיקום`;
+- visual_concept: סצנה קונקרטית — אנשים אמיתיים, פעולה, מיקום
+${keywordBrief}`;
       try {
         calendar = await callTextForJson(simplePrompt, calendarSchema, claudeKey || null, geminiKey || null, 8000);
         console.log(`[calendar] retry got ${calendar?.posts?.length || 0} posts`);
@@ -2507,10 +2601,22 @@ ${eventsText}${trendsText}
 
     // Enrich posts with actual dates
     const enrichedPosts = (calendar.posts || []).map((p: any) => {
-      const day = Math.min(Math.max(1, Number(p.day) || 1), 28);
+      const day = Math.min(Math.max(1, Number(p.day) || 1), daysInMonth);
       const date = new Date(targetYear, targetMonth - 1, day, 10, 0, 0);
       return { ...p, date: date.toISOString(), day };
     });
+
+    // Variety report: services used and how much of the keyword bank is covered.
+    const bankTerms = keywordBank.flatMap(g => g.terms);
+    const usedTerms = new Set(enrichedPosts.flatMap((p: any) => Array.isArray(p.keywords) ? p.keywords : []));
+    const serviceCounts: Record<string, number> = {};
+    for (const p of enrichedPosts) { const s = p.service || '—'; serviceCounts[s] = (serviceCounts[s] || 0) + 1; }
+    const variety = {
+      services: serviceCounts,
+      keywords_total: bankTerms.length,
+      keywords_covered: bankTerms.filter(t => usedTerms.has(t)).length,
+      keywords_missing: bankTerms.filter(t => !usedTerms.has(t)),
+    };
 
     res.json({
       business: { id: biz.id, name: biz.name, color: biz.color },
@@ -2518,6 +2624,7 @@ ${eventsText}${trendsText}
       month: targetMonth,
       events,
       trends,
+      variety,
       posts: enrichedPosts,
     });
   } catch (err: any) {
@@ -2594,6 +2701,18 @@ app.post('/api/calendars/approve', async (req: any, res) => {
       return inDst ? 3 : 2;
     }
 
+    // Variety guard inputs: what this business already posted, plus what this
+    // batch has produced so far.
+    const { data: recentForSim } = await sb
+      .from('content_posts')
+      .select('content')
+      .eq('business_name', biz.name)
+      .order('created_at', { ascending: false })
+      .limit(30);
+    const priorShingles: Set<string>[] = (recentForSim || []).map((p: any) => textShingles(p.content || ''));
+    const keywordBank = keywordBankFor(biz);
+    const bankLookup = new Set(keywordBank.flatMap(g => g.terms));
+
     const created: any[] = [];
     for (const cp of calendarPosts) {
       let scheduledAt = cp.date;
@@ -2638,6 +2757,7 @@ POST TYPE: ${cp.type}
 HOOK (use as inspiration, feel free to rephrase): "${cp.hook}"
 ANGLE/POINT: ${cp.angle || ''}
 GOAL: ${cp.rationale || ''}
+${Array.isArray(cp.keywords) && cp.keywords.length ? `SEARCH TERMS (weave 2-3 of these into the text naturally, as real sentences — never as a list, never stuffed, and use only the terms of THIS service): ${cp.keywords.join(' | ')}` : ''}
 
 🚫 FORBIDDEN:
 - Changing the topic. If topic is "Independence Day" — post MUST be about Independence Day.
@@ -2686,6 +2806,21 @@ Return ONLY JSON: {"content": "full post text in Hebrew", "hashtags": ["#tag1", 
         continue;
       }
 
+      // ── Near-duplicate guard: reject a post that mostly repeats an earlier one
+      //    (this business's recent posts, or another post from this batch).
+      const myShingles = textShingles(content);
+      let worst = 0;
+      for (const s of priorShingles) worst = Math.max(worst, shingleSimilarity(myShingles, s));
+      if (worst >= POST_SIMILARITY_LIMIT) {
+        created.push({ error: `too similar to an earlier post (${Math.round(worst * 100)}%) — not created`, theme: cp.theme });
+        continue;
+      }
+      priorShingles.push(myShingles);
+
+      // Which bank terms actually made it into the text (a term the model was
+      // told to use but dropped does not count as covered).
+      const usedKeywords = [...bankLookup].filter(t => mentionsTerm(content, t));
+
       // ── CONVERSION CTA — every post ends with a link to the business's REAL
       //    website (clean, professional-looking), not the dashboard short link.
       if (biz.url && !/https?:\/\//i.test(content)) {
@@ -2726,6 +2861,8 @@ Return ONLY JSON: {"content": "full post text in Hebrew", "hashtags": ["#tag1", 
             // service = which service line / audience this post covers. Stored so we can
             // audit variety across the month and keep images on-topic.
             service: cp.service || null,
+            keywords_planned: Array.isArray(cp.keywords) ? cp.keywords : [],
+            keywords_used: usedKeywords,
           }
         },
       };
@@ -2735,7 +2872,18 @@ Return ONLY JSON: {"content": "full post text in Hebrew", "hashtags": ["#tag1", 
       created.push({ id: newPost.id, theme: cp.theme, scheduled_at: scheduledAt });
     }
 
-    res.json({ message: `Created ${created.filter(c => !c.error).length} posts`, created });
+    // Variety report for the batch: services, back-to-back repeats, bank coverage.
+    const ok = calendarPosts.map((cp: any, i: number) => ({ cp, c: created[i] })).filter((x: any) => x.c && !x.c.error);
+    const sameServiceRuns = ok.filter((x: any, i: number) => i > 0 && x.cp.service && x.cp.service === ok[i - 1].cp.service).length;
+    const coveredTerms = new Set(ok.flatMap((x: any) => Array.isArray(x.cp.keywords) ? x.cp.keywords : []));
+    const variety = {
+      back_to_back_same_service: sameServiceRuns,
+      rejected_as_similar: created.filter(c => c.error && /too similar/.test(c.error)).length,
+      keywords_total: bankLookup.size,
+      keywords_covered: [...bankLookup].filter(t => coveredTerms.has(t)).length,
+    };
+
+    res.json({ message: `Created ${created.filter(c => !c.error).length} posts`, created, variety });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

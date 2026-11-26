@@ -4049,11 +4049,16 @@ function Schedule({ posts, setPosts, businesses, setPage }) {
       if (autoGenMedia && createdIds.length > 0) {
         // Generate media for each post sequentially (shows progress)
         // First generate all images (fast), then videos (slow)
-        const postsWithMeta = createdIds.map((id, i) => ({
-          id,
-          theme: d.created[i]?.theme || "",
-          isVideo: calResult.posts[i]?.media_type === "video",
-        }));
+        // d.created is aligned 1:1 with calResult.posts (failed/rejected entries
+        // included), so map by original index, not by position among successes.
+        const postsWithMeta = d.created
+          .map((c, i) => ({ c, i }))
+          .filter(({ c }) => c.id)
+          .map(({ c, i }) => ({
+            id: c.id,
+            theme: c.theme || "",
+            isVideo: calResult.posts[i]?.media_type === "video",
+          }));
         const images = postsWithMeta.filter(p => !p.isVideo);
         const videos = postsWithMeta.filter(p => p.isVideo);
         const ordered = [...images, ...videos]; // images first
