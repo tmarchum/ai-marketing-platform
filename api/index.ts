@@ -26,6 +26,7 @@ import {
   staleHolidayRefs,
   CINEMA_KEYWORD_BANK,
   keywordBankFor,
+  CORE_KEYWORDS,
   keywordBankBrief,
   hebrewAnchorsBrief,
   textShingles,

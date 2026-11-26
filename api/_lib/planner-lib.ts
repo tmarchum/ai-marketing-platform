@@ -249,6 +249,10 @@ export const CINEMA_KEYWORD_BANK: KeywordGroup[] = [
     terms: ['השכרת מקרן ומסך', 'השכרת מסך למקרן', 'השכרת ציוד הקרנה', 'מקרן להשכרה', 'השכרת מסך גדול'] },
 ];
 
+// Highest-demand terms (Search Console + live results): each must appear in at least
+// one post per month, whatever else the plan covers.
+export const CORE_KEYWORDS = ['הקרנת סרטים בחוץ', 'קולנוע בחוץ', 'מסך מתנפח', 'מסך מתנפח להקרנה'];
+
 // Cinema gets the researched bank. Other businesses reuse the keywords from
 // their own cached SEO report when one exists; otherwise no bank is forced.
 export function keywordBankFor(biz: any): KeywordGroup[] {
@@ -264,6 +268,9 @@ export function keywordBankBrief(bank: KeywordGroup[]): string {
   const L: string[] = ['', '🔎 בנק מילות חיפוש (מה שאנשים באמת מקלידים בגוגל):'];
   for (const g of bank) {
     L.push(`• ${g.service}${g.landing ? ` [${g.landing}]` : ''}: ${g.terms.join(' | ')}${g.note ? `  — ${g.note}` : ''}`);
+  }
+  if (bank === CINEMA_KEYWORD_BANK) {
+    L.push(`ביטויי ליבה (הכי הרבה ביקוש): ${CORE_KEYWORDS.join(' | ')} — כל אחד מהם חייב להופיע לפחות בפוסט אחד בחודש, גם אם צריך פוסט מוקדש (למשל פוסט על המסך המתנפח עצמו).`);
   }
   L.push('חוקים: בכל פוסט שדה "keywords" עם 2-3 ביטויים מהקבוצה של אותו שירות בלבד. פרוס את כל הביטויים על פני החודש כך שכמה שיותר מהבנק יכוסה, ואל תחזור על אותו ביטוי בפוסטים סמוכים. אין להכניס ביטויי מסלול השכרה לפוסט של שירות מלא ולהפך. הביטוי ייכנס לטקסט בצורה טבעית, לא כרשימה.');
   return L.join('\n');

@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   holidaySpans, staleHolidayRefs, hebrewAnchorsBrief, hebrewCalendarBrief,
-  CINEMA_KEYWORD_BANK, keywordBankFor, keywordBankBrief,
+  CINEMA_KEYWORD_BANK, CORE_KEYWORDS, keywordBankFor, keywordBankBrief,
   textShingles, shingleSimilarity, POST_SIMILARITY_LIMIT,
 } from './planner-lib.js';
 
@@ -74,4 +74,10 @@ test('keyword bank is chosen by business name; others fall back to their SEO rep
   const g = keywordBankFor({ name: 'צייד טיסות', scan_result: { seo_report: { keywords: { primary: ['טיסות זולות'] } } } });
   assert.deepEqual(g[0].terms, ['טיסות זולות']);
   assert.equal(keywordBankBrief([]), '');
+});
+
+test('core keywords exist in the bank and are demanded in the brief', () => {
+  const all = CINEMA_KEYWORD_BANK.flatMap(g => g.terms);
+  for (const k of CORE_KEYWORDS) assert.ok(all.includes(k), `${k} missing from bank`);
+  assert.match(keywordBankBrief(CINEMA_KEYWORD_BANK), /ביטויי ליבה/);
 });
