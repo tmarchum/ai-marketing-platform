@@ -67,7 +67,7 @@ app.use((req: any, _res: any, next: any) => {
 
 // ── Auth middleware — extract user from JWT ──
 // Accounts created before this moment are grandfathered (only the owner existed).
-const ACCESS_RULE_CUTOFF = Date.parse('2026-11-26T15:00:00Z');
+const ACCESS_RULE_CUTOFF = Date.parse('2026-11-26T13:30:00Z'); // the only account (the owner) predates this
 
 async function authMiddleware(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization;
@@ -86,7 +86,7 @@ async function authMiddleware(req: any, res: any, next: any) {
     // (app_metadata is writable only server-side) or it existed before this rule.
     // Anyone else who managed to create a Supabase account gets no access.
     const approved = (user as any).app_metadata?.approved === true
-      || new Date(user.created_at || Date.now()).getTime() < ACCESS_RULE_CUTOFF;
+      || (user.created_at ? new Date(user.created_at).getTime() : Infinity) < ACCESS_RULE_CUTOFF;
     if (!approved) { req.userId = null; return next(); }
     req.userId = user.id;
     req.userEmail = user.email;
