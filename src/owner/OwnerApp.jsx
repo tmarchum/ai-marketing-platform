@@ -573,6 +573,18 @@ function Users() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  const [nb, setNb] = useState({ name: "", url: "", industry: "", color: "#6366f1" });
+  const [nbUsers, setNbUsers] = useState([]);
+  const [nbBusy, setNbBusy] = useState(false);
+  async function createBiz() {
+    setNbBusy(true); setMsg("");
+    try {
+      await post("/api/superadmin/businesses", { ...nb, userIds: nbUsers });
+      setMsg(`העסק "${nb.name.trim()}" נוצר${nbUsers.length ? " והגישה ניתנה למשתמשים שסימנת" : ""}`);
+      setNb({ name: "", url: "", industry: "", color: "#6366f1" }); setNbUsers([]); await load();
+    } catch (e) { setMsg(String(e.message || e)); }
+    setNbBusy(false);
+  }
   async function invite() {
     setBusy(true); setMsg("");
     try {
@@ -611,6 +623,31 @@ function Users() {
         <div style={{ marginTop: 12 }}>
           <button className="o-btn" disabled={busy || !email.trim()} onClick={invite}>{busy ? "מוסיף…" : "הוסף משתמש"}</button>
         </div>
+      </div>
+      <div className="o-boost" style={{ display: "block" }}>
+        <h3>הקמת עסק חדש</h3>
+        <p>העסק נוצר אצלך. אפשר לתת גישה מיד למשתמשים קיימים, ובהמשך לשנות בכל רגע.</p>
+        <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", margin: "6px 0 10px" }}>
+          <input value={nb.name} onChange={e => setNb({ ...nb, name: e.target.value })} placeholder="שם העסק *" style={{ padding: 10 }} />
+          <input dir="ltr" value={nb.url} onChange={e => setNb({ ...nb, url: e.target.value })} placeholder="https://אתר-העסק" style={{ padding: 10 }} />
+          <input value={nb.industry} onChange={e => setNb({ ...nb, industry: e.target.value })} placeholder="תחום (למשל: קולנוע נייד)" style={{ padding: 10 }} />
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>צבע
+            <input type="color" value={nb.color} onChange={e => setNb({ ...nb, color: e.target.value })} /></label>
+        </div>
+        {(users || []).filter(u => !u.isAdmin && !u.pending && !u.blocked).length > 0 && (
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 13, marginBottom: 4 }}>לתת גישה ל:</div>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+              {(users || []).filter(u => !u.isAdmin && !u.pending && !u.blocked).map(u => (
+                <label key={u.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+                  <input type="checkbox" checked={nbUsers.includes(u.id)} onChange={() => setNbUsers(toggleId(nbUsers, u.id))} />
+                  <span dir="ltr">{u.email}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+        <button className="o-btn" disabled={nbBusy || !nb.name.trim()} onClick={createBiz}>{nbBusy ? "יוצר…" : "צור עסק"}</button>
       </div>
       {msg && <p className="o-msg">{msg}</p>}
 

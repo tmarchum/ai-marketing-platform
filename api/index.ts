@@ -6209,6 +6209,32 @@ app.get('/api/superadmin/businesses', requireAdmin, async (_req: any, res) => {
   res.json(data || []);
 });
 
+// Create a business (owned by the admin) and optionally give members access to it.
+app.post('/api/superadmin/businesses', requireAdmin, async (req: any, res) => {
+  const sb = getSupabase();
+  if (!sb) return res.status(503).json({ error: 'DB not configured' });
+  try {
+    const b = req.body || {};
+    const name = String(b.name || '').trim().slice(0, 120);
+    if (!name) return res.status(400).json({ error: 'חסר שם עסק' });
+    const row: Record<string, any> = { name, user_id: req.userId };
+    if (b.url) row.url = String(b.url).trim().slice(0, 300);
+    if (b.industry) row.industry = String(b.industry).trim().slice(0, 120);
+    if (b.description) row.description = String(b.description).trim().slice(0, 2000);
+    if (/^#[0-9a-fA-F]{6}$/.test(b.color || '')) row.color = b.color;
+    const { data, error } = await sb.from('businesses').insert(row).select('id, name, color').single();
+    if (error) return res.status(500).json({ error: error.message });
+    const userIds = (Array.isArray(b.userIds) ? b.userIds : []).filter((x: any) => typeof x === 'string');
+    for (const uid of userIds) {
+      const { data: au } = await sb.auth.admin.getUserById(uid);
+      const cur = au?.user?.app_metadata?.business_ids;
+      if (!Array.isArray(cur)) continue; // admins and non-members already see/own what they need
+      await setUserMeta(sb, uid, { business_ids: [...new Set([...cur, data.id])] });
+    }
+    res.json({ ok: true, business: data });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // Set which businesses a member may use.
 app.put('/api/superadmin/users/:id/businesses', requireAdmin, async (req: any, res) => {
   const sb = getSupabase();
